@@ -66,6 +66,25 @@
       config:
         maxNoteBytes: 8192
 
+    # Read-aloud: the speech seam, its gateway provider, and the turn-end cache
+    # the browser plays from. Billing is by input characters, so `bitrate` trades
+    # stored bytes against audio quality and nothing else.
+    - id: speech
+      name: '@deepseek-ai/dsh-speech'
+      config:
+        model: minimax/speech-2.6-hd
+        bitrate: 64000
+        maxChars: 10000
+
+    - id: speech-litellm
+      name: '@deepseek-ai/dsh-speech-litellm'
+
+    - id: speech-cache
+      name: '@deepseek-ai/dsh-speech-cache'
+      config:
+        ttlDays: 7
+        synthesizeOnTurnEnd: true
+
     # Browser Session export: `/export` command plus the shared download dialog.
     - id: session-log-download
       name: '@deepseek-ai/dsh-session-log-export'
@@ -266,6 +285,11 @@
     # assistant-message action strip, over the messageFeedback Remote.
     - id: ui-message-feedback
       name: '@deepseek-ai/dsh-client-ui-message-feedback'
+
+    # Read-aloud: the play/stop control in the assistant-message action strip,
+    # over the speechCache Remote.
+    - id: ui-message-speech
+      name: '@deepseek-ai/dsh-client-ui-message-speech'
 
     # Model selection: the /model popupSelect + composer seat over session.models.
     - id: ui-model-selection

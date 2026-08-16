@@ -1974,6 +1974,36 @@
       "doc": "docs/subsystems/feedback.md",
       "symbol": "MessageFeedbackDeleteResult",
       "source": "packages/feedback/message-feedback/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/speech.md",
+      "symbol": "SpeechRequest",
+      "source": "packages/speech/speech/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/speech.md",
+      "symbol": "SpeechSpec",
+      "source": "packages/speech/speech/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/speech.md",
+      "symbol": "SpeechAudio",
+      "source": "packages/speech/speech/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/speech.md",
+      "symbol": "SpeechProvider",
+      "source": "packages/speech/speech/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/speech.md",
+      "symbol": "SpeechAudioRequest",
+      "source": "packages/speech/speech-cache/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/speech.md",
+      "symbol": "SpeechAudioValue",
+      "source": "packages/speech/speech-cache/src/types.ts"
     }
   ]
 }

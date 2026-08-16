@@ -2043,6 +2043,80 @@ export interface Config {
 
 Source: [`packages/skill/skill-filesystem/src/index.ts:49`](../packages/skill/skill-filesystem/src/index.ts)
 
+<a id="deepseek-aidsh-speech"></a>
+
+## `@deepseek-ai/dsh-speech`
+
+```ts config-catalog
+/**
+ * Required deployment policy for the speech seam. Every field is required with
+ * no library default: model choice, audio weight, and the input bound all vary
+ * by deployment and each carries a cost, so none may be inherited silently.
+ */
+export interface SpeechRuntimeConfig {
+  /** Provider-routed model identifier, for example `minimax/speech-2.6-hd`. */
+  readonly model: string
+  /**
+   * Requested mp3 bitrate in bits per second. Billing is by input characters,
+   * so this trades stored bytes against audio quality and nothing else.
+   */
+  readonly bitrate: number
+  /**
+   * Maximum characters sent in one request. Longer text is truncated rather
+   * than split, because a partial reading is a better failure than an
+   * unbounded bill.
+   */
+  readonly maxChars: number
+  /** Explicit provider id. Omitted = auto-select when exactly one is usable. */
+  readonly provider?: string
+  /** Default voice passed to the provider when a request names none. */
+  readonly voice?: string
+}
+```
+
+Source: [`packages/speech/speech/src/index.ts:38`](../packages/speech/speech/src/index.ts)
+
+<a id="deepseek-aidsh-speech-cache"></a>
+
+## `@deepseek-ai/dsh-speech-cache`
+
+Requires: `sessions` · `speech`
+
+```ts config-catalog
+/** Required deployment policy for cached read-aloud audio. */
+export interface Config {
+  /** Days a synthesized artifact is served before it is swept. */
+  readonly ttlDays: number
+  /**
+   * Synthesize every completed turn as it ends. False leaves synthesis to the
+   * first playback request, trading latency for spend on turns nobody plays.
+   */
+  readonly synthesizeOnTurnEnd: boolean
+}
+```
+
+Source: [`packages/speech/speech-cache/src/index.ts:45`](../packages/speech/speech-cache/src/index.ts)
+
+<a id="deepseek-aidsh-speech-litellm"></a>
+
+## `@deepseek-ai/dsh-speech-litellm`
+
+Requires: `speech`
+
+```ts config-catalog
+/** Plugin config; `apply` fills environment and constant defaults. */
+export interface Config {
+  /** Gateway API key. Falls back to `$LITELLM_API_KEY`. Empty → provider unavailable. */
+  apiKey?: string
+  /** Gateway base; `/audio/speech` is appended. Falls back to `$LITELLM_BASE_URL`. */
+  baseURL?: string
+  /** Request deadline in milliseconds. */
+  timeoutMs?: number
+}
+```
+
+Source: [`packages/speech/speech-litellm/src/index.ts:31`](../packages/speech/speech-litellm/src/index.ts)
+
 <a id="deepseek-aidsh-spill-local"></a>
 
 ## `@deepseek-ai/dsh-spill-local`
@@ -3243,6 +3317,7 @@ These load from a `cordis.yml` entry with no `config:` block; they declare no co
 - `@deepseek-ai/dsh-client-ui-jobs` ([`packages/client/ui-jobs/src/index.ts`](../packages/client/ui-jobs/src/index.ts))
 - `@deepseek-ai/dsh-client-ui-layout` ([`packages/client/ui-layout/src/index.ts`](../packages/client/ui-layout/src/index.ts))
 - `@deepseek-ai/dsh-client-ui-message-feedback` ([`packages/client/ui-message-feedback/src/index.ts`](../packages/client/ui-message-feedback/src/index.ts))
+- `@deepseek-ai/dsh-client-ui-message-speech` ([`packages/client/ui-message-speech/src/index.ts`](../packages/client/ui-message-speech/src/index.ts))
 - `@deepseek-ai/dsh-client-ui-model-selection` ([`packages/client/ui-model-selection/src/index.ts`](../packages/client/ui-model-selection/src/index.ts))
 - `@deepseek-ai/dsh-client-ui-permission-presets` ([`packages/client/ui-permission-presets/src/index.ts`](../packages/client/ui-permission-presets/src/index.ts))
 - `@deepseek-ai/dsh-client-ui-plan` ([`packages/client/ui-plan/src/index.ts`](../packages/client/ui-plan/src/index.ts))

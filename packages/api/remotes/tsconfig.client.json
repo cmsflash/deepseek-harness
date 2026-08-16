@@ -40,6 +40,9 @@
       "path": "../../feedback/message-feedback"
     },
     {
+      "path": "../../speech/speech-cache"
+    },
+    {
       "path": "../../host/plugin-inventory"
     },
     {

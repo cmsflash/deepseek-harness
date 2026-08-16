@@ -1,0 +1,49 @@
+/* The read-aloud control mirrors the shared message IconActions chrome so the
+   strip reads as one row. */
+
+.action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 6px;
+  border: none;
+  border-radius: 28px;
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary);
+  cursor: pointer;
+}
+
+.action:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-secondary);
+}
+
+/* Active playback stays legible without hover, so the control still reads as
+   "this message is speaking" once the pointer leaves the row. */
+.active {
+  color: var(--dsw-alias-label-primary);
+}
+
+/* Synthesis of a long reply takes a moment; the pulse distinguishes waiting
+   from an unresponsive button without moving layout. */
+.loading {
+  animation: speech-pulse 1.2s ease-in-out infinite;
+}
+
+.failed {
+  color: var(--dsw-alias-state-error-primary);
+}
+
+@keyframes speech-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .loading {
+    animation: none;
+    opacity: 0.6;
+  }
+}
