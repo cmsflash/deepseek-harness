@@ -1,0 +1,95 @@
+/* The fully-rendered current turn: the message column plus per-call rows. */
+
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: var(--dsh-chat-content-width);
+  margin: 0 auto;
+}
+
+.heading {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 20px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.running {
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.user {
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-primary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.assistant {
+  color: var(--dsw-alias-label-primary);
+}
+
+.reasoning {
+  padding-left: 10px;
+  border-left: 2px solid var(--dsw-alias-border-l2);
+  color: var(--dsw-alias-label-tertiary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.call {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 12px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 10px;
+}
+
+.callHead {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 20px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.callName {
+  font-family: var(--dsw-font-markdown-code-font-family, monospace);
+  color: var(--dsw-alias-label-primary);
+}
+
+.callError {
+  color: var(--dsw-alias-state-error-primary);
+}
+
+.callArgs {
+  margin: 0;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-tertiary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.subCalls {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-left: 12px;
+  border-left: 1px solid var(--dsw-alias-border-l2);
+}
+
+.empty {
+  font-size: 12px;
+  line-height: 20px;
+  color: var(--dsw-alias-label-tertiary);
+}

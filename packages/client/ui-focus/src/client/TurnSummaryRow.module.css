@@ -1,0 +1,47 @@
+/* One collapsed turn: 12/20 tertiary text on the shared message column axis. */
+
+.row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: var(--dsh-chat-content-width);
+  margin: 0 auto;
+  padding: 2px 0;
+  font-size: 12px;
+  line-height: 20px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.turn {
+  flex: none;
+  color: var(--dsw-alias-label-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.metrics {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  min-width: 0;
+}
+
+.metric {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.sep {
+  margin: 0 8px;
+  color: var(--dsw-alias-label-dimmed);
+  user-select: none;
+}
+
+.added {
+  color: var(--dsw-alias-state-success-primary);
+}
+
+.removed {
+  color: var(--dsw-alias-state-error-primary);
+}
