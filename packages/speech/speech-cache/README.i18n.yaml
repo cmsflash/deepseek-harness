@@ -3,4 +3,4 @@
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write packages/speech/speech-cache/README.md
 README.md: 1a9c8ae8b1b583869be38a0f907d4d52cfe6bf13
-README.zh.md: 006d520e299b638040edf884caee1a5c9eb6f63f
+README.zh.md: e4439ae9f11facc9363ccf5cd7d75e8f585e558d

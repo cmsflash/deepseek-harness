@@ -376,9 +376,38 @@ function checkWorkspace({ dir, manifest }: WorkspaceManifest): string[] {
     if (!sameStringList(manifest.files, expectedFiles)) {
       errors.push(`${label}: package.json files must be ${JSON.stringify(expectedFiles)}`)
     }
+    errors.push(...generatedRemoteDependencyErrors(manifest, label))
   }
 
   return errors.map(error => `${relative(root, join(root, dir, 'package.json'))}: ${error}`)
+}
+
+/**
+ * Runtime packages a generated `./remote` artifact imports. Typert emits the
+ * request/result codecs with a top-level `import { z } from 'zod'`, so the
+ * owning package must declare zod even when nothing in `src` mentions it.
+ */
+export const GENERATED_REMOTE_RUNTIME_DEPENDENCIES = ['zod'] as const
+
+/**
+ * Require every runtime package a generated `./remote` artifact imports.
+ *
+ * The artifact is inlined into the browser bundle of whichever Client package
+ * imports it, and that bundle can only inline a module pnpm linked — which it
+ * does for declared dependencies alone. An undeclared import survives as a bare
+ * `require()` the frozen module table cannot answer, so the failure appears at
+ * browser boot rather than in typecheck, lint, or any host-side check
+ * ([postmortem](../docs/postmortem/0005-undeclared-zod-broke-web-plugin-boot.md)).
+ *
+ * @param manifest - parsed package manifest to inspect.
+ * @param label - package name used in error text.
+ * @returns one error per missing runtime dependency.
+ */
+export function generatedRemoteDependencyErrors(manifest: PackageManifest, label: string): string[] {
+  if (!hasTypertRemoteNavigation(manifest)) return []
+  return GENERATED_REMOTE_RUNTIME_DEPENDENCIES
+    .filter(name => manifest.dependencies?.[name] === undefined)
+    .map(name => `${label}: a package exporting "./remote" must declare "${name}" in dependencies — the generated artifact imports it, and an undeclared import cannot be inlined into the browser bundle`)
 }
 
 /**

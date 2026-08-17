@@ -2,7 +2,7 @@
 
 [English](README.md) | 中文
 
-以 `litellm` 为 id，向 `ctx.speech` 注册一个网关支撑的 `SpeechProvider`。它不拥有 `ctx.speech` 键——它注册进 seam 的注册表，正如 `@deepseek-ai/dsh-web-search-exa` 注册进 `ctx.web`。该键由 [`@deepseek-ai/dsh-speech`](../speech/README.md) 拥有。
+以 `litellm` 为 id，向 `ctx.speech` 注册一个网关支撑的 `SpeechProvider`。它不拥有 `ctx.speech` 键——它注册进 seam 的注册表，正如 `@deepseek-ai/dsh-web-search-exa` 注册进 `ctx.web`。该键由 [`@deepseek-ai/dsh-speech`](../speech/README.zh.md) 拥有。
 
 ## 为何用网关而非厂商适配器
 

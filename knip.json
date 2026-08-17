@@ -664,6 +664,18 @@
       "ignoreDependencies": [
         "@deepseek-ai/.+"
       ]
+    },
+    "packages/speech/speech-cache": {
+      "entry": [
+        "tests/**/*.spec.ts"
+      ],
+      "project": [
+        "src/**/*.ts",
+        "tests/**/*.ts"
+      ],
+      "ignoreDependencies": [
+        "zod"
+      ]
     }
   }
 }

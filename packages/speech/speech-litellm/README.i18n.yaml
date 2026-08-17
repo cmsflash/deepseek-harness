@@ -3,4 +3,4 @@
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write packages/speech/speech-litellm/README.md
 README.md: e4dbe02b15fd305aeaf84f40fd5af5e8d863373f
-README.zh.md: f49c2fe020a48433c27b93fe406f242e033a94cd
+README.zh.md: 1dc08988d9a8e6886136cdbd260846ca047e6d50

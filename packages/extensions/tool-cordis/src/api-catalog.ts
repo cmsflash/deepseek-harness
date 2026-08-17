@@ -1711,6 +1711,47 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
     ],
   },
   {
+    key: 'speech',
+    summary: 'The speech synthesis service, registered as `ctx.speech`.',
+    description: 'The speech synthesis service, registered as `ctx.speech`.\n\nSelection semantics (resolved at execution time, never order-dependent):\n\n- A configured id that is registered and `available()` → that provider.\n- A configured id not registered → `SPEECH_PROVIDER_CONFIGURED_MISSING`.\n- A configured id registered but unavailable → `SPEECH_PROVIDER_CONFIGURED_UNAVAILABLE`.\n- No id configured, exactly one registered usable provider → that provider.\n- No id configured, multiple usable providers → `SPEECH_PROVIDER_AMBIGUOUS`.\n- No id configured, no usable provider → `SPEECH_PROVIDER_UNAVAILABLE`.',
+    methods: [
+      {
+        signature: 'registerProvider(provider: SpeechProvider): () => void',
+        description: 'Register a synthesis provider.',
+        parameters: [{ name: 'provider', description: 'the provider; its `id` is the registry key.' }],
+        returns: 'the disposer that unregisters the provider.',
+        throws: ['{@link SpeechError} `SPEECH_DUPLICATE_PROVIDER` when the id is taken.'],
+      },
+      {
+        signature: 'resolve(request: SpeechRequest): SpeechSpec',
+        description: 'Apply deployment policy to one request. This is the only place defaults are filled, so a provider always receives a complete spec.',
+        parameters: [{ name: 'request', description: 'the caller\'s text and optional voice.' }],
+        returns: 'the resolved spec, with `truncated` set when text exceeded `maxChars`.',
+        throws: ['{@link SpeechError} `SPEECH_EMPTY_TEXT` when the text is blank.'],
+      },
+      {
+        signature: 'async synthesize(request: SpeechRequest, signal?: AbortSignal): Promise<SpeechAudio>',
+        description: 'Resolve one request and synthesize it through the selected provider.\n\nPolicy and selection failures surface as rejections rather than synchronous throws, so one `catch` covers every way synthesis can fail.',
+        parameters: [{ name: 'request', description: 'the caller\'s text and optional voice.' }, { name: 'signal', description: 'optional cancellation forwarded to the provider.' }],
+        returns: 'the encoded audio and any usage the backend reported.',
+        throws: ['{@link SpeechError} when no provider can run or the backend fails.'],
+      },
+    ],
+  },
+  {
+    key: 'speechCache',
+    summary: 'Cached read-aloud audio for finalized assistant messages.',
+    description: 'Cached read-aloud audio for finalized assistant messages.\n\nThe Host resolves spoken text from the Session log by `messageId`, so a browser sends identity rather than prose and no conversation surface has to carry the text.',
+    methods: [
+      {
+        signature: '@Remote(\'audio\') async audio(request: SpeechAudioRequest): Promise<SpeechAudioResult>',
+        description: 'Read one message\'s audio, synthesizing it when the cache does not hold it.',
+        parameters: [{ name: 'request', description: 'the Session and message to read aloud.' }],
+        returns: 'base64 audio, or an explicit failure.',
+      },
+    ],
+  },
+  {
     key: 'spillStore',
     summary: 'Abstract spill storage service.',
     description: 'Abstract spill storage service. Subclass, implement saveText, and load the subclass as a plugin — it registers as `ctx.spillStore` (one implementation per context; loading a second throws, cordis\' standard duplicate-service behavior).\n\nSemantics every implementation must honor:\n\n- saveText persists the FULL `content` verbatim and returns an opaque locator, exact byte length, and model-facing retrieval guidance.\n- Storage is scoped by the request\'s SaveTextSpill.owner session; the backend chooses a private (not world-readable) location and a collision-free name derived from — never equal to — the caller\'s `suggestedName`.\n- `saveText` REJECTS on a real storage failure (permissions, ENOSPC, backend unavailable); the caller decides how to degrade (the spill policy treats a rejection as best-effort and keeps the inline result).',
@@ -4428,6 +4469,50 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'SpawnTeammateResult',
     declaration: 'export interface SpawnTeammateResult {\n    readonly member: TeamMemberView;\n}',
+  },
+  {
+    name: 'SpeechAudio',
+    declaration: 'export interface SpeechAudio {\n    readonly data: Uint8Array;\n    readonly mediaType: SpeechMediaType;\n    readonly billedCharacters?: number;\n    readonly durationMs?: number;\n}',
+  },
+  {
+    name: 'SpeechAudioFailure',
+    declaration: 'export interface SpeechAudioFailure {\n    readonly ok: false;\n    readonly code: SpeechAudioFailureCode;\n    readonly detail?: string;\n}',
+  },
+  {
+    name: 'SpeechAudioFailureCode',
+    declaration: 'export type SpeechAudioFailureCode = \'session-not-found\' | \'message-not-found\' | \'synthesis-failed\';',
+  },
+  {
+    name: 'SpeechAudioRequest',
+    declaration: 'export interface SpeechAudioRequest {\n    readonly sessionId: SessionId;\n    readonly messageId: MessageId;\n}',
+  },
+  {
+    name: 'SpeechAudioResult',
+    declaration: 'export type SpeechAudioResult = SpeechAudioSuccess | SpeechAudioFailure;',
+  },
+  {
+    name: 'SpeechAudioSuccess',
+    declaration: 'export interface SpeechAudioSuccess {\n    readonly ok: true;\n    readonly value: SpeechAudioValue;\n}',
+  },
+  {
+    name: 'SpeechAudioValue',
+    declaration: 'export interface SpeechAudioValue {\n    readonly data: string;\n    readonly mediaType: \'audio/mpeg\';\n    readonly regenerated: boolean;\n}',
+  },
+  {
+    name: 'SpeechMediaType',
+    declaration: 'export type SpeechMediaType = \'audio/mpeg\' | \'audio/wav\' | \'audio/flac\';',
+  },
+  {
+    name: 'SpeechProvider',
+    declaration: 'export interface SpeechProvider {\n    readonly id: string;\n    available(): boolean;\n    synthesize(spec: SpeechSpec, signal?: AbortSignal): Promise<SpeechAudio>;\n}',
+  },
+  {
+    name: 'SpeechRequest',
+    declaration: 'export interface SpeechRequest {\n    readonly text: string;\n    readonly voice?: string;\n}',
+  },
+  {
+    name: 'SpeechSpec',
+    declaration: 'export interface SpeechSpec {\n    readonly text: string;\n    readonly model: string;\n    readonly bitrate: number;\n    readonly voice?: string;\n    readonly truncated: boolean;\n}',
   },
   {
     name: 'SpillLocator',

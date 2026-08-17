@@ -119,7 +119,7 @@ Failures are values rather than throws, so a browser branches on a code instead 
 
 ## Cordis API
 
-Generated from source by `scripts/gen-cordis-catalog.ts` (verified fresh by `pnpm run verify-cordis-catalog` in doc-sync; regenerate with `pnpm run gen-cordis-catalog`) — this section is byte-identical in both language sides of the page. Signature blocks use a `ts cordis-catalog` fence and keep the original source JSDoc; dispatch modes are defined in the [primer](../cordis-primer.md#dispatch-modes), and the framework-inherited `ctx` API lives in [cordis-api/inherited.md](../cordis-api/inherited.md).
+Generated from source by `scripts/gen-cordis-catalog.ts` (verified fresh by `pnpm run verify-cordis-catalog` in doc-sync; regenerate with `pnpm run gen-cordis-catalog`) — the language sides differ only in locale-specific paired document paths. Signature blocks use a `ts cordis-catalog` fence and keep the original source JSDoc; dispatch modes are defined in the [primer](../cordis-primer.md#dispatch-modes), and the framework-inherited `ctx` API lives in [cordis-api/inherited.md](../cordis-api/inherited.md).
 
 <a id="ctxspeech--speechruntime"></a>
 
@@ -168,7 +168,7 @@ resolve(request: SpeechRequest): SpeechSpec
 async synthesize(request: SpeechRequest, signal?: AbortSignal): Promise<SpeechAudio>
 ```
 
-Source: [`packages/speech/speech/src/index.ts:70`](../../packages/speech/speech/src/index.ts)
+Source: [`packages/speech/speech/src/index.ts`](../../packages/speech/speech/src/index.ts)
 
 <a id="ctxspeechcache--speechcacheservice"></a>
 
@@ -187,5 +187,5 @@ The Host resolves spoken text from the Session log by `messageId`, so a browser 
 @Remote('audio') async audio(request: SpeechAudioRequest): Promise<SpeechAudioResult>
 ```
 
-Source: [`packages/speech/speech-cache/src/index.ts:65`](../../packages/speech/speech-cache/src/index.ts)
+Source: [`packages/speech/speech-cache/src/index.ts`](../../packages/speech/speech-cache/src/index.ts)
 <!-- END GENERATED cordis-surface -->

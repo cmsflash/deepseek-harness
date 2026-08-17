@@ -16,7 +16,7 @@ Status: implemented
 
 ### Capability seam
 
-三个角色，依照 [capability-seam 依据](../../implemented/architecture/2026-06-13-capability-seams.md)：
+三个角色，依照 [capability-seam 依据](../../implemented/architecture/2026-06-13-capability-seams.zh.md)：
 
 - **Service Definition** `dsh-speech` 拥有 `ctx.speech`、request/spec 拆分以及音频词汇。它显式地把 request 解析为 spec，因此没有任何 provider 把默认值藏进 `synthesize()`。
 - **Service Provider** `dsh-speech-litellm` 经 LiteLLM 网关调用 `/audio/speech`。MiniMax 在厂商 API 层面并不兼容 OpenAI（是 `/v1/t2a_v2`，不是 `/v1/audio/speech`），因此集成点是 LiteLLM 的专用适配器，而非用 OpenAI base-URL 覆盖。
@@ -49,6 +49,12 @@ Subagent 会话被排除。它们的 turn 没有面向用户的播放界面，�
 模型固定在 `2.6` 标识符上，因为 LiteLLM 的价格表没有 `speech-2.8-*` 条目；那些模型能工作但报告零成本，会悄悄破坏支出核算。
 
 `maxChars` 约束单次请求。MiniMax 同步接口接受 10,000 字符，更长的收尾消息会被截断而非切分，因为读出一部分比无上限的账单更可接受。
+
+### 包清单要承载生成产物的 import
+
+`dsh-speech-cache` 声明了 `zod`，尽管 `src` 下没有任何文件 import 它：Typert 生成的 `./remote` 编解码器首行是 `import { z } from 'zod'`，该产物会被内联进 import 它的 Client bundle，而打包器只能内联 pnpm 为已声明依赖建立链接的模块。`scripts/check-workspace-constraints.ts` 现在对每个导出规范 `./remote` 对的包断言这一点，因为该约定已在五个包中成立却无任何检查（[事故复盘](../../../../docs/postmortem/0005-undeclared-zod-broke-web-plugin-boot.zh.md)）。
+
+`tsconfig.base.json` 显式映射了 `@deepseek-ai/dsh-client-ui-message-speech`。client 包名以其分组目录为前缀，因此通用的 `@deepseek-ai/dsh-*` 通配符无法覆盖它们，`verify-cordis-config` 要求该条目。
 
 ## 实测成本
 

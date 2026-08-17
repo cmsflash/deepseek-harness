@@ -50,6 +50,12 @@ The model is pinned to a `2.6` identifier because LiteLLM's price map has no ent
 
 `maxChars` bounds one request. MiniMax accepts 10,000 characters synchronously, and a longer closing message is truncated rather than split, because a partial reading is a better failure than an unbounded bill.
 
+### Package manifests carry the generated artifact's imports
+
+`dsh-speech-cache` declares `zod` even though no file under `src` imports it: Typert emits the `./remote` codecs with a top-level `import { z } from 'zod'`, that artifact is inlined into the Client bundle importing it, and a bundler can only inline a module pnpm linked for a declared dependency. `scripts/check-workspace-constraints.ts` now asserts this for every package exporting the canonical `./remote` pair, because the convention held across five packages with nothing enforcing it ([postmortem](../../../../docs/postmortem/0005-undeclared-zod-broke-web-plugin-boot.md)).
+
+`tsconfig.base.json` maps `@deepseek-ai/dsh-client-ui-message-speech` explicitly. Client package names prefix their group directory, so the generic `@deepseek-ai/dsh-*` wildcard cannot reach them and `verify-cordis-config` requires the entry.
+
 ## Measured cost
 
 Figures below come from this machine on 2026-08-14: the DSH Session logs, the OpenCode desktop and dev SQLite stores, and the LiteLLM console.

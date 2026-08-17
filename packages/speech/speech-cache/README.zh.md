@@ -2,7 +2,7 @@
 
 [English](README.md) | 中文
 
-已完成轮次的朗读音频：一个 `turn/end` 监听器经 [`ctx.speech`](../speech/README.md) 合成每个轮次的收尾正文，一个位于 Harness home 下的文件系统缓存，以及浏览器据以播放的 `speechCache` Remote。
+已完成轮次的朗读音频：一个 `turn/end` 监听器经 [`ctx.speech`](../speech/README.zh.md) 合成每个轮次的收尾正文，一个位于 Harness home 下的文件系统缓存，以及浏览器据以播放的 `speechCache` Remote。
 
 音频是可重新生成的呈现内容，绝非持久的会话状态。本包不向会话日志追加任何内容，`SESSION_FORMAT_VERSION` 不受影响，缓存未命中是通过再次合成解决的普通结果。
 

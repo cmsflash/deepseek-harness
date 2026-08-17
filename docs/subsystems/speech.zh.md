@@ -2,7 +2,7 @@
 
 [English](speech.md) | 中文
 
-语音合成 seam —— 一个跨包拆分的[能力 seam](../../.agents/notes/implemented/architecture/2026-06-13-capability-seams.md)：Service Definition（[dsh-speech](../../packages/speech/speech)，`ctx.speech` 加提供方注册表）、Service Provider（[dsh-speech-litellm](../../packages/speech/speech-litellm)），以及 Consumer（[dsh-speech-cache](../../packages/speech/speech-cache)，朗读已完成的轮次）。语音是**一项可选能力**，不属于 agent loop 主干，因此它的词汇放在这里而非 [core.md](core.md)。
+语音合成 seam —— 一个跨包拆分的[能力 seam](../../.agents/notes/implemented/architecture/2026-06-13-capability-seams.zh.md)：Service Definition（[dsh-speech](../../packages/speech/speech)，`ctx.speech` 加提供方注册表）、Service Provider（[dsh-speech-litellm](../../packages/speech/speech-litellm)），以及 Consumer（[dsh-speech-cache](../../packages/speech/speech-cache)，朗读已完成的轮次）。语音是**一项可选能力**，不属于 agent loop 主干，因此它的词汇放在这里而非 [core.md](core.zh.md)。
 
 来源：[`packages/speech/speech/src/types.ts`](../../packages/speech/speech/src/types.ts)
 
@@ -79,7 +79,7 @@ interface SpeechProvider {
 }
 ```
 
-`available()` 是廉价的本地检查，不得发起网络调用。选择在执行时解析，绝不依赖注册顺序：配置的 id 必须已注册且可用，未配置时则要求恰有一个可用提供方。各失败分支（`SPEECH_PROVIDER_CONFIGURED_MISSING`、`SPEECH_PROVIDER_CONFIGURED_UNAVAILABLE`、`SPEECH_PROVIDER_UNAVAILABLE`、`SPEECH_PROVIDER_AMBIGUOUS`）以带该代码的 `SpeechError` reject；完整表格见[包 README](../../packages/speech/speech/README.md)。
+`available()` 是廉价的本地检查，不得发起网络调用。选择在执行时解析，绝不依赖注册顺序：配置的 id 必须已注册且可用，未配置时则要求恰有一个可用提供方。各失败分支（`SPEECH_PROVIDER_CONFIGURED_MISSING`、`SPEECH_PROVIDER_CONFIGURED_UNAVAILABLE`、`SPEECH_PROVIDER_UNAVAILABLE`、`SPEECH_PROVIDER_AMBIGUOUS`）以带该代码的 `SpeechError` reject；完整表格见[包 README](../../packages/speech/speech/README.zh.md)。
 
 ## 音频不是会话状态
 
@@ -119,7 +119,7 @@ interface SpeechAudioValue {
 
 ## Cordis API
 
-Generated from source by `scripts/gen-cordis-catalog.ts` (verified fresh by `pnpm run verify-cordis-catalog` in doc-sync; regenerate with `pnpm run gen-cordis-catalog`) — this section is byte-identical in both language sides of the page. Signature blocks use a `ts cordis-catalog` fence and keep the original source JSDoc; dispatch modes are defined in the [primer](../cordis-primer.md#dispatch-modes), and the framework-inherited `ctx` API lives in [cordis-api/inherited.md](../cordis-api/inherited.md).
+Generated from source by `scripts/gen-cordis-catalog.ts` (verified fresh by `pnpm run verify-cordis-catalog` in doc-sync; regenerate with `pnpm run gen-cordis-catalog`) — the language sides differ only in locale-specific paired document paths. Signature blocks use a `ts cordis-catalog` fence and keep the original source JSDoc; dispatch modes are defined in the [primer](../cordis-primer.zh.md#dispatch-modes), and the framework-inherited `ctx` API lives in [cordis-api/inherited.md](../cordis-api/inherited.md).
 
 <a id="ctxspeech--speechruntime"></a>
 
@@ -168,7 +168,7 @@ resolve(request: SpeechRequest): SpeechSpec
 async synthesize(request: SpeechRequest, signal?: AbortSignal): Promise<SpeechAudio>
 ```
 
-Source: [`packages/speech/speech/src/index.ts:70`](../../packages/speech/speech/src/index.ts)
+Source: [`packages/speech/speech/src/index.ts`](../../packages/speech/speech/src/index.ts)
 
 <a id="ctxspeechcache--speechcacheservice"></a>
 
@@ -187,5 +187,5 @@ The Host resolves spoken text from the Session log by `messageId`, so a browser 
 @Remote('audio') async audio(request: SpeechAudioRequest): Promise<SpeechAudioResult>
 ```
 
-Source: [`packages/speech/speech-cache/src/index.ts:65`](../../packages/speech/speech-cache/src/index.ts)
+Source: [`packages/speech/speech-cache/src/index.ts`](../../packages/speech/speech-cache/src/index.ts)
 <!-- END GENERATED cordis-surface -->
