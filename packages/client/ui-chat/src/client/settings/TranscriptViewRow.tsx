@@ -4,7 +4,7 @@ import { useState } from 'react'
 import type { SnapshotStore } from '@deepseek-ai/dsh-client-store'
 import { IconChevronDownOutline14, Menu } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
-import type { TranscriptViewMode } from '../../chat-settings.ts'
+import { TRANSCRIPT_VIEW_MODES, type TranscriptViewMode } from '../../chat-settings.ts'
 import type { ChatKey } from '../locale.ts'
 import css from './TranscriptViewRow.module.css'
 
@@ -24,22 +24,24 @@ export type TranscriptViewRowProps =
   & PropsLocale<'chat'>
   & InjectFace<TranscriptViewRowInjected>
 
-const OPTIONS: readonly { id: TranscriptViewMode; label: ChatKey }[] = [
-  { id: 'normal', label: 'settings.transcript.normal' },
-  { id: 'compact', label: 'settings.transcript.compact' },
-]
+const LABELS: Record<TranscriptViewMode, ChatKey> = {
+  normal: 'settings.transcript.normal',
+  compact: 'settings.transcript.compact',
+  collapsed: 'settings.transcript.collapsed',
+}
+
+const OPTIONS: readonly { id: TranscriptViewMode; label: ChatKey }[] = TRANSCRIPT_VIEW_MODES
+  .map(id => ({ id, label: LABELS[id] }))
 
 /**
- * Render the completed-Turn transcript mode selector.
+ * Render the transcript mode selector.
  * @param props - composed Settings slot props.
  * @returns the preference row.
  */
 export function TranscriptViewRow({ useTranscriptView, setTranscriptView, t }: TranscriptViewRowProps) {
   const mode = useTranscriptView(value => value)
   const [open, setOpen] = useState(false)
-  const selectedLabel = mode === 'normal'
-    ? 'settings.transcript.normal'
-    : 'settings.transcript.compact'
+  const selectedLabel = LABELS[mode]
   const closeMenu = () => { setOpen(false) }
   const selectMode = (id: string) => {
     closeMenu()

@@ -24,6 +24,8 @@ describe('ui-chat Host settings', () => {
     expect(ctx.settings.get(ns)).toEqual({ transcriptView: DEFAULT_TRANSCRIPT_VIEW_MODE })
     await ctx.settings.update(ns, { transcriptView: 'normal' })
     expect(ctx.settings.get(ns)).toEqual({ transcriptView: 'normal' })
+    await ctx.settings.update(ns, { transcriptView: 'collapsed' })
+    expect(ctx.settings.get(ns)).toEqual({ transcriptView: 'collapsed' })
     await expect(ctx.settings.update(ns, { transcriptView: 'dense' })).rejects.toThrow()
 
     await fiber.dispose()

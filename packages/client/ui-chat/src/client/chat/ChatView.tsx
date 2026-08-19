@@ -12,6 +12,8 @@ import type { ChatViewSlotProps, OpenFileOptions } from '../contract/slots.ts'
 import type { ChatSnapshot } from '../contract/snapshot.ts'
 import { PendingSteeringBubble, PendingSubmissionBubble } from './MessageItem.tsx'
 import { ChatNodeSeat } from './ChatNodeSeat.tsx'
+import { CollapsedStepsRow } from './CollapsedStepsRow.tsx'
+import { collapseSettledSteps, type ChatFlowRow } from './step-collapse.ts'
 import { TurnNavigator } from './TurnNavigator.tsx'
 import { mergeTurnRailItems, type TurnRailItem } from './turn-rail-items.ts'
 import { formatRunDuration } from './message-chrome.ts'
@@ -202,13 +204,27 @@ function TurnStatus({ startTime, t }: {
 }
 
 type ChatNodeListProps = Omit<ComponentProps<typeof ChatNodeSeat>, 'nodeKey'> & {
-  readonly order: readonly string[]
+  readonly flow: readonly ChatFlowRow[]
+  readonly expandedTurns: ReadonlySet<number>
+  readonly toggleTurn: (turn: number) => void
 }
 
-const ChatNodeList = memo(function ChatNodeList({ order, ...seatProps }: ChatNodeListProps) {
-  return order.map(nodeKey => (
-    <ChatNodeSeat key={nodeKey} nodeKey={nodeKey} {...seatProps} />
-  ))
+const ChatNodeList = memo(function ChatNodeList({
+  flow, expandedTurns, toggleTurn, ...seatProps
+}: ChatNodeListProps) {
+  return flow.map(row => (row.kind === 'collapsed'
+    ? (
+      <CollapsedStepsRow
+        key={`collapsed:${String(row.turn)}`}
+        turn={row.turn}
+        metrics={row.metrics}
+        expanded={expandedTurns.has(row.turn)}
+        onToggle={() => { toggleTurn(row.turn) }}
+        renderSlot={seatProps.renderSlot}
+        t={seatProps.t}
+      />
+    )
+    : <ChatNodeSeat key={row.key} nodeKey={row.key} {...seatProps} />))
 })
 
 /**
@@ -243,6 +259,24 @@ export function ChatView({
   const hasMore = useSession(s => s.hasMore)
   const loadingOlder = useSession(s => s.loadingOlder)
   const compactTranscript = useTranscriptView(mode => mode === 'compact')
+  const collapseSteps = useTranscriptView(mode => mode === 'collapsed')
+  // Reader-owned disclosure: only this view knows which turns the reader
+  // opened, and the choice is deliberately not persisted — a fresh mount
+  // starts collapsed again, matching the preference's intent.
+  const [expandedTurns, setExpandedTurns] = useState<ReadonlySet<number>>(() => new Set())
+  const toggleTurn = useCallback((turn: number) => {
+    setExpandedTurns((current) => {
+      const next = new Set(current)
+      if (!next.delete(turn)) next.add(turn)
+      return next
+    })
+  }, [])
+  const flow = useMemo<readonly ChatFlowRow[]>(
+    () => (collapseSteps
+      ? collapseSettledSteps(order, nodeStore, expandedTurns)
+      : order.map(key => ({ kind: 'node', key }) as const)),
+    [collapseSteps, order, nodeStore, expandedTurns],
+  )
   const inspectCall = useCallback((callId: string) => {
     openView('trajectory', callId)
   }, [openView])
@@ -784,7 +818,9 @@ export function ChatView({
           )}
           <MarkdownDelegateProvider openExternalLink={openExternalLink} openFile={requestOpenFile}>
             <ChatNodeList
-              order={order}
+              flow={flow}
+              expandedTurns={expandedTurns}
+              toggleTurn={toggleTurn}
               useChatNode={useChatNode}
               useChatNodeProcess={useChatNodeProcess}
               historyIncomplete={hasMore}

@@ -43,7 +43,7 @@
     - img
   - button "Decrease font size":
     - img
-  - text: px Conversation display Controls process content in completed turns
+  - text: px Conversation display Controls how turn process content is shown
   - button "Compact":
     - text: Compact
     - img
