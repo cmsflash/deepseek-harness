@@ -9,7 +9,10 @@ import {
 import type {
   BusyEnterBehavior, ComposerSubmitGesture, InputSubmitMode,
 } from '../contract/composer-submission.ts'
-import { BUSY_ENTER_FIELD, DEFAULT_BUSY_ENTER_BEHAVIOR } from '../../submission-settings.ts'
+import {
+  BUSY_ENTER_FIELD, COLLAPSE_SETTLED_STEPS_FIELD, DEFAULT_BUSY_ENTER_BEHAVIOR,
+  DEFAULT_COLLAPSE_SETTLED_STEPS,
+} from '../../submission-settings.ts'
 import type { ConversationSettings } from '../../submission-settings.ts'
 
 export { DEFAULT_BUSY_ENTER_BEHAVIOR } from '../../submission-settings.ts'
@@ -22,6 +25,8 @@ export { DEFAULT_BUSY_ENTER_BEHAVIOR } from '../../submission-settings.ts'
 export class ComposerSubmissionPolicy {
   /** Reactive preference source for the Settings row. */
   readonly busyEnter: SnapshotStore<BusyEnterBehavior> = createSnapshotStore(DEFAULT_BUSY_ENTER_BEHAVIOR)
+  /** Reactive step-collapse preference shared by the Settings row and the Chat view. */
+  readonly collapseSteps: SnapshotStore<boolean> = createSnapshotStore(DEFAULT_COLLAPSE_SETTLED_STEPS)
   private readonly host: SettingsScope<ConversationSettings> | undefined
 
   /**
@@ -68,12 +73,26 @@ export class ComposerSubmissionPolicy {
   }
 
   /**
-   * Adopt the scope's accepted durable behavior without writing it back.
+   * Change whether a turn's settled steps collapse behind one summary row;
+   * the live value publishes before the durable write starts.
+   * @param collapse - whether earlier steps fold away.
+   */
+  setCollapseSteps(collapse: boolean): void {
+    if (this.collapseSteps.getSnapshot() === collapse) return
+    this.collapseSteps.set(collapse)
+    void this.host?.set(COLLAPSE_SETTLED_STEPS_FIELD, collapse)
+  }
+
+  /**
+   * Adopt the scope's accepted durable preferences without writing them back.
    * @param host - the constructor-narrowed scope driving this adoption.
    */
   private adopt(host: SettingsScope<ConversationSettings>): void {
     const section = host.getSnapshot().value
-    if (section === undefined || this.busyEnter.getSnapshot() === section.busyEnter) return
-    this.busyEnter.set(section.busyEnter)
+    if (section === undefined) return
+    if (this.busyEnter.getSnapshot() !== section.busyEnter) this.busyEnter.set(section.busyEnter)
+    if (this.collapseSteps.getSnapshot() !== section.collapseSettledSteps) {
+      this.collapseSteps.set(section.collapseSettledSteps)
+    }
   }
 }

@@ -268,6 +268,7 @@ function makeHarness(init?: Partial<ConversationSnapshot>) {
     useSessions: emptySessions(),
     useWorkspaces: emptyWorkspaces(),
     useProjection: (() => undefined),
+    useCollapseSteps: ((selector: (value: boolean) => unknown) => selector(false)) as ChatViewSlotProps['useCollapseSteps'],
     useInput: (() => { throw new Error('unused') }),
     inputActions: {
       setDraft: () => {},

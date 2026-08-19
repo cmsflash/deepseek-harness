@@ -25,6 +25,8 @@ import type { ComposerBlock } from './input/blocks.ts'
 import { InputHub } from './input/hub.ts'
 import { ComposerSubmissionPolicy } from './input/submission-policy.ts'
 import { InputBar } from './skeleton/InputBar.tsx'
+import { CollapseStepsRow } from './settings/CollapseStepsRow.tsx'
+import type { CollapseStepsRowInjected } from './settings/CollapseStepsRow.tsx'
 import { EnterBehaviorRow } from './settings/EnterBehaviorRow.tsx'
 import type { EnterBehaviorRowInjected } from './settings/EnterBehaviorRow.tsx'
 import { ChatView } from './chat/ChatView.tsx'
@@ -144,6 +146,17 @@ export function apply(ctx: Context): void {
       setBusyEnter: (behavior) => { submissionPolicy.setBusyEnter(behavior) },
     }),
   }, EnterBehaviorRow))
+
+  ctx.slots.inject('settings.general.item', () => ctx.slots.register({
+    name: 'settings.general.item',
+    id: 'chat-collapse-steps',
+    order: 21,
+    locale: NS,
+    inject: (): CollapseStepsRowInjected => ({
+      hooks: { collapseSteps: submissionPolicy.collapseSteps },
+      setCollapseSteps: (collapse) => { submissionPolicy.setCollapseSteps(collapse) },
+    }),
+  }, CollapseStepsRow))
 
   // Chat semantic reader positions by session, surviving view switches and
   // width reflow when the tab ring remounts the view. Deliberately not
@@ -386,12 +399,14 @@ export function apply(ctx: Context): void {
     children: {
       'conversation.chat.node': { kind: 'keyed', scope: 'session', inject: CHAT_NODE_INJECT },
       'conversation.message.images': { kind: 'single', scope: 'session' },
+      'conversation.chat.collapsedMetric': { kind: 'list', scope: 'session' },
     },
     store: chatStore,
     inject: (sessionId: SessionId, actions: BoundActions<typeof chatStore>): ChatViewInjected => {
       const conversation = concreteConversation(ctx)
       const scoped = scopedConversation(sessions, sessionId)
       return {
+        hooks: { collapseSteps: submissionPolicy.collapseSteps },
         openDetails: (target) => {
           actions.select(target)
           layout.openDetails()

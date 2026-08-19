@@ -139,6 +139,20 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
      */
     'conversation.chat.turnTail': { kind: 'chain'; scope: 'session'; owner: TurnTailOwnerProps }
     /**
+     * One contributed figure on a collapsed-steps row, rendered after every
+     * figure the row itself computes. Ordering is deliberate: built-ins always
+     * come first, so a contributor never has to reserve an `order` band
+     * against figures this row may gain later; entries render among themselves
+     * by ascending `order`. The owner passes the collapsed group's identity and
+     * its already-folded counts, so a contributor addresses the same hidden
+     * steps without re-reading the Session.
+     */
+    'conversation.chat.collapsedMetric': {
+      kind: 'list'
+      scope: 'session'
+      owner: CollapsedMetricOwnerProps
+    }
+    /**
      * Action strip attached to one finalized assistant message, rendered
      * inside that message's IconActions row. The chat entry owns the render
      * site and passes the addressed message identity; contributors add
@@ -388,6 +402,19 @@ export interface TurnTailOwnerProps {
    * view resolves relative paths against the session cwd).
    */
   openFile: (path: string) => void
+}
+
+/**
+ * Owner currency of one contributed collapsed-row figure: which turn's hidden
+ * steps the row stands for, and the counts it already folded.
+ */
+export interface CollapsedMetricOwnerProps {
+  /** Turn owning the hidden steps. */
+  turn: number
+  /** Hidden model calls; zero when the group's work was entirely tool calls. */
+  steps: number
+  /** Hidden settled tool calls, counting nested subcalls. */
+  calls: number
 }
 
 /**
@@ -748,6 +775,12 @@ export interface ChatScrollPosition {
  * outside the view (layout orchestration; the session object layer).
  */
 export interface ChatViewInjected {
+  /**
+   * Framework-bound sources. `collapseSteps` is the durable preference folding
+   * each turn's settled steps behind one summary row; the Settings row owns
+   * writing it, so the view only reads.
+   */
+  hooks: { collapseSteps: ObservableSnapshot<boolean> }
   /** Selection write + details panel opening in one gesture (store action + layout orchestration). */
   openDetails: (target: SelectionTarget) => void
   /**
@@ -787,8 +820,8 @@ export interface ChatViewInjected {
 /** Full chat-view component props: runtime & its Tool/command/tail render shares & store & injected & locale seat. */
 export type ChatViewSlotProps =
   PropsRuntime<'conversation.view'>
-  & PropsRenderSlots<'conversation.chat.node' | 'conversation.message.images'>
-  & PropsStore<ChatStore> & ChatViewInjected & PropsLocale<'conversation'>
+  & PropsRenderSlots<'conversation.chat.node' | 'conversation.message.images' | 'conversation.chat.collapsedMetric'>
+  & PropsStore<ChatStore> & InjectFace<ChatViewInjected> & PropsLocale<'conversation'>
 
 /** Full props of the attachment plugin's composer entry. */
 export type ComposerAttachmentsProps =

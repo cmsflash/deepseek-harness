@@ -19,6 +19,8 @@ import { Button, IconChevronDownOutline14, Modal } from '@deepseek-ai/dsh-client
 import type { ChatViewSlotProps, RenderMessageImages } from '../contract/slots.ts'
 import { PendingSteeringBubble } from './MessageItem.tsx'
 import { ChatNodeSeat } from './ChatNodeSeat.tsx'
+import { CollapsedStepsRow } from './CollapsedStepsRow.tsx'
+import { collapseSettledSteps } from './step-collapse.ts'
 import { formatRunDuration } from './message-chrome.ts'
 import css from './ChatView.module.css'
 
@@ -156,8 +158,8 @@ function TurnStatus({ startTime, t }: {
  * ordered business Node crosses the keyed renderer seat.
  */
 export function ChatView({
-  useSession, useSessions, useStore, renderSlot, sessionId, openFile, loadOlder, loadImage, inspectCall, chatScroll, forkAt,
-  fileMentions, t,
+  useSession, useSessions, useStore, useCollapseSteps, renderSlot, sessionId, openFile, loadOlder, loadImage,
+  inspectCall, chatScroll, forkAt, fileMentions, t,
 }: ChatViewSlotProps) {
   const order = useSession(s => s.chat.order)
   const nodeStore = useSession(s => s.chat.nodes)
@@ -215,6 +217,18 @@ export function ChatView({
     [loadImage, renderSlot],
   )
   const runningTurnStart = useMemo(() => runningTurnStartTime(timeline), [timeline])
+
+  // Reader-owned disclosure: only this view knows which turns the reader
+  // opened, and the choice is deliberately not persisted — a fresh mount
+  // starts collapsed again, matching the preference's intent.
+  const collapseSteps = useCollapseSteps(value => value)
+  const [expandedTurns, setExpandedTurns] = useState<ReadonlySet<number>>(() => new Set())
+  const flow = useMemo(
+    () => (collapseSteps
+      ? collapseSettledSteps(order, nodeStore, expandedTurns)
+      : order.map(key => ({ kind: 'node', key }) as const)),
+    [collapseSteps, order, nodeStore, expandedTurns],
+  )
 
   const listRef = useRef<HTMLDivElement | null>(null)
   const columnRef = useRef<HTMLDivElement | null>(null)
@@ -429,22 +443,40 @@ export function ChatView({
               </button>
             </div>
           )}
-          {order.map(nodeKey => (
-            <ChatNodeSeat
-              key={nodeKey}
-              nodeKey={nodeKey}
-              useSession={useSession}
-              selectedCallId={selectedCallId}
-              cwd={cwd}
-              openFile={requestOpenFile}
-              inspectCall={inspectCall}
-              forkAt={forkAt}
-              renderMessageImages={renderMessageImages}
-              fileMentions={fileMentions}
-              renderSlot={renderSlot}
-              t={t}
-            />
-          ))}
+          {flow.map(row => (row.kind === 'collapsed'
+            ? (
+              <CollapsedStepsRow
+                key={`collapsed:${String(row.turn)}`}
+                turn={row.turn}
+                metrics={row.metrics}
+                expanded={expandedTurns.has(row.turn)}
+                renderSlot={renderSlot}
+                onToggle={() => {
+                  setExpandedTurns((current) => {
+                    const next = new Set(current)
+                    if (!next.delete(row.turn)) next.add(row.turn)
+                    return next
+                  })
+                }}
+                t={t}
+              />
+            )
+            : (
+              <ChatNodeSeat
+                key={row.key}
+                nodeKey={row.key}
+                useSession={useSession}
+                selectedCallId={selectedCallId}
+                cwd={cwd}
+                openFile={requestOpenFile}
+                inspectCall={inspectCall}
+                forkAt={forkAt}
+                renderMessageImages={renderMessageImages}
+                fileMentions={fileMentions}
+                renderSlot={renderSlot}
+                t={t}
+              />
+            )))}
           {/* No pending placeholders: questions (ui-user-questions) and approvals
               (ApprovalPanel) both take over the composer, so a flow card would
               double-render the same wait. */}

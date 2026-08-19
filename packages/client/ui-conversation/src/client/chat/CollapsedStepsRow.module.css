@@ -1,0 +1,79 @@
+/* One collapsed group of settled steps, on the shared message column axis. */
+
+.row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: var(--dsh-chat-content-width);
+  margin: 0 auto;
+  padding: 4px 0;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  line-height: 20px;
+}
+
+.disclosure {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.disclosure:hover {
+  color: var(--dsw-alias-label-secondary);
+}
+
+/* Contributed figures share the built-in separator rhythm. */
+.contributed {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  min-width: 0;
+}
+
+.contributed:not(:empty)::before {
+  content: '·';
+  margin: 0 8px;
+  color: var(--dsw-alias-label-dimmed);
+}
+
+.chevron {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+}
+
+.metrics {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  min-width: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.metric {
+  white-space: nowrap;
+}
+
+.sep {
+  margin: 0 8px;
+  color: var(--dsw-alias-label-dimmed);
+  user-select: none;
+}
+
+.added {
+  color: var(--dsw-alias-state-success-primary);
+}
+
+.removed {
+  color: var(--dsw-alias-state-error-primary);
+}

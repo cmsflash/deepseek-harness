@@ -10,6 +10,10 @@
 
 别的插件可以经 `ctx.conversation.blocks` 让某个会话的编辑器变为惰性：它设置一个携带自己本地化理由的 block，输入栏就渲染同一个禁用的 textarea，并把该理由作为 placeholder——复用无 Workspace 时的那套姿态。推送方向是约束而非偏好：知道某会话发不出消息的插件（ui-model-selection，在没有适配器服务其路由时）本就依赖本包，因此本包读不到它们。模型 seat 是 block 唯一保留可用的控件——这份约定里的每个 block 都靠选模型来解除，把它一起锁上会让编辑器索要它自己拦下的那件事。block 只是提示性设计；无论客户端禁用了什么，宿主都会拒绝一个它无法路由的提示词。两者同时成立时以无 Workspace 姿态为准，因为选 Workspace 是更靠前的前提。
 
+折叠行是一个开放组件：`conversation.chat.collapsedMetric` 是会话作用域的 list slot，其条目渲染在该行自身计算的所有指标之后。「内置优先」是排序契约，因此贡献者无需为该行日后可能新增的指标预留 `order` 区段；owner 传入折叠分组的 turn 及已折叠的 step 与调用计数，贡献者据此指向同一批被隐藏的 step，而无需重新读取 Session。展开控件与各项指标为同级元素，因此贡献的指标可携带交互内容而不会嵌套进 button。
+
+已结束的 step 可以选择性折叠。一个 turn 是一轮用户提问，其中每个 step 是一次模型调用，因此长 turn 的阅读成本来自中间 step 而非最终答案。启用 `collapseSettledSteps` 后，每个 turn 只渲染其最高 step——流式期间即为进行中的那个——并把更早的 step 折叠成一行，报告它们产生的 step 数、工具调用数、增删行数与文件数。展开该行会通过同一个 keyed node seat 就地恢复被隐藏的行，因此展开后的分组与未折叠的转录渲染完全一致；展开以 turn 为单位、全有或全无、由阅读者掌握，并且刻意不做持久化。该偏好默认关闭；不携带 step 坐标的行——发起消息、turn 尾部——永不折叠。
+
 视图环是一个 slot：严格会话主体注册在 `children` 表中声明会话作用域的 `'conversation.view'` 列表，并通过自身的 renderSlot share 渲染活跃配置项（`only: <active id>`）；视图标签页则从注册选项（`id`／`order`／`label`）投影而来。聊天视图是该包自身的配置项；ui-trajectory 等插件通过 `ctx.slots.register` 贡献标签页，每个视图负责自己的 chrome。
 
 Chat 业务行是彼此独立的注册表贡献，不是封闭的内建联合。Client 插件通过 declaration merging 增加类型化 `ChatNodeDataMap` key，在 `ctx.conversationEvents` 上注册 `ConversationNodeDefinition`，再向 `conversation.chat.node` 注册匹配的 keyed renderer；它无须修改会话 fold 或中央 renderer switch。稳定事件 id、append/prepend 回放、Location data 与 renderer 约束见 [Conversation Node 实操手册](../../../docs/cookbook/adding-a-conversation-node.zh.md)。
@@ -57,6 +61,7 @@ Host 带 placement 的 `session/queue` 快照也会携带待处理 steering。Qu
 ## 已知限制与暂缓事项
 
 - **统计行的回退折算只覆盖窗口内消息流**：未组合 `sessionStats` 投影单元的装配中，所有数字由快照的 assistant `timing` 与工具 call/result 配对折算，落在已加载事件窗口之外的节点（更早的历史）不计入，数字随加载页数增长。
+- **折叠 step 的指标以窗口为范围且不含成本**：折叠只统计已加载历史窗口中的内容，因此翻页载入更早的 step 会改变数字；更早 step 已被移出窗口的 turn 只报告已加载的部分。不含花费，因为 harness 中不存在模型定价，且 provider 适配器把线上 usage 映射为仅含 token 的计数，端点上报的成本从不会到达客户端。
 - **详情面板没有入口**：`ChatViewInjected.openDetails` 虽已实现却无人调用，因此以原始形式显示已选择调用的那部分在组装后的应用中不可达。没有 Input/Output/Metadata 切换、Prev/Next 步进，也没有 trajectory 深链接。
 - **assistant 逐消息分页是预留 slot**：设计中已有图稿，尚未实现。已定稿的内容 IconActions 行（复制／时钟／分支）只挂在每个已结束轮次中最后一条带 text 内容的 assistant 下；轮次中间的叙述、纯 Think 节点，以及仍在产出步骤的轮次里的所有节点都不带 chrome。除非该消息同时也是已完成轮次的最后一个 transcript 节点，否则分支保持禁用；启用后，它会 fork 到该轮次末尾，在 client 端递增继承标题并打开子会话。fork 或改名失败时源会话保持选中（[决策](../../../.agents/notes/implemented/bug-fix/2026-08-02-message-fork-actions-require-completed-turn-tail.zh.md)）。
 - **已发送的 user 消息无法编辑**：user 气泡保留时钟和复制；分支只存在于 assistant 回答之下（[决策](../../../.agents/notes/implemented/simplification/2026-08-06-user-bubbles-drop-the-branch-action.zh.md)）。编辑功能要与其背后的能力一起回归：既需要针对已定稿 user 消息的 client 变更，也需要 host 侧对已经消费过它的轮次给出行为（[决策](../../../.agents/notes/implemented/simplification/2026-07-31-drop-user-message-edit-stub.zh.md)）。
