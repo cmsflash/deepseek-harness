@@ -20,7 +20,7 @@ The behavior lives inside the Chat view rather than in a second view. A keyed sl
 
 The `collapseSettledSteps` preference ships **off** in the durable `ui-conversation` settings section, so the assembled transcript is unchanged until a reader enables it. `ComposerSubmissionPolicy` already owns that section's scope and adoption subscription, so the preference rides it instead of opening a second subscription.
 
-The row is open at one point: `conversation.chat.collapsedMetric` is a list slot whose entries render after every built-in figure. Contributed-last is the contract rather than a shared `order` space, because the row owns figures it may add later and a shared space would silently reshuffle out-of-tree contributors when it does. The disclosure control and the figure strip are siblings so a contributed figure is not nested inside a button. This is what lets a cost display ship as an out-of-tree plugin.
+The row is open at one point: `conversation.chat.collapsedMetric` is a list slot whose entries render after every built-in figure. Contributed-last is the contract rather than a shared `order` space, because the row owns figures it may add later and a shared space would silently reshuffle out-of-tree contributors when it does. The owner passes the hidden node keys, so a contributed figure folds exactly the set the built-in figures fold; a contributor reading the whole turn would count the still-visible last step and silently claim more than the line summarizes. The disclosure control and the figure strip are siblings so a contributed figure is not nested inside a button. This is what lets a cost display ship as an out-of-tree plugin.
 
 ## Alternatives considered
 

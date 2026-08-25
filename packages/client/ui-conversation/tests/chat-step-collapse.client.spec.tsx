@@ -109,6 +109,35 @@ describe('ChatView step collapse', () => {
     expect(flow(view)).toEqual(['collapsed:1', 's3'])
   })
 
+  it('hands a contributor exactly the keys the row hides', () => {
+    // Scope parity with the built-in figures: a contributor that folds these
+    // keys states the same thing they do, and never counts the visible step.
+    let seen: unknown = null
+    const state = snapshot(THREE_STEPS)
+    const renderSlot = ((key: string, owner: unknown) => {
+      if (key === 'conversation.chat.collapsedMetric') seen = owner
+      return null
+    }) as unknown as ChatViewSlotProps['renderSlot']
+    render(<ChatView {...({
+      sessionId: 's1',
+      useSession: ((selector: (value: ConversationSnapshot) => unknown) => selector(state)),
+      useSessions: (() => undefined),
+      useStore: (() => undefined),
+      useCollapseSteps: ((selector: (value: boolean) => unknown) => selector(true)),
+      renderSlot,
+      openFile: vi.fn(),
+      loadOlder: vi.fn(),
+      loadImage: vi.fn(),
+      inspectCall: vi.fn(),
+      forkAt: vi.fn(),
+      fileMentions: () => undefined,
+      chatScroll: { save: vi.fn(), read: () => null },
+      t: makeTranslate(zh, commonZh),
+    } as unknown as ChatViewSlotProps)} />)
+    // s3 is the visible last step and must not appear.
+    expect(seen).toMatchObject({ turn: 1, keys: ['s1', 's2'] })
+  })
+
   it('leaves a single-step turn untouched', () => {
     const view = mount([stepNode('only', 1, 1)], true)
     expect(flow(view)).toEqual(['only'])

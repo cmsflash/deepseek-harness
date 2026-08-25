@@ -411,6 +411,15 @@ export interface TurnTailOwnerProps {
 export interface CollapsedMetricOwnerProps {
   /** Turn owning the hidden steps. */
   turn: number
+  /**
+   * Node keys this row hides, in render order.
+   *
+   * Every built-in figure sums these keys alone, so a contributor that folds
+   * the same set states the same scope. Reading the whole turn instead counts
+   * the still-visible last step, which no other figure on the line includes
+   * and expanding the row cannot account for.
+   */
+  keys: readonly string[]
   /** Hidden model calls; zero when the group's work was entirely tool calls. */
   steps: number
   /** Hidden settled tool calls, counting nested subcalls. */

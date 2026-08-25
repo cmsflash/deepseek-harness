@@ -448,6 +448,7 @@ export function ChatView({
               <CollapsedStepsRow
                 key={`collapsed:${String(row.turn)}`}
                 turn={row.turn}
+                keys={row.keys}
                 metrics={row.metrics}
                 expanded={expandedTurns.has(row.turn)}
                 renderSlot={renderSlot}
