@@ -85,7 +85,9 @@ describe('PiAiAdapter provider routing', () => {
     })
     expect(result.message.content).toEqual([{ type: 'text', text: 'hello' }])
     expect(result.finish).toEqual({ kind: 'stop' })
-    expect(result.usage).toEqual({ inputTokens: 3, outputTokens: 1, totalTokens: 4 })
+    // A catalog model carries rates, so the call prices.
+    expect(result.usage).toMatchObject({ inputTokens: 3, outputTokens: 1, totalTokens: 4 })
+    expect(result.usage?.costUsd).toBeGreaterThan(0)
     expect(server.paths).toEqual(['/chat/completions'])
   })
 

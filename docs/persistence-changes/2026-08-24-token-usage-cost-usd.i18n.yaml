@@ -1,0 +1,6 @@
+# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
+# side as of the last confirmed-consistent state. Both languages carry equal authority;
+# after editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write docs/persistence-changes/2026-08-24-token-usage-cost-usd.md
+2026-08-24-token-usage-cost-usd.md: 9fd66d9b1f2c2afe920758713381b13a078c9be9
+2026-08-24-token-usage-cost-usd.zh.md: 7c3cb9d5109f37dc375958a65faf4082d5593ad1
