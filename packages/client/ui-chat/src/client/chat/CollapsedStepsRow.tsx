@@ -10,6 +10,8 @@ import css from './CollapsedStepsRow.module.css'
 export interface CollapsedStepsRowProps {
   /** Turn owning the hidden steps. */
   turn: number
+  /** Node keys this row hides, passed to contributors so they fold the same set. */
+  keys: readonly string[]
   metrics: CollapsedStepMetrics
   expanded: boolean
   onToggle: () => void
@@ -29,7 +31,7 @@ export interface CollapsedStepsRowProps {
  * inside a button.
  */
 export const CollapsedStepsRow = memo(function CollapsedStepsRow({
-  turn, metrics, expanded, onToggle, renderSlot, t,
+  turn, keys, metrics, expanded, onToggle, renderSlot, t,
 }: CollapsedStepsRowProps) {
   const parts: ReactNode[] = []
   if (metrics.elapsedMs > 0) {
@@ -66,7 +68,7 @@ export const CollapsedStepsRow = memo(function CollapsedStepsRow({
       <span key="files" className={css.metric}>{t('collapse.files', { count: metrics.files })}</span>,
     )
   }
-  const owner: CollapsedMetricOwnerProps = { turn, steps: metrics.steps, calls: metrics.calls }
+  const owner: CollapsedMetricOwnerProps = { turn, keys, steps: metrics.steps, calls: metrics.calls }
   return (
     <div className={css.row} data-collapsed-turn={turn}>
       <button

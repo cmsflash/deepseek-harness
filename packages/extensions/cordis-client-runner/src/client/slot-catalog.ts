@@ -174,7 +174,7 @@ export const CLIENT_SLOT_API: readonly ClientSlotEntry[] = [
     ],
     replaceRisk: 'none',
     example: 'return {\n  inject: [\'slots\'],\n  apply(ctx) {\n    ctx.slots.inject(\'conversation.chat.assistant-actions\', () => ctx.slots.register(\n      { name: \'conversation.chat.assistant-actions\', id: \'my-entry\', order: 100, label: \'My entry\' },\n      () => React.createElement(\'div\', null, \'hello\'),\n    ))\n  },\n}',
-    source: 'packages/client/ui-chat/src/client/contract/slots.ts:226',
+    source: 'packages/client/ui-chat/src/client/contract/slots.ts:235',
   },
   {
     key: 'conversation.chat.collapsedMetric',
@@ -203,7 +203,7 @@ export const CLIENT_SLOT_API: readonly ClientSlotEntry[] = [
       },
     ],
     ownerProps: [
-      '/**\n * Owner currency of one contributed collapsed-row figure: which turn\'s hidden\n * steps the row stands for, and the counts it already folded.\n */\nexport interface CollapsedMetricOwnerProps {\n  /** Turn owning the hidden steps. */\n  turn: number\n  /** Hidden model calls; zero when the group\'s work was entirely tool calls. */\n  steps: number\n  /** Hidden settled tool calls, counting nested subcalls. */\n  calls: number\n}',
+      '/**\n * Owner currency of one contributed collapsed-row figure: which turn\'s hidden\n * steps the row stands for, and the counts it already folded.\n */\nexport interface CollapsedMetricOwnerProps {\n  /** Turn owning the hidden steps. */\n  turn: number\n  /**\n   * Node keys this row hides, in render order.\n   *\n   * Every built-in figure sums these keys alone, so a contributor that folds\n   * the same set states the same scope. Reading the whole turn instead counts\n   * the still-visible last step, which no other figure on the line includes\n   * and expanding the row cannot account for.\n   */\n  keys: readonly string[]\n  /** Hidden model calls; zero when the group\'s work was entirely tool calls. */\n  steps: number\n  /** Hidden settled tool calls, counting nested subcalls. */\n  calls: number\n}',
     ],
     ownerPropsReferences: [],
     standardProps: [
@@ -229,7 +229,7 @@ export const CLIENT_SLOT_API: readonly ClientSlotEntry[] = [
     occupants: [],
     replaceRisk: 'none',
     example: 'return {\n  inject: [\'slots\'],\n  apply(ctx) {\n    ctx.slots.inject(\'conversation.chat.collapsedMetric\', () => ctx.slots.register(\n      { name: \'conversation.chat.collapsedMetric\', id: \'my-entry\', order: 100, label: \'My entry\' },\n      () => React.createElement(\'div\', null, \'hello\'),\n    ))\n  },\n}',
-    source: 'packages/client/ui-chat/src/client/contract/slots.ts:236',
+    source: 'packages/client/ui-chat/src/client/contract/slots.ts:245',
   },
   {
     key: 'conversation.chat.commandview',
@@ -276,7 +276,7 @@ export const CLIENT_SLOT_API: readonly ClientSlotEntry[] = [
     occupants: [],
     replaceRisk: 'none',
     example: 'return {\n  inject: [\'slots\'],\n  apply(ctx) {\n    ctx.slots.inject(\'conversation.chat.commandview\', () => ctx.slots.register(\n      { name: \'conversation.chat.commandview\', key: \'<one key the owner dispatches>\' },\n      () => React.createElement(\'div\', null, \'hello\'),\n    ))\n  },\n}',
-    source: 'packages/client/ui-chat/src/client/contract/slots.ts:214',
+    source: 'packages/client/ui-chat/src/client/contract/slots.ts:223',
   },
   {
     key: 'conversation.chat.node',
@@ -344,7 +344,7 @@ export const CLIENT_SLOT_API: readonly ClientSlotEntry[] = [
     ],
     replaceRisk: 'shadows-shipped-ui',
     example: 'return {\n  inject: [\'slots\'],\n  apply(ctx) {\n    ctx.slots.inject(\'conversation.chat.node\', () => ctx.slots.register(\n      { name: \'conversation.chat.node\', key: \'<one key the owner dispatches>\' },\n      () => React.createElement(\'div\', null, \'hello\'),\n    ))\n  },\n}',
-    source: 'packages/client/ui-chat/src/client/contract/slots.ts:195',
+    source: 'packages/client/ui-chat/src/client/contract/slots.ts:204',
   },
   {
     key: 'conversation.chat.turnTail',
@@ -391,7 +391,7 @@ export const CLIENT_SLOT_API: readonly ClientSlotEntry[] = [
     ],
     replaceRisk: 'none',
     example: 'return {\n  inject: [\'slots\'],\n  apply(ctx) {\n    ctx.slots.inject(\'conversation.chat.turnTail\', () => ctx.slots.register(\n      { name: \'conversation.chat.turnTail\', select: owner => null },\n      () => React.createElement(\'div\', null, \'hello\'),\n    ))\n  },\n}',
-    source: 'packages/client/ui-chat/src/client/contract/slots.ts:220',
+    source: 'packages/client/ui-chat/src/client/contract/slots.ts:229',
   },
   {
     key: 'conversation.composer',
@@ -1039,7 +1039,7 @@ export const CLIENT_SLOT_API: readonly ClientSlotEntry[] = [
     ],
     replaceRisk: 'shadows-shipped-ui',
     example: 'return {\n  inject: [\'slots\'],\n  apply(ctx) {\n    ctx.slots.inject(\'conversation.message.images\', () => ctx.slots.register(\n      { name: \'conversation.message.images\' },\n      () => React.createElement(\'div\', null, \'hello\'),\n    ))\n  },\n}',
-    source: 'packages/client/ui-chat/src/client/contract/slots.ts:208',
+    source: 'packages/client/ui-chat/src/client/contract/slots.ts:217',
   },
   {
     key: 'conversation.session',
