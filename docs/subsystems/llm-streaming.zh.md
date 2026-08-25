@@ -270,7 +270,7 @@ interface AppIdentity {
 
 ## `TokenUsage`
 
-逐调用 token 记账。各计数**互不重叠**：`inputTokens` 只包含未缓存输入；缓存输入单独报告，计费输入是三者之和。若提供方把缓存命中折入单一提示词总数（如 DeepSeek 的 `prompt_tokens`），适配器会再将其扣除。`reasoningTokens` 存在时只是信息性细节，已经包含在 `outputTokens` 中；汇总时不得重复相加。
+逐调用 token 记账。各计数**互不重叠**：`inputTokens` 只包含未缓存输入；缓存输入单独报告，计费输入是三者之和。若提供方把缓存命中折入单一提示词总数（如 DeepSeek 的 `prompt_tokens`），适配器会再将其扣除。`reasoningTokens` 存在时只是信息性细节，已经包含在 `outputTokens` 中；汇总时不得重复相加。当适配器的提供方为该模型公布了价格时，`costUsd` 即该次调用的计费美元金额；它缺席表示无价，而不是免费。
 
 ```ts type-equiv
 /**
@@ -287,6 +287,12 @@ interface TokenUsage {
   cacheReadTokens?: number
   cacheWriteTokens?: number
   reasoningTokens?: number
+  /**
+   * Billed cost of this call in US dollars, absent when the adapter's provider
+   * publishes no rates for the model. It is derived from the counts above and
+   * the provider's own price table, so it is only as accurate as those rates.
+   */
+  costUsd?: number
 }
 ```
 

@@ -20,7 +20,7 @@ The behavior lives inside the Chat view rather than in a second view. A keyed sl
 
 The `collapseSettledSteps` preference ships **off** in the durable `ui-conversation` settings section, so the assembled transcript is unchanged until a reader enables it. `ComposerSubmissionPolicy` already owns that section's scope and adoption subscription, so the preference rides it instead of opening a second subscription.
 
-The row is open at one point: `conversation.chat.collapsedMetric` is a list slot whose entries render after every built-in figure. Contributed-last is the contract rather than a shared `order` space, because the row owns figures it may add later and a shared space would silently reshuffle out-of-tree contributors when it does. The disclosure control and the figure strip are siblings so a contributed figure is not nested inside a button. This is what lets a cost display — whose data no in-box adapter records — ship as an out-of-tree plugin.
+The row is open at one point: `conversation.chat.collapsedMetric` is a list slot whose entries render after every built-in figure. Contributed-last is the contract rather than a shared `order` space, because the row owns figures it may add later and a shared space would silently reshuffle out-of-tree contributors when it does. The disclosure control and the figure strip are siblings so a contributed figure is not nested inside a button. This is what lets a cost display ship as an out-of-tree plugin.
 
 ## Alternatives considered
 
@@ -35,4 +35,4 @@ The row is open at one point: `conversation.chat.collapsedMetric` is a list slot
 - Default output is unchanged: with the preference off, `ChatView` maps the snapshot order exactly as before, so existing web snapshots stay valid.
 - A collapsed group's figures are window-scoped, because the loaded history window is paged and compaction rewrites it. Paging older steps in changes the numbers.
 - Line counts come from the applied `card:'diff'` result views that write and edit already return, validated per entry because those views cross the wire with only `card` schema-checked. A mutation applied by a tool that emits no diff card contributes no lines.
-- Turn cost is absent. No model pricing exists in the harness, and the provider adapters discard endpoint-reported spend before the client sees it (`llm-deepseek`'s `mapUsage` builds a token-only `TokenUsage`; `llm-pi-ai` zeroes its catalog `ModelCost`). Adding cost later is a data change, not a view change.
+- The row shows no cost of its own. `TokenUsage.costUsd` carries a priced call's dollars ([decision](2026-08-24-token-usage-carries-billed-cost.md)), so the figure is available to a contributor through `conversation.chat.collapsedMetric` rather than being computed here.

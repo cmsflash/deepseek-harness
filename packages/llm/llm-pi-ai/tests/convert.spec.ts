@@ -883,6 +883,16 @@ describe('mapStopReason / mapUsage', () => {
     })
     expect(mapUsage(usage(10, 5))).toEqual({ inputTokens: 10, outputTokens: 5 })
   })
+
+  it('carries the dollar cost pi-ai priced for the call', () => {
+    const priced = { ...usage(10, 5), cost: { input: 0.01, output: 0.02, cacheRead: 0, cacheWrite: 0, total: 0.03 } }
+    expect(mapUsage(priced)).toEqual({ inputTokens: 10, outputTokens: 5, costUsd: 0.03 })
+  })
+
+  it('omits cost for a route whose models carry no rates', () => {
+    // A zero total means unpriced, not free, so it must not read as $0.00.
+    expect(mapUsage(usage(10, 5))).not.toHaveProperty('costUsd')
+  })
 })
 
 describe('toStreamChunks edge branches', () => {

@@ -138,6 +138,12 @@ export interface TokenUsage {
   cacheReadTokens?: number
   cacheWriteTokens?: number
   reasoningTokens?: number
+  /**
+   * Billed cost of this call in US dollars, absent when the adapter's provider
+   * publishes no rates for the model. It is derived from the counts above and
+   * the provider's own price table, so it is only as accurate as those rates.
+   */
+  costUsd?: number
 }
 
 /** Display metadata for one registered provider route. */
