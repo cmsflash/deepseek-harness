@@ -61,16 +61,27 @@ const SESSION = {
   hasMore: false, loadingOlder: false,
 } as unknown as SessionSnapshot
 
-/** Mount ChatView over a fixed snapshot, dispatching node rows to a probe. */
-function mount(nodes: readonly ChatConversationViewNode[], mode: TranscriptViewMode) {
+/**
+ * Mount ChatView over a fixed snapshot, dispatching node rows to a probe.
+ * @param nodes - the snapshot's nodes, in render order.
+ * @param mode - the transcript preference under test.
+ * @param observeSlot - receives every non-node slot render; the contributed-metric
+ *   slot renders nothing, matching a composition with no metric contributors.
+ */
+function mount(
+  nodes: readonly ChatConversationViewNode[],
+  mode: TranscriptViewMode,
+  observeSlot: (key: string, owner: unknown) => void = () => {},
+) {
   const chat = snapshot(nodes)
   const store = createChatStore().create()
-  // Only the node seat renders a probe row; the contributed-metric slot is
-  // empty here, matching a composition with no metric contributors.
-  const renderSlot = ((key: string, owner: { node?: { key: string } }) =>
-    (key === 'conversation.chat.node' && owner.node !== undefined
-      ? <div data-node-key={owner.node.key}>{owner.node.key}</div>
-      : null)) as unknown as ChatViewSlotProps['renderSlot']
+  const renderSlot = ((key: string, owner: { node?: { key: string } }) => {
+    if (key === 'conversation.chat.node' && owner.node !== undefined) {
+      return <div data-node-key={owner.node.key}>{owner.node.key}</div>
+    }
+    observeSlot(key, owner)
+    return null
+  }) as unknown as ChatViewSlotProps['renderSlot']
   const props = {
     sessionId: 's1',
     useSession: ((selector: (value: SessionSnapshot) => unknown) => selector(SESSION)),
@@ -125,6 +136,17 @@ describe('ChatView step collapse', () => {
 
     toggle()
     expect(flow(view)).toEqual(['collapsed:1', 's3'])
+  })
+
+  it('hands a contributor exactly the keys the row hides', () => {
+    // Scope parity with the built-in figures: a contributor that folds these
+    // keys states the same thing they do, and never counts the visible step.
+    let seen: unknown = null
+    mount(THREE_STEPS, 'collapsed', (key, owner) => {
+      if (key === 'conversation.chat.collapsedMetric') seen = owner
+    })
+    // s3 is the visible last step and must not appear.
+    expect(seen).toMatchObject({ turn: 1, keys: ['s1', 's2'] })
   })
 
   it('leaves a single-step turn untouched', () => {

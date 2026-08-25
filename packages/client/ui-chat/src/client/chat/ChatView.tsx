@@ -217,6 +217,7 @@ const ChatNodeList = memo(function ChatNodeList({
       <CollapsedStepsRow
         key={`collapsed:${String(row.turn)}`}
         turn={row.turn}
+        keys={row.keys}
         metrics={row.metrics}
         expanded={expandedTurns.has(row.turn)}
         onToggle={() => { toggleTurn(row.turn) }}

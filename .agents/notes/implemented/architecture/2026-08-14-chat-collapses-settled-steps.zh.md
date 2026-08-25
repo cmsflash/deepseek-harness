@@ -20,7 +20,7 @@ Status: implemented
 
 该折叠是持久化偏好 `ui-chat.transcriptView` 在 `normal` 与 `compact` 之外的第三个取值，默认值仍为 `compact`，因此在阅读者选择 `collapsed` 之前，组装后的转录毫无变化。一个选择器掌管全部转录呈现方式：`compact` 在一个 Turn 以最终正文结束后把它的过程行收进一个控件（[决定](../../archived/feature/2026-08-14-web-turn-process-folding.md)），而 `collapsed` 在 Turn 仍在运行时就折叠其已落定的 step，因此两者永不为同一批行各渲染一份摘要。`TranscriptViewPolicy` 本就持有该设置段的 scope 与采纳订阅，因此该模式搭它的车，而不是另开一个订阅。
 
-该行在一处开放：`conversation.chat.collapsedMetric` 是一个 list slot，其条目渲染在所有内置指标之后。采用「贡献者置后」而非共享 `order` 空间，是因为该行拥有日后可能新增的指标，而共享空间会在新增时静默打乱外部贡献者的位置。展开控件与指标条为同级，因此贡献的指标不会嵌套进 button。正是这一点让成本展示能够作为仓库外插件交付。
+该行在一处开放：`conversation.chat.collapsedMetric` 是一个 list slot，其条目渲染在所有内置指标之后。采用「贡献者置后」而非共享 `order` 空间，是因为该行拥有日后可能新增的指标，而共享空间会在新增时静默打乱外部贡献者的位置。owner 传入被隐藏的节点键，因此贡献的指标折叠的正是内置指标所折叠的那一批；若贡献者读取整个 turn，就会把仍然可见的最后一个 step 计入，从而在无声中宣称多于该行所汇总的内容。展开控件与指标条为同级，因此贡献的指标不会嵌套进 button。正是这一点让成本展示能够作为仓库外插件交付。
 
 ## 考虑过的替代方案
 
