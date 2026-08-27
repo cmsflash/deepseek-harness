@@ -8,7 +8,12 @@ import SpeechRuntime, {
   type SpeechSpec,
 } from '@deepseek-ai/dsh-speech'
 
-const BASE: SpeechRuntimeConfig = { model: 'vendor/voice-hd', bitrate: 64_000, maxChars: 20 }
+const BASE: SpeechRuntimeConfig = {
+  model: 'vendor/voice-hd',
+  bitrate: 64_000,
+  maxChars: 20,
+  voice: 'narrator',
+}
 
 function audio(marker: string): SpeechAudio {
   return { data: new TextEncoder().encode(marker), mediaType: 'audio/mpeg' }
@@ -30,7 +35,7 @@ async function mount(config: Partial<SpeechRuntimeConfig> = {}): Promise<SpeechR
 
 describe('SpeechRuntime.resolve', () => {
   it('applies deployment policy so a provider receives a complete spec', async () => {
-    const speech = await mount({ voice: 'narrator' })
+    const speech = await mount()
     expect(speech.resolve({ text: '  hello  ' })).toEqual({
       text: 'hello',
       model: 'vendor/voice-hd',
@@ -41,8 +46,13 @@ describe('SpeechRuntime.resolve', () => {
   })
 
   it('lets a request override the configured voice', async () => {
-    const speech = await mount({ voice: 'narrator' })
+    const speech = await mount()
     expect(speech.resolve({ text: 'hi', voice: 'other' }).voice).toBe('other')
+  })
+
+  it('always resolves a voice, which an OpenAI-shaped route requires', async () => {
+    const speech = await mount({ voice: 'configured' })
+    expect(speech.resolve({ text: 'hi' }).voice).toBe('configured')
   })
 
   it('truncates past maxChars rather than splitting the request', async () => {

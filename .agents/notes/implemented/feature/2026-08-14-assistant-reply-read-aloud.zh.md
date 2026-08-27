@@ -19,7 +19,7 @@ Status: implemented
 三个角色，依照 [capability-seam 依据](../../implemented/architecture/2026-06-13-capability-seams.zh.md)：
 
 - **Service Definition** `dsh-speech` 拥有 `ctx.speech`、request/spec 拆分以及音频词汇。它显式地把 request 解析为 spec，因此没有任何 provider 把默认值藏进 `synthesize()`。
-- **Service Provider** `dsh-speech-litellm` 经 LiteLLM 网关调用 `/audio/speech`。MiniMax 在厂商 API 层面并不兼容 OpenAI（是 `/v1/t2a_v2`，不是 `/v1/audio/speech`），因此集成点是 LiteLLM 的专用适配器，而非用 OpenAI base-URL 覆盖。
+- **Service Provider** `dsh-speech-openai-compatible` 调用 `/audio/speech`，为每一条配置的路由注册一个提供方（[路由设计](../architecture/2026-08-25-speech-openai-compatible-routes.zh.md)）。Web bundle 固定 LiteLLM 路由：MiniMax 在厂商 API 层面并不兼容 OpenAI（是 `/v1/t2a_v2`，不是 `/v1/audio/speech`），因此集成点是网关的专用适配器，而非用 OpenAI base-URL 覆盖。
 - **Consumers** 是 `dsh-speech-cache`（宿主侧产生音频的 `turn/end` 监听器，并拥有 `speechCache` Remote）与 `dsh-client-ui-message-speech`（浏览器侧播放它的插件）。
 
 ### 触发与文本选取
@@ -40,9 +40,9 @@ Subagent 会话被排除。它们的 turn 没有面向用户的播放界面，�
 
 ### 配置
 
-每个随部署变化的值都是经校验的 `Config` 字段，遵循「插件中不写死可调参数」规则：`model`、`bitrate`、`ttlDays` 与 `maxChars`。Web bundle 交付 `minimax/speech-2.6-hd`、64 kbps、7 天 TTL。
+每个随部署变化的值都是经校验的 `Config` 字段，遵循「插件中不写死可调参数」规则：`model`、`voice`、`bitrate`、`ttlDays` 与 `maxChars`。Web bundle 交付 `minimax/speech-2.6-hd`、64 kbps、7 天 TTL，并固定 `litellm` 路由。
 
-码率是纯粹的存储杠杆。MiniMax 按 `usage_characters`（输入字符数）计费，因此音频质量对价格没有影响；厂商自己的响应示例在 128 kbps 下为 6.931 秒返回 111,789 字节，误差在 1% 以内即恒定码率 mp3，因此字节数严格随该设置线性缩放。延迟也不会有听感上的差别：合成耗时取决于文本长度，而传输差异在本地网络上只是几百 KB。
+码率在 MiniMax 上是纯粹的存储杠杆——它遵从该设置；OpenAI 自家模型忽略它，无论如何都返回 128 kbps。MiniMax 按 `usage_characters`（输入字符数）计费，因此音频质量对价格没有影响；厂商自己的响应示例在 128 kbps 下为 6.931 秒返回 111,789 字节，误差在 1% 以内即恒定码率 mp3，因此字节数严格随该设置线性缩放。延迟也不会有听感上的差别：合成耗时取决于文本长度，而传输差异在本地网络上只是几百 KB。
 
 默认交付 64 kbps 而非 32，是因为 LiteLLM 的 MiniMax 适配器为 mp3 记载的取值是 `64000, 128000, 192000, 256000`。32,000 是 MiniMax 记载但该适配器未列出的取值，因此经这条路径验证过的最低设置是 64 kbps。端到端验证过 32 kbps 的部署可以设置它，把存储再减半。
 

@@ -1,12 +1,18 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { LITELLM_DEFAULT_BASE_URL, LitellmSpeechProvider } from '@deepseek-ai/dsh-speech-litellm'
+import { OpenAiCompatibleSpeechProvider } from '@deepseek-ai/dsh-speech-openai-compatible'
 import type { SpeechSpec } from '@deepseek-ai/dsh-speech'
 
-const SPEC: SpeechSpec = { text: 'hello', model: 'minimax/speech-2.6-hd', bitrate: 64_000, truncated: false }
+const SPEC: SpeechSpec = {
+  text: 'hello',
+  model: 'minimax/speech-2.6-hd',
+  bitrate: 64_000,
+  voice: 'alloy',
+  truncated: false,
+}
 
-function provider(overrides: Partial<ConstructorParameters<typeof LitellmSpeechProvider>[0]> = {}) {
-  return new LitellmSpeechProvider({
-    apiKey: 'k', baseURL: 'https://gateway.example', timeoutMs: 5_000, ...overrides,
+function provider(overrides: Partial<ConstructorParameters<typeof OpenAiCompatibleSpeechProvider>[0]> = {}) {
+  return new OpenAiCompatibleSpeechProvider({
+    id: 'litellm', apiKey: 'k', baseURL: 'https://gateway.example', timeoutMs: 5_000, ...overrides,
   })
 }
 
@@ -31,18 +37,18 @@ const audioReply = (...bytes: number[]) => () => new Response(new Uint8Array(byt
 
 afterEach(() => { vi.unstubAllGlobals() })
 
-describe('LitellmSpeechProvider', () => {
+describe('OpenAiCompatibleSpeechProvider', () => {
   it('is unavailable without a credential', () => {
     expect(provider({ apiKey: '' }).available()).toBe(false)
     expect(provider().available()).toBe(true)
   })
 
-  it('registers under a stable id and default gateway', () => {
+  it('registers under the id its route was configured with', () => {
     expect(provider().id).toBe('litellm')
-    expect(LITELLM_DEFAULT_BASE_URL).toMatch(/^http/)
+    expect(provider({ id: 'openai' }).id).toBe('openai')
   })
 
-  it('posts the resolved spec to the gateway speech endpoint', async () => {
+  it('posts the resolved spec to the route speech endpoint', async () => {
     const { calls } = stubFetch(audioReply(1, 2, 3))
     await provider().synthesize(SPEC)
     expect(calls[0]?.url).toBe('https://gateway.example/audio/speech')
@@ -54,10 +60,10 @@ describe('LitellmSpeechProvider', () => {
     })
   })
 
-  it('omits voice when the spec names none and forwards it when present', async () => {
+  it('always sends a voice, which the route rejects a request without', async () => {
     const { calls } = stubFetch(audioReply(1))
     await provider().synthesize(SPEC)
-    expect(calls[0]?.body).not.toHaveProperty('voice')
+    expect(calls[0]?.body['voice']).toBe('alloy')
     await provider().synthesize({ ...SPEC, voice: 'narrator' })
     expect(calls[1]?.body['voice']).toBe('narrator')
   })
@@ -75,14 +81,14 @@ describe('LitellmSpeechProvider', () => {
     expect(audio.mediaType).toBe('audio/mpeg')
   })
 
-  it('reports a gateway error with its status and detail', async () => {
+  it('reports a route error with its status and detail', async () => {
     stubFetch(() => new Response('model not found', { status: 404 }))
     const error = await provider().synthesize(SPEC).catch((cause: unknown) => cause)
     expect(error).toMatchObject({ code: 'SPEECH_REQUEST_FAILED' })
     expect(String(error)).toContain('404')
   })
 
-  it('reports a gateway error whose body cannot be read', async () => {
+  it('reports a route error whose body cannot be read', async () => {
     const unreadable = () => {
       const response = new Response('ignored', { status: 500 })
       // A body that rejects stands in for a truncated or aborted error payload.
@@ -95,7 +101,7 @@ describe('LitellmSpeechProvider', () => {
     const error = await provider().synthesize(SPEC).catch((cause: unknown) => cause)
     expect(error).toMatchObject({ code: 'SPEECH_REQUEST_FAILED' })
     // No detail is appended when the body could not be read.
-    expect(error).toMatchObject({ message: 'speech gateway returned 500' })
+    expect(error).toMatchObject({ message: 'speech route returned 500' })
   })
 
   it('rejects an empty audio body rather than caching silence', async () => {

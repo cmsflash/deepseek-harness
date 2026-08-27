@@ -2061,6 +2061,9 @@ export interface SpeechRuntimeConfig {
   /**
    * Requested mp3 bitrate in bits per second. Billing is by input characters,
    * so this trades stored bytes against audio quality and nothing else.
+   *
+   * Advisory rather than guaranteed: it reaches the vendor as `extra_body`,
+   * which MiniMax honors and OpenAI's own models ignore.
    */
   readonly bitrate: number
   /**
@@ -2071,8 +2074,13 @@ export interface SpeechRuntimeConfig {
   readonly maxChars: number
   /** Explicit provider id. Omitted = auto-select when exactly one is usable. */
   readonly provider?: string
-  /** Default voice passed to the provider when a request names none. */
-  readonly voice?: string
+  /**
+   * Voice passed to the provider when a request names none. Required with no
+   * library default: an OpenAI-shaped route rejects a request carrying no
+   * voice, and the vocabulary is vendor-specific, so no value is portable
+   * enough to inherit silently.
+   */
+  readonly voice: string
 }
 ```
 
@@ -2099,25 +2107,35 @@ export interface Config {
 
 Source: [`packages/speech/speech-cache/src/index.ts:45`](../packages/speech/speech-cache/src/index.ts)
 
-<a id="deepseek-aidsh-speech-litellm"></a>
+<a id="deepseek-aidsh-speech-openai-compatible"></a>
 
-## `@deepseek-ai/dsh-speech-litellm`
+## `@deepseek-ai/dsh-speech-openai-compatible`
 
 Requires: `speech`
 
 ```ts config-catalog
-/** Plugin config; `apply` fills environment and constant defaults. */
+/** Plugin config; `apply` fills environment and constant defaults per route. */
 export interface Config {
-  /** Gateway API key. Falls back to `$LITELLM_API_KEY`. Empty → provider unavailable. */
+  /** Routes to register, keyed by the provider id the seam selects by. */
+  providers: Record<string, SpeechRouteConfig>
+}
+
+/** One configured route. The map key is the provider id the seam selects by. */
+export interface SpeechRouteConfig {
+  /** Environment/credential reference holding the key. Unset → route unavailable. */
+  apiKeyEnv?: string
+  /** Literal key, for a deployment that does not use a credential reference. */
   apiKey?: string
-  /** Gateway base; `/audio/speech` is appended. Falls back to `$LITELLM_BASE_URL`. */
+  /** Route base; `/audio/speech` is appended. Defaults to {@link OPENAI_DEFAULT_BASE_URL}. */
   baseURL?: string
+  /** Environment reference holding the base URL, for a route whose host varies by deployment. */
+  baseURLEnv?: string
   /** Request deadline in milliseconds. */
   timeoutMs?: number
 }
 ```
 
-Source: [`packages/speech/speech-litellm/src/index.ts:31`](../packages/speech/speech-litellm/src/index.ts)
+Source: [`packages/speech/speech-openai-compatible/src/index.ts:60`](../packages/speech/speech-openai-compatible/src/index.ts)
 
 <a id="deepseek-aidsh-spill-local"></a>
 

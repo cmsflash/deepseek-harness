@@ -239,7 +239,7 @@
     { "path": "./packages/compaction/compaction-tool-result-pruner" },
     { "path": "./packages/web/web" },
     { "path": "./packages/speech/speech" },
-    { "path": "./packages/speech/speech-litellm" },
+    { "path": "./packages/speech/speech-openai-compatible" },
     { "path": "./packages/speech/speech-cache" },
     { "path": "./packages/web/web-search-exa" },
     { "path": "./packages/web/web-search-perplexity" },

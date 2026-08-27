@@ -107,7 +107,7 @@
     "@deepseek-ai/dsh-session-stats": "workspace:^",
     "@deepseek-ai/dsh-speech": "workspace:^",
     "@deepseek-ai/dsh-speech-cache": "workspace:^",
-    "@deepseek-ai/dsh-speech-litellm": "workspace:^",
+    "@deepseek-ai/dsh-speech-openai-compatible": "workspace:^",
     "@deepseek-ai/dsh-storage": "workspace:^",
     "@deepseek-ai/dsh-storage-domain": "workspace:^",
     "@deepseek-ai/dsh-storage-json": "workspace:^",

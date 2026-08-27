@@ -509,7 +509,7 @@ const SERVICE_ROLES: ServiceRole[] = [
     pkg: 'speech',
     title: 'Speech synthesis provider registry',
     mode: 'seam',
-    implementations: ['speech-litellm'],
+    implementations: ['speech-openai-compatible'],
     consumers: ['speech-cache'],
     note: 'Providers register into one ctx.speech seam; the seam resolves deployment policy into a spec before any provider runs.',
   },

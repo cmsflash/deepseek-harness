@@ -41,6 +41,9 @@ export interface SpeechRuntimeConfig {
   /**
    * Requested mp3 bitrate in bits per second. Billing is by input characters,
    * so this trades stored bytes against audio quality and nothing else.
+   *
+   * Advisory rather than guaranteed: it reaches the vendor as `extra_body`,
+   * which MiniMax honors and OpenAI's own models ignore.
    */
   readonly bitrate: number
   /**
@@ -51,8 +54,13 @@ export interface SpeechRuntimeConfig {
   readonly maxChars: number
   /** Explicit provider id. Omitted = auto-select when exactly one is usable. */
   readonly provider?: string
-  /** Default voice passed to the provider when a request names none. */
-  readonly voice?: string
+  /**
+   * Voice passed to the provider when a request names none. Required with no
+   * library default: an OpenAI-shaped route rejects a request carrying no
+   * voice, and the vocabulary is vendor-specific, so no value is portable
+   * enough to inherit silently.
+   */
+  readonly voice: string
 }
 
 /**
@@ -73,7 +81,7 @@ export class SpeechRuntime extends Service {
     bitrate: z.number().step(1).min(1).required(),
     maxChars: z.number().step(1).min(1).required(),
     provider: z.string(),
-    voice: z.string(),
+    voice: z.string().required(),
   })
 
   private readonly providers = new Map<string, SpeechProvider>()
@@ -120,12 +128,11 @@ export class SpeechRuntime extends Service {
       throw new SpeechError('speech synthesis requires non-blank text', 'SPEECH_EMPTY_TEXT')
     }
     const truncated = text.length > this.config.maxChars
-    const voice = request.voice ?? this.config.voice
     return {
       text: truncated ? text.slice(0, this.config.maxChars) : text,
       model: this.config.model,
       bitrate: this.config.bitrate,
-      ...voice !== undefined ? { voice } : {},
+      voice: request.voice ?? this.config.voice,
       truncated,
     }
   }

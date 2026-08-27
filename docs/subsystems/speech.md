@@ -2,7 +2,7 @@
 
 English | [中文](speech.zh.md)
 
-The speech synthesis seam — a [capability seam](../../.agents/notes/implemented/architecture/2026-06-13-capability-seams.md) split across packages: Service Definition ([dsh-speech](../../packages/speech/speech), `ctx.speech` + the provider registry), Service Provider ([dsh-speech-litellm](../../packages/speech/speech-litellm)), and Consumer ([dsh-speech-cache](../../packages/speech/speech-cache), which reads completed turns aloud). Speech is **one optional capability**, not part of the agent-loop spine, so its vocabulary lives here rather than in [core.md](core.md).
+The speech synthesis seam — a [capability seam](../../.agents/notes/implemented/architecture/2026-06-13-capability-seams.md) split across packages: Service Definition ([dsh-speech](../../packages/speech/speech), `ctx.speech` + the provider registry), Service Provider ([dsh-speech-openai-compatible](../../packages/speech/speech-openai-compatible)), and Consumer ([dsh-speech-cache](../../packages/speech/speech-cache), which reads completed turns aloud). Speech is **one optional capability**, not part of the agent-loop spine, so its vocabulary lives here rather than in [core.md](core.md).
 
 Source: [`packages/speech/speech/src/types.ts`](../../packages/speech/speech/src/types.ts)
 
@@ -19,7 +19,7 @@ Defaulting is an explicit step, not a hidden fallback: `resolve(request)` turns 
 interface SpeechRequest {
   /** Plain text to speak. Markdown is the caller's to strip. */
   readonly text: string
-  /** Provider-specific voice identifier; the provider's own default applies when absent. */
+  /** Provider-specific voice identifier; the deployment's configured voice applies when absent. */
   readonly voice?: string
 }
 ```
@@ -31,16 +31,22 @@ interface SpeechSpec {
   readonly text: string
   /** Provider-routed model identifier. */
   readonly model: string
-  /** Requested mp3 bitrate in bits per second. */
+  /**
+   * Requested mp3 bitrate in bits per second. Advisory: MiniMax honors it,
+   * OpenAI's own models ignore it and return 128 kbps regardless.
+   */
   readonly bitrate: number
-  /** Provider-specific voice identifier, when the caller or deployment named one. */
-  readonly voice?: string
+  /**
+   * Provider-specific voice identifier. Always present: an OpenAI-shaped
+   * `/audio/speech` route rejects a request without one.
+   */
+  readonly voice: string
   /** True when {@link SpeechRequest.text} exceeded the bound and was cut. */
   readonly truncated: boolean
 }
 ```
 
-`bitrate` is a storage lever, not a price lever: vendors bill by input characters, so a quieter file costs the same as a heavier one.
+`bitrate` is a storage lever, not a price lever: vendors bill by input characters, so a quieter file costs the same as a heavier one. It is advisory rather than guaranteed — it reaches the vendor through `extra_body`, which MiniMax honors and OpenAI ignores.
 
 ```ts type-equiv
 /** Synthesized audio plus what the provider reported about it. */

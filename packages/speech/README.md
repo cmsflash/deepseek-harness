@@ -7,7 +7,7 @@ This family turns text into audio behind one provider-neutral service, plus the 
 | Package | Role | ctx key |
 |---|---|---|
 | [`speech/`](speech/README.md) | Defines speech provider registration, selection, and the resolve-then-synthesize policy | `ctx.speech` |
-| [`speech-litellm/`](speech-litellm/README.md) | Provides synthesis through an OpenAI-shaped gateway | registers on `ctx.speech` |
+| [`speech-openai-compatible/`](speech-openai-compatible/README.md) | Provides synthesis through an OpenAI-shaped gateway | registers on `ctx.speech` |
 | [`speech-cache/`](speech-cache/README.md) | Synthesizes each completed turn and serves the cached audio to a browser | `ctx.speechCache` |
 
 Synthesized audio is regenerable presentation: it never enters the Session log, so no durable format carries it and a cache miss simply synthesizes again.

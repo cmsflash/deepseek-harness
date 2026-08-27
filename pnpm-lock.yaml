@@ -1467,9 +1467,9 @@ importers:
       '@deepseek-ai/dsh-speech-cache':
         specifier: workspace:^
         version: link:../../speech/speech-cache
-      '@deepseek-ai/dsh-speech-litellm':
+      '@deepseek-ai/dsh-speech-openai-compatible':
         specifier: workspace:^
-        version: link:../../speech/speech-litellm
+        version: link:../../speech/speech-openai-compatible
       '@deepseek-ai/dsh-storage':
         specifier: workspace:^
         version: link:../../storage/storage
@@ -7288,7 +7288,7 @@ importers:
         specifier: workspace:^
         version: link:../../typert/protocol
 
-  packages/speech/speech-litellm:
+  packages/speech/speech-openai-compatible:
     dependencies:
       '@deepseek-ai/schemastery':
         specifier: link:../../../vendor/schemastery

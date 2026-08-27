@@ -11,7 +11,7 @@ export type SpeechMediaType = 'audio/mpeg' | 'audio/wav' | 'audio/flac'
 export interface SpeechRequest {
   /** Plain text to speak. Markdown is the caller's to strip. */
   readonly text: string
-  /** Provider-specific voice identifier; the provider's own default applies when absent. */
+  /** Provider-specific voice identifier; the deployment's configured voice applies when absent. */
   readonly voice?: string
 }
 
@@ -21,10 +21,16 @@ export interface SpeechSpec {
   readonly text: string
   /** Provider-routed model identifier. */
   readonly model: string
-  /** Requested mp3 bitrate in bits per second. */
+  /**
+   * Requested mp3 bitrate in bits per second. Advisory: MiniMax honors it,
+   * OpenAI's own models ignore it and return 128 kbps regardless.
+   */
   readonly bitrate: number
-  /** Provider-specific voice identifier, when the caller or deployment named one. */
-  readonly voice?: string
+  /**
+   * Provider-specific voice identifier. Always present: an OpenAI-shaped
+   * `/audio/speech` route rejects a request without one.
+   */
+  readonly voice: string
   /** True when {@link SpeechRequest.text} exceeded the bound and was cut. */
   readonly truncated: boolean
 }

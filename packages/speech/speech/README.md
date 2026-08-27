@@ -9,7 +9,7 @@ This package owns the Service Definition role of the speech capability:
 | Package | Role |
 |---|---|
 | `@deepseek-ai/dsh-speech` (this) | Service Definition: the service, provider registry, selection policy, `resolve()` policy step, request/audio vocabulary, the `SpeechError` taxonomy |
-| `@deepseek-ai/dsh-speech-litellm` | Provider: an OpenAI-shaped `/audio/speech` gateway |
+| `@deepseek-ai/dsh-speech-openai-compatible` | Provider: an OpenAI-shaped `/audio/speech` gateway |
 | `@deepseek-ai/dsh-speech-cache` | Consumer: turn-end synthesis, the audio cache, and the browser Remote |
 
 ## Service API (`ctx.speech`)
@@ -46,14 +46,14 @@ Every field is required with no library default, because each one varies by depl
 | Field | Semantics |
 |---|---|
 | `model` | Provider-routed model identifier, for example `minimax/speech-2.6-hd`. |
-| `bitrate` | Requested mp3 bitrate in bits per second. Vendors bill by input characters, so this trades stored bytes against audio quality and nothing else. |
+| `bitrate` | Requested mp3 bitrate in bits per second. Vendors bill by input characters, so this trades stored bytes against audio quality and nothing else. Advisory: it reaches the vendor as `extra_body`, which MiniMax honors and OpenAI ignores. |
 | `maxChars` | Maximum characters per request; longer text is truncated rather than split. |
 | `provider` | Optional explicit provider id; omitted auto-selects a single usable provider. |
-| `voice` | Optional default voice passed to the provider when a request names none. |
+| `voice` | Voice passed to the provider when a request names none. Required: an OpenAI-shaped route rejects a request carrying no voice, and the vocabulary is vendor-specific, so no value is portable enough to inherit silently. |
 
 ## Vocabulary
 
-`SpeechRequest` (`text`, `voice?`) → `SpeechSpec` (`text`, `model`, `bitrate`, `voice?`, `truncated`) → `SpeechAudio` (`data`, `mediaType`, `billedCharacters?`, `durationMs?`). `billedCharacters` is recorded rather than derived because a vendor may count a CJK character as two. `SpeechMediaType` is a closed union owned here. See `src/types.ts` for the full contracts and the `SpeechError` code taxonomy.
+`SpeechRequest` (`text`, `voice?`) → `SpeechSpec` (`text`, `model`, `bitrate`, `voice`, `truncated`) → `SpeechAudio` (`data`, `mediaType`, `billedCharacters?`, `durationMs?`). `billedCharacters` is recorded rather than derived because a vendor may count a CJK character as two. `SpeechMediaType` is a closed union owned here. See `src/types.ts` for the full contracts and the `SpeechError` code taxonomy.
 
 ## Model Experience
 

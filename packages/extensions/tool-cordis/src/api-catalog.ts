@@ -4512,7 +4512,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'SpeechSpec',
-    declaration: 'export interface SpeechSpec {\n    readonly text: string;\n    readonly model: string;\n    readonly bitrate: number;\n    readonly voice?: string;\n    readonly truncated: boolean;\n}',
+    declaration: 'export interface SpeechSpec {\n    readonly text: string;\n    readonly model: string;\n    readonly bitrate: number;\n    readonly voice: string;\n    readonly truncated: boolean;\n}',
   },
   {
     name: 'SpillLocator',

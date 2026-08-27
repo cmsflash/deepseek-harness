@@ -2,7 +2,7 @@
 
 [English](speech.md) | 中文
 
-语音合成 seam —— 一个跨包拆分的[能力 seam](../../.agents/notes/implemented/architecture/2026-06-13-capability-seams.zh.md)：Service Definition（[dsh-speech](../../packages/speech/speech)，`ctx.speech` 加提供方注册表）、Service Provider（[dsh-speech-litellm](../../packages/speech/speech-litellm)），以及 Consumer（[dsh-speech-cache](../../packages/speech/speech-cache)，朗读已完成的轮次）。语音是**一项可选能力**，不属于 agent loop 主干，因此它的词汇放在这里而非 [core.md](core.zh.md)。
+语音合成 seam —— 一个跨包拆分的[能力 seam](../../.agents/notes/implemented/architecture/2026-06-13-capability-seams.zh.md)：Service Definition（[dsh-speech](../../packages/speech/speech)，`ctx.speech` 加提供方注册表）、Service Provider（[dsh-speech-openai-compatible](../../packages/speech/speech-openai-compatible)），以及 Consumer（[dsh-speech-cache](../../packages/speech/speech-cache)，朗读已完成的轮次）。语音是**一项可选能力**，不属于 agent loop 主干，因此它的词汇放在这里而非 [core.md](core.zh.md)。
 
 来源：[`packages/speech/speech/src/types.ts`](../../packages/speech/speech/src/types.ts)
 
@@ -19,7 +19,7 @@
 interface SpeechRequest {
   /** Plain text to speak. Markdown is the caller's to strip. */
   readonly text: string
-  /** Provider-specific voice identifier; the provider's own default applies when absent. */
+  /** Provider-specific voice identifier; the deployment's configured voice applies when absent. */
   readonly voice?: string
 }
 ```
@@ -31,16 +31,22 @@ interface SpeechSpec {
   readonly text: string
   /** Provider-routed model identifier. */
   readonly model: string
-  /** Requested mp3 bitrate in bits per second. */
+  /**
+   * Requested mp3 bitrate in bits per second. Advisory: MiniMax honors it,
+   * OpenAI's own models ignore it and return 128 kbps regardless.
+   */
   readonly bitrate: number
-  /** Provider-specific voice identifier, when the caller or deployment named one. */
-  readonly voice?: string
+  /**
+   * Provider-specific voice identifier. Always present: an OpenAI-shaped
+   * `/audio/speech` route rejects a request without one.
+   */
+  readonly voice: string
   /** True when {@link SpeechRequest.text} exceeded the bound and was cut. */
   readonly truncated: boolean
 }
 ```
 
-`bitrate` 是存储杠杆而非价格杠杆：厂商按输入字符计费，因此更轻的文件与更重的文件价格相同。
+`bitrate` 是存储杠杆而非价格杠杆：厂商按输入字符计费，因此更轻的文件与更重的文件价格相同。它是建议性的而非保证：它经 `extra_body` 抵达厂商，MiniMax 遵从而 OpenAI 忽略。
 
 ```ts type-equiv
 /** Synthesized audio plus what the provider reported about it. */

@@ -19,7 +19,7 @@ A `ctx.speech` capability seam synthesizes the closing prose of every completed 
 Three roles, per the [capability-seam rationale](../../implemented/architecture/2026-06-13-capability-seams.md):
 
 - **Service Definition** `dsh-speech` owns `ctx.speech`, the request/spec split, and the audio vocabulary. It resolves a request into a spec explicitly, so no provider hides a default inside `synthesize()`.
-- **Service Provider** `dsh-speech-litellm` calls `/audio/speech` through the LiteLLM gateway. MiniMax is not OpenAI-compatible at the vendor API (`/v1/t2a_v2`, not `/v1/audio/speech`), so LiteLLM's dedicated adapter is the integration point rather than an OpenAI base-URL override.
+- **Service Provider** `dsh-speech-openai-compatible` calls `/audio/speech`, registering one provider per configured route ([route design](../architecture/2026-08-25-speech-openai-compatible-routes.md)). The Web bundle pins the LiteLLM route: MiniMax is not OpenAI-compatible at the vendor API (`/v1/t2a_v2`, not `/v1/audio/speech`), so the gateway's dedicated adapter is the integration point rather than an OpenAI base-URL override.
 - **Consumers** are `dsh-speech-cache`, the host-side `turn/end` listener that produces audio and owns the `speechCache` Remote, and `dsh-client-ui-message-speech`, the browser plugin that plays it.
 
 ### Trigger and text selection
@@ -40,9 +40,9 @@ A cache miss is an ordinary outcome: the browser requests synthesis and plays th
 
 ### Configuration
 
-Every deployment-varying value is a validated `Config` field, per the no-hardcoded-tunables rule: `model`, `bitrate`, `ttlDays`, and `maxChars`. The Web bundle ships `minimax/speech-2.6-hd` at 64 kbps with a 7-day TTL.
+Every deployment-varying value is a validated `Config` field, per the no-hardcoded-tunables rule: `model`, `voice`, `bitrate`, `ttlDays`, and `maxChars`. The Web bundle ships `minimax/speech-2.6-hd` at 64 kbps with a 7-day TTL, pinned to the `litellm` route.
 
-Bitrate is a pure storage lever. MiniMax bills `usage_characters`, the input count, so audio quality has no price effect; the vendor's own response example returns 111,789 bytes for 6.931 seconds at 128 kbps, which is constant-bitrate mp3 to within 1%, so bytes scale exactly with the setting. Latency is unaffected in any way a listener notices: synthesis time tracks text length, and the transfer difference is a few hundred kilobytes on a local network.
+Bitrate is a pure storage lever on MiniMax, which honors it; OpenAI's own models ignore it and return 128 kbps regardless. MiniMax bills `usage_characters`, the input count, so audio quality has no price effect; the vendor's own response example returns 111,789 bytes for 6.931 seconds at 128 kbps, which is constant-bitrate mp3 to within 1%, so bytes scale exactly with the setting. Latency is unaffected in any way a listener notices: synthesis time tracks text length, and the transfer difference is a few hundred kilobytes on a local network.
 
 64 kbps rather than 32 is the shipped default because LiteLLM's MiniMax adapter documents `64000, 128000, 192000, 256000` for mp3. 32,000 is a MiniMax-documented value that this adapter does not list, so the lowest setting proven through this path is 64 kbps. A deployment that verifies 32 kbps end to end can set it and halve storage again.
 

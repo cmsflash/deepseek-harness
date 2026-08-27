@@ -9,7 +9,7 @@
 | 包 | 角色 |
 |---|---|
 | `@deepseek-ai/dsh-speech`（本包） | Service Definition：服务、提供方注册表、选择策略、`resolve()` 策略步骤、请求／音频词汇，以及 `SpeechError` 分类 |
-| `@deepseek-ai/dsh-speech-litellm` | 提供方：OpenAI 形态的 `/audio/speech` 网关 |
+| `@deepseek-ai/dsh-speech-openai-compatible` | 提供方：OpenAI 形态的 `/audio/speech` 网关 |
 | `@deepseek-ai/dsh-speech-cache` | Consumer：轮次结束时合成、音频缓存，以及浏览器 Remote |
 
 ## 服务 API（`ctx.speech`）
@@ -46,14 +46,14 @@
 | 字段 | 语义 |
 |---|---|
 | `model` | 提供方路由的模型标识符，例如 `minimax/speech-2.6-hd`。 |
-| `bitrate` | 请求的 mp3 码率（比特每秒）。厂商按输入字符计费，因此它只在存储字节与音频质量之间权衡。 |
+| `bitrate` | 请求的 mp3 码率（比特每秒）。厂商按输入字符计费，因此它只在存储字节与音频质量之间权衡。建议性：它以 `extra_body` 抵达厂商，MiniMax 遵从而 OpenAI 忽略。 |
 | `maxChars` | 单次请求的最大字符数；更长的文本被截断而非切分。 |
 | `provider` | 可选的显式提供方 id；省略时自动选择唯一可用的提供方。 |
-| `voice` | 可选的默认音色，在请求未指定时传给提供方。 |
+| `voice` | 在请求未指定时传给提供方的音色。必填：OpenAI 形态的路由会拒绝不带音色的请求，且该词汇表因厂商而异，没有哪个值通用到可以静默继承。 |
 
 ## 词汇
 
-`SpeechRequest`（`text`、`voice?`）→ `SpeechSpec`（`text`、`model`、`bitrate`、`voice?`、`truncated`）→ `SpeechAudio`（`data`、`mediaType`、`billedCharacters?`、`durationMs?`）。`billedCharacters` 是记录而非推导，因为厂商可能把一个 CJK 字符算作两个。`SpeechMediaType` 是本包拥有的封闭联合。完整契约与 `SpeechError` 代码分类见 `src/types.ts`。
+`SpeechRequest`（`text`、`voice?`）→ `SpeechSpec`（`text`、`model`、`bitrate`、`voice`、`truncated`）→ `SpeechAudio`（`data`、`mediaType`、`billedCharacters?`、`durationMs?`）。`billedCharacters` 是记录而非推导，因为厂商可能把一个 CJK 字符算作两个。`SpeechMediaType` 是本包拥有的封闭联合。完整契约与 `SpeechError` 代码分类见 `src/types.ts`。
 
 ## Model Experience
 
