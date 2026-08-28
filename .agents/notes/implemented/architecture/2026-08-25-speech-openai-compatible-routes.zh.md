@@ -38,4 +38,8 @@ Status: implemented
 
 包内测试固定：按 map 键的每路由注册、OpenAI 公开基址默认值、经环境引用解析凭据与基址、字面量密钥优先、不可用路由仍注册而非消失，以及 dispose 移除每条路由的贡献。seam 测试固定 `resolve()` 始终产出音色。
 
-针对实时网关验证：`openai/tts-1`、`openai/gpt-4o-mini-tts`、`minimax/speech-2.6-turbo` 与 `minimax/speech-02-hd` 各自返回可解码的 mp3，而同一请求去掉 `voice` 后在两个厂商族上都返回 500。`extra_body.bitrate` 使 MiniMax 输出体积的变化明显超出重复请求的噪声底，而 OpenAI 输出的变化落在噪声底之内——这正是称其为建议性的测量依据。
+`tests/route.e2e.ts` 在实时网关上对两个厂商族做合成，并在缺少 `LITELLM_API_KEY` 时自行跳过。本地 stub 无法替代它：stub 接受任何请求体，因此它只检验 seam 的接线，却会接受只有厂商才会拒绝的请求字段。把 `voice` 从提供方去掉，会让该套件的两个厂商用例都失败。
+
+该套件还固定了一个不可路由的模型。网关会公布其账号无法路由的模型，并以与畸形请求相同的不透明 500 作答，因此 `SPEECH_REQUEST_FAILED` 必须覆盖两者，而不是让音频路径存下一个 JSON 错误体。
+
+`extra_body.bitrate` 使 MiniMax 输出体积的变化明显超出重复请求的噪声底，而 OpenAI 输出的变化落在噪声底之内——这正是称其为建议性的测量依据。

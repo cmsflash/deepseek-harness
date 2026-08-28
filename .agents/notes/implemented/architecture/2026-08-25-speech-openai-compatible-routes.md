@@ -38,4 +38,8 @@ A route resolves its credential from `apiKey` or the `apiKeyEnv` reference, and 
 
 Package suites pin per-route registration under the map key, the public-OpenAI base default, credential and base resolution through environment references, literal-key precedence, an unavailable route registering rather than vanishing, and disposal removing every route's contribution. The seam suite pins that `resolve()` always produces a voice.
 
-Verified against the live gateway: `openai/tts-1`, `openai/gpt-4o-mini-tts`, `minimax/speech-2.6-turbo`, and `minimax/speech-02-hd` each return a decodable mp3, and the same request without `voice` returns 500 on both vendor families. `extra_body.bitrate` moves MiniMax output size well outside the repeat-request noise floor and leaves OpenAI output inside it, which is the measurement behind calling it advisory.
+`tests/route.e2e.ts` synthesizes through a live gateway on both vendor families and self-skips without `LITELLM_API_KEY`. A local stub cannot substitute: a stub accepts any body, so it exercises the seam's wiring while accepting the request fields only a vendor rejects. Dropping `voice` from the provider fails both vendor cases in that suite.
+
+The suite also pins an unroutable model. The gateway advertises models its account cannot route and answers them with the same opaque 500 a malformed request gets, so `SPEECH_REQUEST_FAILED` must cover both rather than the audio path storing a JSON error body.
+
+`extra_body.bitrate` moves MiniMax output size well outside the repeat-request noise floor and leaves OpenAI output inside it, which is the measurement behind calling it advisory.
