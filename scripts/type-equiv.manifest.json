@@ -1976,34 +1976,34 @@
       "source": "packages/feedback/message-feedback/src/types.ts"
     },
     {
-      "doc": "docs/subsystems/speech.md",
+      "doc": "docs/subsystems/tts.md",
       "symbol": "SpeechRequest",
-      "source": "packages/speech/speech/src/types.ts"
+      "source": "packages/tts/tts/src/types.ts"
     },
     {
-      "doc": "docs/subsystems/speech.md",
+      "doc": "docs/subsystems/tts.md",
       "symbol": "SpeechSpec",
-      "source": "packages/speech/speech/src/types.ts"
+      "source": "packages/tts/tts/src/types.ts"
     },
     {
-      "doc": "docs/subsystems/speech.md",
+      "doc": "docs/subsystems/tts.md",
       "symbol": "SpeechAudio",
-      "source": "packages/speech/speech/src/types.ts"
+      "source": "packages/tts/tts/src/types.ts"
     },
     {
-      "doc": "docs/subsystems/speech.md",
+      "doc": "docs/subsystems/tts.md",
       "symbol": "SpeechProvider",
-      "source": "packages/speech/speech/src/types.ts"
+      "source": "packages/tts/tts/src/types.ts"
     },
     {
-      "doc": "docs/subsystems/speech.md",
+      "doc": "docs/subsystems/tts.md",
       "symbol": "SpeechAudioRequest",
-      "source": "packages/speech/speech-cache/src/types.ts"
+      "source": "packages/tts/read-aloud/src/types.ts"
     },
     {
-      "doc": "docs/subsystems/speech.md",
+      "doc": "docs/subsystems/tts.md",
       "symbol": "SpeechAudioValue",
-      "source": "packages/speech/speech-cache/src/types.ts"
+      "source": "packages/tts/read-aloud/src/types.ts"
     }
   ]
 }

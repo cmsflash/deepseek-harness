@@ -10,7 +10,7 @@ Status: resolved (fix on `wip/assistant-reply-read-aloud`)
 
 ## 概述
 
-加入朗读功能引入了 `@deepseek-ai/dsh-speech-cache`，其 `SpeechCacheService` 暴露一个 `@Remote('audio')` 方法。因此 Typert 生成了 `lib/typert.remote-client.js`，其首行是 `import { z } from 'zod'`——请求／结果编解码器都是 zod schema。而该包的 `dependencies` 只列了 `@deepseek-ai/schemastery`。
+加入朗读功能引入了 `@deepseek-ai/dsh-read-aloud`，其 `ReadAloudService` 暴露一个 `@Remote('audio')` 方法。因此 Typert 生成了 `lib/typert.remote-client.js`，其首行是 `import { z } from 'zod'`——请求／结果编解码器都是 zod schema。而该包的 `dependencies` 只列了 `@deepseek-ai/schemastery`。
 
 `tsc`、`oxlint`、13,505 个单元测试、`test:gui`、`build` 以及全部 28 个 `doc-sync` 门禁均通过。故障只在浏览器加载装配后的 shell 时出现。
 
@@ -20,11 +20,11 @@ Status: resolved (fix on `wip/assistant-reply-read-aloud`)
 
 ## 根因
 
-生成产物会被内联进 import 它的那个 Client 包的浏览器 bundle——这里是 `@deepseek-ai/dsh-api-remotes`，经由新增的 `import speechCacheRemote from '@deepseek-ai/dsh-speech-cache/remote'`。bundle 纯度门禁明确允许这一点（`packages/client/tsdown.client.ts` 中的 `GENERATED_REMOTE`：「wire contribution: inline is the point」）。
+生成产物会被内联进 import 它的那个 Client 包的浏览器 bundle——这里是 `@deepseek-ai/dsh-api-remotes`，经由新增的 `import readAloudRemote from '@deepseek-ai/dsh-read-aloud/remote'`。bundle 纯度门禁明确允许这一点（`packages/client/tsdown.client.ts` 中的 `GENERATED_REMOTE`：「wire contribution: inline is the point」）。
 
 内联是强制的而非可选的。`PLATFORM_MODULES`（`packages/client/web/src/platform.ts`）只含 React、cordis 与三个 UI 包；`clientConfig` 中的 `noExternal` 直接写明了规则——不在加载器模块表中的一切都必须内联，并把 zod 列为示例之一。
 
-但打包器只能内联它能解析的东西，而 pnpm 的严格存储只为已声明的依赖建立符号链接。`packages/feedback/message-feedback/node_modules/zod` 存在，是因为那份清单声明了 zod；speech-cache 的对应目录从未被创建。于是 tsdown 在产出的工厂函数里留下一个裸 `require("zod")`，启动时 `makeRequire`（`packages/client/modules/src/client/system.ts`）依次走 seed → statics → cache → factories，全部未命中并抛错。它的消息本就点明了原因：「a build-time externals drift, or a forbidden cross-plugin value import」。
+但打包器只能内联它能解析的东西，而 pnpm 的严格存储只为已声明的依赖建立符号链接。`packages/feedback/message-feedback/node_modules/zod` 存在，是因为那份清单声明了 zod；read-aloud 的对应目录从未被创建。于是 tsdown 在产出的工厂函数里留下一个裸 `require("zod")`，启动时 `makeRequire`（`packages/client/modules/src/client/system.ts`）依次走 seed → statics → cache → factories，全部未命中并抛错。它的消息本就点明了原因：「a build-time externals drift, or a forbidden cross-plugin value import」。
 
 ## 为什么所有宿主侧检查都通过
 
@@ -34,11 +34,11 @@ Status: resolved (fix on `wip/assistant-reply-read-aloud`)
 
 ## 修复
 
-`packages/speech/speech-cache/package.json` 声明 `"zod": "^4.4.3"`，与已导出 `./remote` 的全部五个包一致。它的 knip 条目按 `cordis-host-runner` 与 `commands` 的做法忽略该依赖，因为 `src` 下没有文件 import 它。
+`packages/tts/read-aloud/package.json` 声明 `"zod": "^4.4.3"`，与已导出 `./remote` 的全部五个包一致。它的 knip 条目按 `cordis-host-runner` 与 `commands` 的做法忽略该依赖，因为 `src` 下没有文件 import 它。
 
 `scripts/check-workspace-constraints.ts` 新增 `generatedRemoteDependencyErrors`，断言带有规范 `./remote` 导出对的清单声明了 `GENERATED_REMOTE_RUNTIME_DEPENDENCIES` 的每个成员。该检查复用既有的 `hasTypertRemoteNavigation` 谓词，且该列表是常量，因此未来出现第二个生成 import 时只需改一行，而不必新增规则。`scripts/workspace-constraints.spec.ts` 证明该门禁会拒绝缺少依赖的清单、接受已声明的清单、忽略没有生成 remote 或采用手写 `./remote` 的包，并对全部六个已交付的 remote 包成立。
 
-同一次排查发现了另一个同类遗漏：`tsconfig.base.json` 的 `paths` 映射里缺少 `@deepseek-ai/dsh-client-ui-message-speech`，`verify-cordis-config` 会报告它，因为 client 包名以其分组目录为前缀，无法被通用通配符匹配。
+同一次排查发现了另一个同类遗漏：`tsconfig.base.json` 的 `paths` 映射里缺少 `@deepseek-ai/dsh-client-read-aloud`，`verify-cordis-config` 会报告它，因为 client 包名以其分组目录为前缀，无法被通用通配符匹配。
 
 ## 教训
 

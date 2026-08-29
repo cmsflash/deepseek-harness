@@ -75,7 +75,7 @@
     "@deepseek-ai/dsh-session-persistence": "workspace:^",
     "@deepseek-ai/dsh-session-reference": "workspace:^",
     "@deepseek-ai/dsh-settings": "workspace:^",
-    "@deepseek-ai/dsh-speech-cache": "workspace:^",
+    "@deepseek-ai/dsh-read-aloud": "workspace:^",
     "@deepseek-ai/dsh-typert-registry": "workspace:^"
   },
   "devDependencies": {
@@ -96,7 +96,7 @@
     "@deepseek-ai/dsh-session-persistence": "workspace:^",
     "@deepseek-ai/dsh-session-reference": "workspace:^",
     "@deepseek-ai/dsh-settings": "workspace:^",
-    "@deepseek-ai/dsh-speech-cache": "workspace:^",
+    "@deepseek-ai/dsh-read-aloud": "workspace:^",
     "@deepseek-ai/dsh-typert-registry": "workspace:^"
   }
 }

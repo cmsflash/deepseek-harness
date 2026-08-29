@@ -12,15 +12,15 @@ Speech is presentation, not model input, so it never enters the model context or
 
 ## Decision
 
-A `ctx.speech` capability seam synthesizes the closing prose of every completed turn as soon as that turn ends, and the Web GUI plays the finished artifact instead of converting on demand.
+A `ctx.tts` capability seam synthesizes the closing prose of every completed turn as soon as that turn ends, and the Web GUI plays the finished artifact instead of converting on demand.
 
 ### Capability seam
 
 Three roles, per the [capability-seam rationale](../../implemented/architecture/2026-06-13-capability-seams.md):
 
-- **Service Definition** `dsh-speech` owns `ctx.speech`, the request/spec split, and the audio vocabulary. It resolves a request into a spec explicitly, so no provider hides a default inside `synthesize()`.
-- **Service Provider** `dsh-speech-openai-compatible` calls `/audio/speech`, registering one provider per configured route ([route design](../architecture/2026-08-25-speech-openai-compatible-routes.md)). The Web bundle pins the LiteLLM route: MiniMax is not OpenAI-compatible at the vendor API (`/v1/t2a_v2`, not `/v1/audio/speech`), so the gateway's dedicated adapter is the integration point rather than an OpenAI base-URL override.
-- **Consumers** are `dsh-speech-cache`, the host-side `turn/end` listener that produces audio and owns the `speechCache` Remote, and `dsh-client-ui-message-speech`, the browser plugin that plays it.
+- **Service Definition** `dsh-speech` owns `ctx.tts`, the request/spec split, and the audio vocabulary. It resolves a request into a spec explicitly, so no provider hides a default inside `synthesize()`.
+- **Service Provider** `dsh-openai-tts` calls `/audio/speech`, registering one provider per configured route ([route design](../architecture/2026-08-25-openai-tts-routes.md)). The Web bundle pins the LiteLLM route: MiniMax is not OpenAI-compatible at the vendor API (`/v1/t2a_v2`, not `/v1/audio/speech`), so the gateway's dedicated adapter is the integration point rather than an OpenAI base-URL override.
+- **Consumers** are `dsh-read-aloud`, the host-side `turn/end` listener that produces audio and owns the `readAloud` Remote, and `dsh-client-read-aloud`, the browser plugin that plays it.
 
 ### Trigger and text selection
 
@@ -52,9 +52,9 @@ The model is pinned to a `2.6` identifier because LiteLLM's price map has no ent
 
 ### Package manifests carry the generated artifact's imports
 
-`dsh-speech-cache` declares `zod` even though no file under `src` imports it: Typert emits the `./remote` codecs with a top-level `import { z } from 'zod'`, that artifact is inlined into the Client bundle importing it, and a bundler can only inline a module pnpm linked for a declared dependency. `scripts/check-workspace-constraints.ts` now asserts this for every package exporting the canonical `./remote` pair, because the convention held across five packages with nothing enforcing it ([postmortem](../../../../docs/postmortem/0005-undeclared-zod-broke-web-plugin-boot.md)).
+`dsh-read-aloud` declares `zod` even though no file under `src` imports it: Typert emits the `./remote` codecs with a top-level `import { z } from 'zod'`, that artifact is inlined into the Client bundle importing it, and a bundler can only inline a module pnpm linked for a declared dependency. `scripts/check-workspace-constraints.ts` now asserts this for every package exporting the canonical `./remote` pair, because the convention held across five packages with nothing enforcing it ([postmortem](../../../../docs/postmortem/0005-undeclared-zod-broke-web-plugin-boot.md)).
 
-`tsconfig.base.json` maps `@deepseek-ai/dsh-client-ui-message-speech` explicitly. Client package names prefix their group directory, so the generic `@deepseek-ai/dsh-*` wildcard cannot reach them and `verify-cordis-config` requires the entry.
+`tsconfig.base.json` maps `@deepseek-ai/dsh-client-read-aloud` explicitly. Client package names prefix their group directory, so the generic `@deepseek-ai/dsh-*` wildcard cannot reach them and `verify-cordis-config` requires the entry.
 
 ## Measured cost
 

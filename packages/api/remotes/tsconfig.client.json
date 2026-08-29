@@ -40,7 +40,7 @@
       "path": "../../feedback/message-feedback"
     },
     {
-      "path": "../../speech/speech-cache"
+      "path": "../../tts/read-aloud"
     },
     {
       "path": "../../host/plugin-inventory"

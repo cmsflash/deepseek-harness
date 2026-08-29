@@ -66,17 +66,17 @@
       config:
         maxNoteBytes: 8192
 
-    # Read-aloud: the speech seam, its routes, and the turn-end cache the
-    # browser plays from. Billing is by input characters, so `bitrate` trades
-    # stored bytes against audio quality and nothing else; MiniMax honors it and
+    # Read-aloud: the tts seam, its routes, and the turn-end cache the browser
+    # plays from. Billing is by input characters, so `bitrate` trades stored
+    # bytes against audio quality and nothing else; MiniMax honors it and
     # OpenAI ignores it.
     #
     # `model`, `voice`, and `provider` move together: `minimax/speech-2.6-hd`
     # resolves only through the gateway, so pinning the route is correctness
     # rather than tie-breaking. Serving OpenAI instead means setting all three
     # (`provider: openai`, an `openai/*` model, and a voice that model accepts).
-    - id: speech
-      name: '@deepseek-ai/dsh-speech'
+    - id: tts
+      name: '@deepseek-ai/dsh-tts'
       config:
         provider: litellm
         model: minimax/speech-2.6-hd
@@ -84,8 +84,8 @@
         bitrate: 64000
         maxChars: 10000
 
-    - id: speech-routes
-      name: '@deepseek-ai/dsh-speech-openai-compatible'
+    - id: openai-tts
+      name: '@deepseek-ai/dsh-openai-tts'
       config:
         providers:
           litellm:
@@ -94,8 +94,8 @@
           openai:
             apiKeyEnv: OPENAI_API_KEY
 
-    - id: speech-cache
-      name: '@deepseek-ai/dsh-speech-cache'
+    - id: read-aloud
+      name: '@deepseek-ai/dsh-read-aloud'
       config:
         ttlDays: 7
         synthesizeOnTurnEnd: true
@@ -302,9 +302,9 @@
       name: '@deepseek-ai/dsh-client-ui-message-feedback'
 
     # Read-aloud: the play/stop control in the assistant-message action strip,
-    # over the speechCache Remote.
-    - id: ui-message-speech
-      name: '@deepseek-ai/dsh-client-ui-message-speech'
+    # over the readAloud Remote.
+    - id: ui-read-aloud
+      name: '@deepseek-ai/dsh-client-read-aloud'
 
     # Model selection: the /model popupSelect + composer seat over session.models.
     - id: ui-model-selection

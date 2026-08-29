@@ -30,7 +30,7 @@ function remotePackageDirectories(): string[] {
     'packages/goal/goal',
     'packages/host/plugin-inventory',
     'packages/interaction/commands',
-    'packages/speech/speech-cache',
+    'packages/tts/read-aloud',
   ]
 }
 

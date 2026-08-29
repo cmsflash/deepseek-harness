@@ -396,7 +396,7 @@
         "tests/**/*.ts"
       ]
     },
-    "packages/speech/speech-openai-compatible": {
+    "packages/tts/openai-tts": {
       "entry": [
         "tests/**/*.spec.ts",
         "tests/**/*.e2e.ts"
@@ -675,7 +675,7 @@
         "@deepseek-ai/.+"
       ]
     },
-    "packages/speech/speech-cache": {
+    "packages/tts/read-aloud": {
       "entry": [
         "tests/**/*.spec.ts"
       ],

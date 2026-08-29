@@ -1455,6 +1455,36 @@ export interface Config {
 
 Source: [`packages/feedback/message-feedback/src/index.ts:49`](../packages/feedback/message-feedback/src/index.ts)
 
+<a id="deepseek-aidsh-openai-tts"></a>
+
+## `@deepseek-ai/dsh-openai-tts`
+
+Requires: `tts`
+
+```ts config-catalog
+/** Plugin config; `apply` fills environment and constant defaults per route. */
+export interface Config {
+  /** Routes to register, keyed by the provider id the seam selects by. */
+  providers: Record<string, SpeechRouteConfig>
+}
+
+/** One configured route. The map key is the provider id the seam selects by. */
+export interface SpeechRouteConfig {
+  /** Environment/credential reference holding the key. Unset → route unavailable. */
+  apiKeyEnv?: string
+  /** Literal key, for a deployment that does not use a credential reference. */
+  apiKey?: string
+  /** Route base; `/audio/speech` is appended. Defaults to {@link OPENAI_DEFAULT_BASE_URL}. */
+  baseURL?: string
+  /** Environment reference holding the base URL, for a route whose host varies by deployment. */
+  baseURLEnv?: string
+  /** Request deadline in milliseconds. */
+  timeoutMs?: number
+}
+```
+
+Source: [`packages/tts/openai-tts/src/index.ts:62`](../packages/tts/openai-tts/src/index.ts)
+
 <a id="deepseek-aidsh-permission-presets"></a>
 
 ## `@deepseek-ai/dsh-permission-presets`
@@ -1588,6 +1618,27 @@ export type Config = LocalConfig
 Depends on: [`LocalConfig`](#deepseek-aidsh-pwsh-local)
 
 Source: [`packages/shell/pwsh-sandbox/src/index.ts:40`](../packages/shell/pwsh-sandbox/src/index.ts)
+
+<a id="deepseek-aidsh-read-aloud"></a>
+
+## `@deepseek-ai/dsh-read-aloud`
+
+Requires: `sessions` · `tts`
+
+```ts config-catalog
+/** Required deployment policy for cached read-aloud audio. */
+export interface Config {
+  /** Days a synthesized artifact is served before it is swept. */
+  readonly ttlDays: number
+  /**
+   * Synthesize every completed turn as it ends. False leaves synthesis to the
+   * first playback request, trading latency for spend on turns nobody plays.
+   */
+  readonly synthesizeOnTurnEnd: boolean
+}
+```
+
+Source: [`packages/tts/read-aloud/src/index.ts:45`](../packages/tts/read-aloud/src/index.ts)
 
 <a id="deepseek-aidsh-repeat-tool-reminder"></a>
 
@@ -2042,98 +2093,6 @@ export interface Config {
 ```
 
 Source: [`packages/skill/skill-filesystem/src/index.ts:49`](../packages/skill/skill-filesystem/src/index.ts)
-
-<a id="deepseek-aidsh-speech"></a>
-
-## `@deepseek-ai/dsh-speech`
-
-```ts config-catalog
-/**
- * Required deployment policy for the speech seam. Every field is required with
- * no library default: model choice, audio weight, and the input bound all vary
- * by deployment and each carries a cost, so none may be inherited silently.
- */
-export interface SpeechRuntimeConfig {
-  /** Provider-routed model identifier, for example `minimax/speech-2.6-hd`. */
-  readonly model: string
-  /**
-   * Requested mp3 bitrate in bits per second. Billing is by input characters,
-   * so this trades stored bytes against audio quality and nothing else.
-   *
-   * Advisory rather than guaranteed: it reaches the vendor as `extra_body`,
-   * which MiniMax honors and OpenAI's own models ignore.
-   */
-  readonly bitrate: number
-  /**
-   * Maximum characters sent in one request. Longer text is truncated rather
-   * than split, because a partial reading is a better failure than an
-   * unbounded bill.
-   */
-  readonly maxChars: number
-  /** Explicit provider id. Omitted = auto-select when exactly one is usable. */
-  readonly provider?: string
-  /**
-   * Voice passed to the provider when a request names none. Required with no
-   * library default: an OpenAI-shaped route rejects a request carrying no
-   * voice, and the vocabulary is vendor-specific, so no value is portable
-   * enough to inherit silently.
-   */
-  readonly voice: string
-}
-```
-
-Source: [`packages/speech/speech/src/index.ts:38`](../packages/speech/speech/src/index.ts)
-
-<a id="deepseek-aidsh-speech-cache"></a>
-
-## `@deepseek-ai/dsh-speech-cache`
-
-Requires: `sessions` · `speech`
-
-```ts config-catalog
-/** Required deployment policy for cached read-aloud audio. */
-export interface Config {
-  /** Days a synthesized artifact is served before it is swept. */
-  readonly ttlDays: number
-  /**
-   * Synthesize every completed turn as it ends. False leaves synthesis to the
-   * first playback request, trading latency for spend on turns nobody plays.
-   */
-  readonly synthesizeOnTurnEnd: boolean
-}
-```
-
-Source: [`packages/speech/speech-cache/src/index.ts:45`](../packages/speech/speech-cache/src/index.ts)
-
-<a id="deepseek-aidsh-speech-openai-compatible"></a>
-
-## `@deepseek-ai/dsh-speech-openai-compatible`
-
-Requires: `speech`
-
-```ts config-catalog
-/** Plugin config; `apply` fills environment and constant defaults per route. */
-export interface Config {
-  /** Routes to register, keyed by the provider id the seam selects by. */
-  providers: Record<string, SpeechRouteConfig>
-}
-
-/** One configured route. The map key is the provider id the seam selects by. */
-export interface SpeechRouteConfig {
-  /** Environment/credential reference holding the key. Unset → route unavailable. */
-  apiKeyEnv?: string
-  /** Literal key, for a deployment that does not use a credential reference. */
-  apiKey?: string
-  /** Route base; `/audio/speech` is appended. Defaults to {@link OPENAI_DEFAULT_BASE_URL}. */
-  baseURL?: string
-  /** Environment reference holding the base URL, for a route whose host varies by deployment. */
-  baseURLEnv?: string
-  /** Request deadline in milliseconds. */
-  timeoutMs?: number
-}
-```
-
-Source: [`packages/speech/speech-openai-compatible/src/index.ts:62`](../packages/speech/speech-openai-compatible/src/index.ts)
 
 <a id="deepseek-aidsh-spill-local"></a>
 
@@ -3083,6 +3042,47 @@ export type ToolPresentationMode = 'native' | 'code' | 'both'
 
 Source: [`packages/core/tools/src/index.ts:654`](../packages/core/tools/src/index.ts)
 
+<a id="deepseek-aidsh-tts"></a>
+
+## `@deepseek-ai/dsh-tts`
+
+```ts config-catalog
+/**
+ * Required deployment policy for the speech seam. Every field is required with
+ * no library default: model choice, audio weight, and the input bound all vary
+ * by deployment and each carries a cost, so none may be inherited silently.
+ */
+export interface TtsRuntimeConfig {
+  /** Provider-routed model identifier, for example `minimax/speech-2.6-hd`. */
+  readonly model: string
+  /**
+   * Requested mp3 bitrate in bits per second. Billing is by input characters,
+   * so this trades stored bytes against audio quality and nothing else.
+   *
+   * Advisory rather than guaranteed: it reaches the vendor as `extra_body`,
+   * which MiniMax honors and OpenAI's own models ignore.
+   */
+  readonly bitrate: number
+  /**
+   * Maximum characters sent in one request. Longer text is truncated rather
+   * than split, because a partial reading is a better failure than an
+   * unbounded bill.
+   */
+  readonly maxChars: number
+  /** Explicit provider id. Omitted = auto-select when exactly one is usable. */
+  readonly provider?: string
+  /**
+   * Voice passed to the provider when a request names none. Required with no
+   * library default: an OpenAI-shaped route rejects a request carrying no
+   * voice, and the vocabulary is vendor-specific, so no value is portable
+   * enough to inherit silently.
+   */
+  readonly voice: string
+}
+```
+
+Source: [`packages/tts/tts/src/index.ts:38`](../packages/tts/tts/src/index.ts)
+
 <a id="deepseek-aidsh-typert-loader"></a>
 
 ## `@deepseek-ai/dsh-typert-loader`
@@ -3320,6 +3320,7 @@ These load from a `cordis.yml` entry with no `config:` block; they declare no co
 - `@deepseek-ai/dsh-authorization` — requires `credentials` ([`packages/credentials/authorization/src/index.ts`](../packages/credentials/authorization/src/index.ts))
 - `@deepseek-ai/dsh-client-locale` ([`packages/client/locale/src/index.ts`](../packages/client/locale/src/index.ts))
 - `@deepseek-ai/dsh-client-modules` — requires `webServer` · `loader` ([`packages/client/modules/src/index.ts`](../packages/client/modules/src/index.ts))
+- `@deepseek-ai/dsh-client-read-aloud` ([`packages/client/read-aloud/src/index.ts`](../packages/client/read-aloud/src/index.ts))
 - `@deepseek-ai/dsh-client-runtime` ([`packages/client/runtime/src/index.ts`](../packages/client/runtime/src/index.ts))
 - `@deepseek-ai/dsh-client-ui-agent-preset` ([`packages/client/ui-agent-preset/src/index.ts`](../packages/client/ui-agent-preset/src/index.ts))
 - `@deepseek-ai/dsh-client-ui-attachment` ([`packages/client/ui-attachment/src/index.ts`](../packages/client/ui-attachment/src/index.ts))
@@ -3335,7 +3336,6 @@ These load from a `cordis.yml` entry with no `config:` block; they declare no co
 - `@deepseek-ai/dsh-client-ui-jobs` ([`packages/client/ui-jobs/src/index.ts`](../packages/client/ui-jobs/src/index.ts))
 - `@deepseek-ai/dsh-client-ui-layout` ([`packages/client/ui-layout/src/index.ts`](../packages/client/ui-layout/src/index.ts))
 - `@deepseek-ai/dsh-client-ui-message-feedback` ([`packages/client/ui-message-feedback/src/index.ts`](../packages/client/ui-message-feedback/src/index.ts))
-- `@deepseek-ai/dsh-client-ui-message-speech` ([`packages/client/ui-message-speech/src/index.ts`](../packages/client/ui-message-speech/src/index.ts))
 - `@deepseek-ai/dsh-client-ui-model-selection` ([`packages/client/ui-model-selection/src/index.ts`](../packages/client/ui-model-selection/src/index.ts))
 - `@deepseek-ai/dsh-client-ui-permission-presets` ([`packages/client/ui-permission-presets/src/index.ts`](../packages/client/ui-permission-presets/src/index.ts))
 - `@deepseek-ai/dsh-client-ui-plan` ([`packages/client/ui-plan/src/index.ts`](../packages/client/ui-plan/src/index.ts))

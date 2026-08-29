@@ -12,15 +12,15 @@ Status: implemented
 
 ## Decision
 
-一个 `ctx.speech` capability seam 在每个 turn 结束时立即合成该 turn 的收尾正文，Web GUI 播放已完成的产物，而不是即时转换。
+一个 `ctx.tts` capability seam 在每个 turn 结束时立即合成该 turn 的收尾正文，Web GUI 播放已完成的产物，而不是即时转换。
 
 ### Capability seam
 
 三个角色，依照 [capability-seam 依据](../../implemented/architecture/2026-06-13-capability-seams.zh.md)：
 
-- **Service Definition** `dsh-speech` 拥有 `ctx.speech`、request/spec 拆分以及音频词汇。它显式地把 request 解析为 spec，因此没有任何 provider 把默认值藏进 `synthesize()`。
-- **Service Provider** `dsh-speech-openai-compatible` 调用 `/audio/speech`，为每一条配置的路由注册一个提供方（[路由设计](../architecture/2026-08-25-speech-openai-compatible-routes.zh.md)）。Web bundle 固定 LiteLLM 路由：MiniMax 在厂商 API 层面并不兼容 OpenAI（是 `/v1/t2a_v2`，不是 `/v1/audio/speech`），因此集成点是网关的专用适配器，而非用 OpenAI base-URL 覆盖。
-- **Consumers** 是 `dsh-speech-cache`（宿主侧产生音频的 `turn/end` 监听器，并拥有 `speechCache` Remote）与 `dsh-client-ui-message-speech`（浏览器侧播放它的插件）。
+- **Service Definition** `dsh-speech` 拥有 `ctx.tts`、request/spec 拆分以及音频词汇。它显式地把 request 解析为 spec，因此没有任何 provider 把默认值藏进 `synthesize()`。
+- **Service Provider** `dsh-openai-tts` 调用 `/audio/speech`，为每一条配置的路由注册一个提供方（[路由设计](../architecture/2026-08-25-openai-tts-routes.zh.md)）。Web bundle 固定 LiteLLM 路由：MiniMax 在厂商 API 层面并不兼容 OpenAI（是 `/v1/t2a_v2`，不是 `/v1/audio/speech`），因此集成点是网关的专用适配器，而非用 OpenAI base-URL 覆盖。
+- **Consumers** 是 `dsh-read-aloud`（宿主侧产生音频的 `turn/end` 监听器，并拥有 `readAloud` Remote）与 `dsh-client-read-aloud`（浏览器侧播放它的插件）。
 
 ### 触发与文本选取
 
@@ -52,9 +52,9 @@ Subagent 会话被排除。它们的 turn 没有面向用户的播放界面，�
 
 ### 包清单要承载生成产物的 import
 
-`dsh-speech-cache` 声明了 `zod`，尽管 `src` 下没有任何文件 import 它：Typert 生成的 `./remote` 编解码器首行是 `import { z } from 'zod'`，该产物会被内联进 import 它的 Client bundle，而打包器只能内联 pnpm 为已声明依赖建立链接的模块。`scripts/check-workspace-constraints.ts` 现在对每个导出规范 `./remote` 对的包断言这一点，因为该约定已在五个包中成立却无任何检查（[事故复盘](../../../../docs/postmortem/0005-undeclared-zod-broke-web-plugin-boot.zh.md)）。
+`dsh-read-aloud` 声明了 `zod`，尽管 `src` 下没有任何文件 import 它：Typert 生成的 `./remote` 编解码器首行是 `import { z } from 'zod'`，该产物会被内联进 import 它的 Client bundle，而打包器只能内联 pnpm 为已声明依赖建立链接的模块。`scripts/check-workspace-constraints.ts` 现在对每个导出规范 `./remote` 对的包断言这一点，因为该约定已在五个包中成立却无任何检查（[事故复盘](../../../../docs/postmortem/0005-undeclared-zod-broke-web-plugin-boot.zh.md)）。
 
-`tsconfig.base.json` 显式映射了 `@deepseek-ai/dsh-client-ui-message-speech`。client 包名以其分组目录为前缀，因此通用的 `@deepseek-ai/dsh-*` 通配符无法覆盖它们，`verify-cordis-config` 要求该条目。
+`tsconfig.base.json` 显式映射了 `@deepseek-ai/dsh-client-read-aloud`。client 包名以其分组目录为前缀，因此通用的 `@deepseek-ai/dsh-*` 通配符无法覆盖它们，`verify-cordis-config` 要求该条目。
 
 ## 实测成本
 
