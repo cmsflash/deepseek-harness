@@ -29,7 +29,9 @@ Mount this plugin alongside `ui-conversation` and the commands package; the comp
 
 ### Model and effort
 
-Models stay grouped by provider. The composer menu shows model and effort names only. The `/model` popup shows provider names and catalog descriptions; it localizes the two built-in DeepSeek descriptions and leaves external provider descriptions verbatim. The popup applies the selected model's default effort; the composer can then choose any advertised effort. An adapter without reasoning metadata leaves the Effort row absent; there is no arbitrary effort input.
+Models stay grouped by provider. The composer menu shows model and effort names only. The `/model` popup shows provider names and catalog descriptions; it localizes the two built-in DeepSeek descriptions and leaves external provider descriptions verbatim. The popup applies the effort remembered for the selected model, else its default effort; the composer can then choose any advertised effort. An adapter without reasoning metadata leaves the Effort row absent; there is no arbitrary effort input.
+
+Selecting an effort records it for that exact `provider/model` route in the durable `ui-model-selection` settings section's `rememberedEfforts`, so switching to a model preselects the level last run on it instead of the adapter default; both entries read and write the one memory, and it outlives the session, the browser, and the Host process. The memory is advisory: a remembered level the adapter no longer advertises falls back to the declared default, only a level the Host accepted is recorded, a refused settings write never fails the model switch that already landed, and `null` records an explicit provider-default choice that an absent key does not. The node half registers the section; without a settings provider the adapters' defaults stand and nothing is remembered.
 
 ### Unroutable sessions
 
@@ -84,6 +86,7 @@ These limits define the current model surface. They are current package constrai
 - **No create-time or addressed-subagent selection** — both entries require an existing ordinary session's Agent; there is no draft-phase model choice to fold into session creation, and subagent continuation deliberately exposes no independent model-selection contract.
 - **Directory names are presentation-only** — selection and persistence use provider/model/effort ids; a provider whose catalog or exact-model metadata lookup fails lists as an unselectable failure row until reload.
 - **No arbitrary effort input** — the composer offers only the exact model's adapter-advertised levels; an adapter without reasoning metadata leaves the Effort row absent.
+- **Remembered efforts are not user-editable** — the section carries no settings row, so correcting one means selecting the level again or editing the settings document; a deployment without a settings provider keeps the adapter defaults and silently remembers nothing.
 
 <a id="dev-note"></a>
 ### Dev Note

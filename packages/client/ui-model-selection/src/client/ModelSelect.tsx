@@ -52,7 +52,7 @@ const MEASURE_STYLE: CSSProperties = { visibility: 'hidden', left: 0, top: 0 }
  * @returns the trigger and, while open, the two-level menu.
  */
 export function ModelSelect(
-  { locked, available, directory, load, select, t }:
+  { locked, available, directory, load, effortFor, rememberEffort, select, t }:
   ModelSelectInjected & { locked: boolean } & PropsLocale<'model'>,
 ) {
   const state = useSyncExternalStore(
@@ -76,17 +76,18 @@ export function ModelSelect(
   const id = useId()
 
   const choices = useMemo(() => state.groups.flatMap(group =>
-    group.models.map(model => ({
-      group,
-      model,
-      selection: {
-        provider: group.id,
-        model: model.id,
-        ...model.reasoning?.defaultEffort === undefined
-          ? {}
-          : { reasoningEffort: model.reasoning.defaultEffort },
-      } satisfies ModelSelection,
-    }))), [state.groups])
+    group.models.map((model) => {
+      const remembered = effortFor(group.id, model)
+      return {
+        group,
+        model,
+        selection: {
+          provider: group.id,
+          model: model.id,
+          ...remembered === undefined ? {} : { reasoningEffort: remembered },
+        } satisfies ModelSelection,
+      }
+    })), [state.groups, effortFor])
   const selectedIndex = state.current === null
     ? -1
     : choices.findIndex(c => c.selection.provider === state.current?.provider && c.selection.model === state.current.model)
@@ -312,7 +313,12 @@ export function ModelSelect(
       ...effort === undefined ? {} : { reasoningEffort: effort },
     }
     lastActionRef.current = 'select'
-    void select(selection).then(settleSelection)
+    void select(selection).then((accepted) => {
+      // Only a level the Host served is worth remembering: a rejected effort
+      // would preselect a selection that fails again on the next switch.
+      if (accepted?.ok) rememberEffort(selection.provider, selection.model, effort)
+      settleSelection(accepted)
+    })
   }
 
   const waiting = state.current === null && state.status === 'loading'
@@ -416,6 +422,7 @@ export function ModelSelect(
                       <div className={css.groupTitle} id={headingId}>{group.name}</div>
                       {group.models.map((model) => {
                         const selected = state.current?.provider === group.id && state.current.model === model.id
+                        const effort = effortFor(group.id, model)
                         return (
                           <button
                             ref={itemRef()}
@@ -426,7 +433,13 @@ export function ModelSelect(
                             key={model.id}
                             title={model.name}
                             disabled={busy}
-                            onClick={() => { choose({ provider: group.id, model: model.id }) }}
+                            onClick={() => {
+                              choose({
+                                provider: group.id,
+                                model: model.id,
+                                ...effort === undefined ? {} : { reasoningEffort: effort },
+                              })
+                            }}
                           >
                             <span className={css.optionCopy}>
                               <span className={css.modelName}>{model.name}</span>

@@ -21,9 +21,14 @@ import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type {} from '@deepseek-ai/dsh-client-ui-session/client'
+// Type-only: the ctx.settingsScope Context merge. Cross-plugin collaboration
+// goes through the service, never a value import (client bundle purity gate).
+import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 import { IconDataOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
+import type { ModelEffortSettings } from '../effort-settings.ts'
 import type { ModelDirectoryState } from './directory.ts'
+import { EffortMemory, MODEL_EFFORT_SCOPE } from './effort-memory.ts'
 import { ModelDirectoryResolver } from './service.ts'
 import type { ModelSelectInjected } from './slots.ts'
 import { ModelSelect } from './ModelSelect.tsx'
@@ -93,16 +98,21 @@ function optionsOf(directory: ModelDirectoryState, t: TranslateNS<'model'>): Sel
  * groups (the same data the rows were built from — ids stay opaque).
  * @param state - the session's directory snapshot.
  * @param id - the picked row id.
+ * @param memory - remembered per-model efforts.
  * @returns the row's model selection, or undefined for failure rows / stale ids.
  */
-function selectionOf(state: ModelDirectoryState, id: string): ModelSelection | undefined {
+function selectionOf(
+  state: ModelDirectoryState, id: string, memory: EffortMemory,
+): ModelSelection | undefined {
   for (const group of state.groups) {
     for (const model of group.models) {
       if (rowId(group.id, model.id) !== id) continue
       const sameRoute = state.current?.provider === group.id && state.current.model === model.id
+      // Re-picking the live route keeps the session's own effort, which the
+      // user may have set here without it being the remembered one yet.
       const reasoningEffort = sameRoute
-        ? state.current?.reasoningEffort ?? model.reasoning?.defaultEffort
-        : model.reasoning?.defaultEffort
+        ? state.current?.reasoningEffort ?? memory.effortFor(group.id, model)
+        : memory.effortFor(group.id, model)
       return {
         provider: group.id,
         model: model.id,
@@ -116,8 +126,8 @@ function selectionOf(state: ModelDirectoryState, id: string): ModelSelection | u
 /** Dictionary namespace owned by this plugin. */
 const NS = 'model'
 
-/** Required services: the contribution registry, the seat's slot registry, locale, and the service's own faces. */
-export const inject = ['commandUi', 'locale', 'sessions', 'slots', 'remote', 'remote.session']
+/** Required services: the contribution registry, the seat's slot registry, locale, settings, and the service's own faces. */
+export const inject = ['commandUi', 'locale', 'sessions', 'slots', 'remote', 'remote.session', 'settingsScope']
 
 /**
  * Client plugin body: mount ModelDirectoryResolver, register the `model` dictionaries,
@@ -135,6 +145,10 @@ export function apply(ctx: ClientContext): void {
   // The composer-block reason is this plugin's own copy, read at raise time so
   // a locale change reaches the next publish.
   ctx.plugin(ModelDirectoryResolver, { blockReason: () => t('blocked.composer') })
+
+  // Apply-time bind keeps the scope's disposer on this fiber. Both entries
+  // share the one memory, so a switch made in either preselects in the other.
+  const memory = new EffortMemory(ctx.settingsScope.bind<ModelEffortSettings>(MODEL_EFFORT_SCOPE))
 
   // Entry 1: the /model popupSelect over the shared directory.
   ctx.inject(['commandUi', 'modelDirectories'], (scope: ClientContext) => {
@@ -160,7 +174,7 @@ export function apply(ctx: ClientContext): void {
             throw new Error('model selection is unavailable for addressed subagent sessions')
           }
           const directory = models.directoryFor(session.sessionId)
-          const selection = selectionOf(directory.store.getSnapshot(), option.id)
+          const selection = selectionOf(directory.store.getSnapshot(), option.id, memory)
           if (selection === undefined) {
             throw new Error('this provider\'s catalog failed to load — pick a model from a loaded group')
           }
@@ -189,6 +203,10 @@ export function apply(ctx: ClientContext): void {
           directory: directory.store,
           load: () => {
             if (available) directory.load().catch(() => { /* surfaced on the store */ })
+          },
+          effortFor: (provider, model) => memory.effortFor(provider, model),
+          rememberEffort: (provider, model, effort) => {
+            void memory.remember(provider, model, effort)
           },
           select: (selection: ModelSelection) => available
             ? directory.select(selection)
