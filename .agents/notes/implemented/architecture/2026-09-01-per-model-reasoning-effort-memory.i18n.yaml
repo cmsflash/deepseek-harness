@@ -1,0 +1,19 @@
+# Bilingual-pair consistency record for 2026-09-01-per-model-reasoning-effort-memory.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/architecture/2026-09-01-per-model-reasoning-effort-memory.md
+/agent-note-per-model-reasoning-effort-memory:
+  en: 459b52a40da27bd3
+  zh: 44add4d8a5659f0c
+/agent-note-per-model-reasoning-effort-memory/problem:
+  en: e105efb37342ce49
+  zh: b99b344d88d9c3d1
+/agent-note-per-model-reasoning-effort-memory/decision:
+  en: 1c422cb8c54d4c70
+  zh: 69fa981997116696
+/agent-note-per-model-reasoning-effort-memory/consequences:
+  en: fb030cff088dffa7
+  zh: f3a8f20b28c1e11e
+/agent-note-per-model-reasoning-effort-memory/alternatives-considered:
+  en: c9bceb863e642541
+  zh: d9413cea3f817fc0

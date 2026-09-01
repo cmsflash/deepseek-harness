@@ -58,6 +58,24 @@ export interface ModelSelectInjected {
    */
   resolveText: (text: NonNullable<ModelCatalogModel['badge']>['text']) => string
   /**
+   * Resolve the effort to submit when switching to one model: the level last
+   * chosen for that exact route. Without one the switch carries no effort, so
+   * the adapter default applies per request.
+   * @param provider - registered provider route id.
+   * @param model - the catalog entry being selected.
+   * @returns the remembered effort id, or undefined to submit no effort.
+   */
+  effortFor: (provider: string, model: ModelCatalogModel) => string | undefined
+  /**
+   * Record the effort the user chose for one route, so a later switch back to
+   * that model preselects it. Fire-and-forget: the selection it accompanies
+   * already landed on the Host.
+   * @param provider - registered provider route id.
+   * @param model - provider-owned model id.
+   * @param effort - selected effort, or undefined for an explicit provider default.
+   */
+  rememberEffort: (provider: string, model: string, effort: string | undefined) => void
+  /**
    * Select a complete provider/model/reasoning selection.
    * @param selection - model selection and optional adapter-owned effort.
    * @returns the Host outcome, or undefined when this Session cannot select a model.
