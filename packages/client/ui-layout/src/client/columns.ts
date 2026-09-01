@@ -2,10 +2,20 @@
  * Normal column geometry: the right column shrinks, then loses its track,
  * before the center drops below its minimum. The sidebar never concedes here;
  * AppFrame supplies its effective preference after responsive collapse.
+ *
+ * At or below MOBILE_MAX the frame stops being a column layout: center takes
+ * the whole viewport and the sidebar leaves the flow for an overlay drawer,
+ * whose rendered width is still reported through `sidebar` so AppFrame needs
+ * no second geometry source. The rail has no mobile form — a permanent 56px
+ * of chrome on a 390px screen is what makes the phone layout unusable — so a
+ * closed mobile sidebar resolves to zero.
  */
 
-/** Resolved widths for one frame. */
-export interface Columns { sidebar: number; center: number; rightbar: number }
+/**
+ * Resolved widths for one frame. `overlay` marks the mobile layout, where
+ * `sidebar` is a drawer floating above center rather than a grid track beside it.
+ */
+export interface Columns { sidebar: number; center: number; rightbar: number; overlay: boolean }
 
 /** Center width protected while the normal right column is open. */
 export const CENTER_MIN = 400
@@ -21,6 +31,21 @@ export const SIDEBAR_COLLAPSED = 56
  * LG breakpoint); a manual toggle below it re-expands over the squeezed center
  * (stores.ts narrowExpanded). */
 export const SIDEBAR_AUTO_COLLAPSE = 1024
+/**
+ * Widest viewport still treated as a phone (deepsuite SM breakpoint): at or
+ * below it the sidebar becomes an overlay drawer and center spans the frame.
+ * Tablets stay on the column layout, where a rail beside the conversation is
+ * still affordable.
+ */
+export const MOBILE_MAX = 640
+/**
+ * Mobile drawer width: nearly the viewport, less a strip of center left
+ * visible so the drawer reads as covering the conversation and its scrim is
+ * an obvious dismiss target.
+ */
+export const DRAWER_PEEK = 56
+/** Drawer ceiling on larger phones, so it never grows into a second column. */
+export const DRAWER_MAX = 320
 /** Right column drag clamp floor. */
 export const RIGHTBAR_MIN = 300
 /** Maximum normal right panel width as a fraction of the frame. */
@@ -48,12 +73,22 @@ export function clampWidth(px: number, min: number, max: number): number {
  *   the icon rail, 0 hides the column entirely (macOS desktop).
  * @returns actual widths after shrinking or removing the right track; only
  *   without that track may the center fall below its minimum, down to zero.
+ *   On the column layout a closed sidebar keeps its compact rail, while an
+ *   `overlay` result reports a drawer width that does not consume center.
  */
 export function computeColumns(viewport: number, sidebar: number, rightbar: number, collapsedWidth = SIDEBAR_COLLAPSED): Columns {
+  if (viewport <= MOBILE_MAX) {
+    return {
+      sidebar: sidebar === 0 ? 0 : Math.min(DRAWER_MAX, Math.max(0, viewport - DRAWER_PEEK)),
+      center: Math.max(0, viewport),
+      rightbar: 0,
+      overlay: true,
+    }
+  }
   const s = sidebar === 0 ? collapsedWidth : clampWidth(sidebar, SIDEBAR_MIN, SIDEBAR_MAX)
   const available = viewport - s - CENTER_MIN
   const r = rightbar === 0 || available < RIGHTBAR_MIN
     ? 0
     : Math.min(available, clampWidth(rightbar, RIGHTBAR_MIN, viewport * RIGHTBAR_MAX_RATIO))
-  return { sidebar: s, center: Math.max(0, viewport - s - r), rightbar: r }
+  return { sidebar: s, center: Math.max(0, viewport - s - r), rightbar: r, overlay: false }
 }

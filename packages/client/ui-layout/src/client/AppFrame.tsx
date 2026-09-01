@@ -11,11 +11,20 @@
  * to the frame's right edge at the resolved normal width, and the
  * track only decides whether the centre makes room for it. The occupant reports
  * shown/track/fullscreen through `ctx.layout`; fullscreen keeps the reported
- * track but hides the outer resize handle. Everything arrives through the framework
- * shares — zero cordis or framework imports, zero self-made hooks.
+ * track but hides the outer resize handle.
+ *
+ * A mobile solve (columns.ts MOBILE_MAX) collapses the grid to the single
+ * center track and moves the sidebar to an overlay drawer with a dismiss
+ * scrim. The slot occupants keep their tree positions and React identity
+ * across that switch — only the frame's own geometry changes — so nothing
+ * remounts when a window crosses the breakpoint.
+ *
+ * Everything arrives through the framework shares — zero cordis or framework
+ * imports, zero self-made hooks.
  */
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
+import { IconPanelLeftOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type {
   PropsLocale, PropsRenderSlots, PropsRuntime, PropsStore,
 } from '@deepseek-ai/dsh-client-ui-slots'
@@ -131,6 +140,11 @@ export function AppFrame({
   const viewport = layoutInfo.viewportWidth
 
   // Track the frame's own box (not the window): rAF-throttled ResizeObserver.
+  // A viewport change that leaves the frame's box unchanged still has to be
+  // seen — the frame fills the window, so the two normally agree, but a
+  // resize that does not settle the observed element (a devtools viewport
+  // override, an emulated resize) would otherwise strand the layout at the
+  // width it last measured, including on the wrong side of a breakpoint.
   useLayoutEffect(() => {
     const el = frameRef.current
     /* v8 ignore next -- the ref is always attached by effect time: the frame div renders unconditionally. */
@@ -142,17 +156,20 @@ export function AppFrame({
       if (width > 0) actions.setViewportWidth(width)
     }
     measure()
-    const observer = new ResizeObserver(() => {
+    const scheduleMeasure = () => {
       if (disposed) return
       raf ??= requestAnimationFrame(() => {
         raf = null
         measure()
       })
-    })
+    }
+    const observer = new ResizeObserver(scheduleMeasure)
     observer.observe(el)
+    window.addEventListener('resize', scheduleMeasure)
     return () => {
       disposed = true
       observer.disconnect()
+      window.removeEventListener('resize', scheduleMeasure)
       if (raf !== null) cancelAnimationFrame(raf)
     }
   }, [actions])
@@ -193,10 +210,13 @@ export function AppFrame({
     actions.setRightbar(rightbarBase.current - dx)
   }, [actions])
   const productTitle = process.env.DSH_CLIENT_TITLE ?? t('brand.localBuild')
+  // The mobile drawer has no rail, so it reports itself expanded whenever it
+  // is open; a derived auto-collapse on the column layout renders the rail UI.
+  const sidebarReportsCollapsed = cols.overlay ? false : sidebarCollapsed
   const sidebar = useMemo(() => renderSlot('sidebar', {
-    collapsed: sidebarCollapsed,
+    collapsed: sidebarReportsCollapsed,
     width: cols.sidebar,
-  }), [renderSlot, sidebarCollapsed, cols.sidebar])
+  }), [renderSlot, sidebarReportsCollapsed, cols.sidebar])
   const main = useMemo(() => (
     <MainPanel usePanelInfo={usePanelInfo} renderSlot={renderSlot} />
   ), [usePanelInfo, renderSlot])
@@ -209,23 +229,57 @@ export function AppFrame({
       style={{
         ...(document.documentElement.hasAttribute('data-windows-titlebar')
           ? { '--dsh-windows-sidebar-width': `${cols.sidebar}px` } : {}),
-        gridTemplateColumns:
-          `${cols.sidebar}px minmax(0, 1fr) ${cols.rightbar}px`,
+        gridTemplateColumns: cols.overlay
+          ? 'minmax(0, 1fr)'
+          : `${cols.sidebar}px minmax(0, 1fr) ${cols.rightbar}px`,
       }}
       data-sidebar-collapsed={sidebarCollapsed || undefined}
       data-rightbar-collapsed={cols.rightbar === 0 || undefined}
       data-rightbar-fullscreen={layoutInfo.rightbarFullscreen || undefined}
       data-rightbar-instant={layoutInfo.rightbarInstant || undefined}
       data-dragging={dragging || undefined}
+      data-overlay={cols.overlay || undefined}
     >
       <DocumentTitle
         productTitle={productTitle}
         useSessions={useSessions}
         usePanelInfo={usePanelInfo}
       />
-      <div className={css.sidebarCol}>
+      <div
+        className={css.sidebarCol}
+        style={cols.overlay ? { width: cols.sidebar } : undefined}
+        data-open={cols.overlay && !sidebarCollapsed ? true : undefined}
+        // A closed drawer is off-screen decoration: keep it out of the tab
+        // order and off the accessibility tree rather than leaving focusable
+        // controls behind the conversation. React 18's JSX types predate the
+        // `inert` property, so it goes through as the plain DOM attribute.
+        aria-hidden={cols.overlay && sidebarCollapsed ? true : undefined}
+        {...(cols.overlay && sidebarCollapsed ? { inert: '' } : {})}
+      >
         {sidebar}
       </div>
+      {/* Scrim: only an open mobile drawer has anything to dismiss. */}
+      {cols.overlay && !sidebarCollapsed && (
+        <div
+          className={css.scrim}
+          role="presentation"
+          onClick={() => { actions.toggleSidebar() }}
+        />
+      )}
+      {/* The mobile drawer leaves no rail behind, so the frame owns the only
+          control that can bring it back. It sits here rather than in the
+          conversation header because the hero state renders no header, and a
+          closed drawer with no opener strands the user in one session. */}
+      {cols.overlay && sidebarCollapsed && (
+        <button
+          type="button"
+          className={css.drawerOpener}
+          aria-label={t('sidebar.open')}
+          onClick={() => { actions.toggleSidebar() }}
+        >
+          <IconPanelLeftOutline16 size={18} />
+        </button>
+      )}
       <>
         <CenterColumn>{main}</CenterColumn>
         <RightbarColumn>
@@ -235,9 +289,11 @@ export function AppFrame({
       <div className={css.overlayLayer} data-shell-overlay>
         {overlays}
       </div>
-      {/* The collapsed rail is fixed-width: no resize handle while closed. */}
-      {!sidebarCollapsed && <DragHandle side="sidebar" left={cols.sidebar} onStart={onSidebarStart} onDrag={onSidebarDrag} onEnd={onDragEnd} />}
-      {layoutInfo.rightbarShown && !layoutInfo.rightbarFullscreen && normal.rightbar > 0 && (
+      {/* The collapsed rail is fixed-width: no resize handle while closed.
+          Mobile has no column border to drag, and a col-resize strip over a
+          touch target would only steal the gesture. */}
+      {!cols.overlay && !sidebarCollapsed && <DragHandle side="sidebar" left={cols.sidebar} onStart={onSidebarStart} onDrag={onSidebarDrag} onEnd={onDragEnd} />}
+      {!cols.overlay && layoutInfo.rightbarShown && !layoutInfo.rightbarFullscreen && normal.rightbar > 0 && (
         <DragHandle side="rightbar" left={viewport - normal.rightbar} onStart={onRightbarStart} onDrag={onRightbarDrag} onEnd={onDragEnd} />
       )}
     </div>

@@ -8,6 +8,7 @@ function fakePanels(): PanelActions {
     retainMainPanels: vi.fn(),
     setSidebar: vi.fn(),
     toggleSidebar: vi.fn(),
+    collapseNarrowSidebar: vi.fn(),
     setViewportWidth: vi.fn(),
     setRightbar: vi.fn(),
     openRightbar: vi.fn(),
@@ -56,6 +57,14 @@ describe('LayoutController', () => {
     expect(panels.toggleSidebar).not.toHaveBeenCalled()
     expect(panels.openRightbar).not.toHaveBeenCalled()
     expect(panels.closeRightbar).not.toHaveBeenCalled()
+  })
+
+  it('dismisses the phone sidebar drawer on every accepted selection', () => {
+    const panels = fakePanels()
+    const service = new LayoutController(panels, () => true)
+    service.selectPanel('panel-a' as MainPanelId)
+    service.selectPanel(null)
+    expect(panels.collapseNarrowSidebar).toHaveBeenCalledTimes(2)
   })
 
   it('keeps separately constructed controllers bound to their own instances', () => {

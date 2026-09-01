@@ -287,7 +287,8 @@ describe('AppFrame normal width concessions', () => {
     expect(frame.querySelector('[data-side="rightbar"]')).toBeNull()
     expect(instance.getSnapshot().layoutInfo).toMatchObject({ rightbarShown: true, rightbar: 864 })
     act(() => { instance.actions.closeRightbar() })
-    resize(455)
+    // Just above the phone breakpoint: still a column layout with the rail.
+    resize(641)
     expect(tracks(frame)).toEqual([56, 0])
     resize(1920)
     expect(tracks(frame)).toEqual([420, 0])
@@ -600,5 +601,67 @@ describe('AppFrame frame measurement lifecycle', () => {
     act(() => { observer.fire(); flushFrames() })
     expect(instance.getSnapshot().layoutInfo.viewportWidth).toBe(1920)
     expect(animationFrames.size).toBe(0)
+  })
+})
+
+describe('AppFrame mobile overlay layout', () => {
+  /** Mount at a phone width so the first paint already solves as mobile. */
+  function mountPhone() {
+    frameWidth = 390
+    return mountFrame()
+  }
+
+  it('renders one full-width track with the sidebar out of the flow', () => {
+    const { frame } = mountPhone()
+    expect(frame.style.gridTemplateColumns).toBe('minmax(0, 1fr)')
+    expect(frame.dataset.overlay).toBe('true')
+  })
+
+  it('starts with the drawer closed and hidden from assistive tech', () => {
+    const { frame } = mountPhone()
+    const drawer = frame.querySelector('[aria-hidden="true"]')
+    expect(drawer).not.toBeNull()
+    expect(drawer!.hasAttribute('inert')).toBe(true)
+    // No scrim while closed: nothing is covering the conversation.
+    expect(frame.querySelector('[role="presentation"]')).toBeNull()
+  })
+
+  it('opens the drawer from the frame-owned control and dismisses it from the scrim', () => {
+    const { frame, instance, getByLabelText } = mountPhone()
+    act(() => { getByLabelText('sidebar.open').click() })
+    expect(instance.getSnapshot().layoutInfo.narrowExpanded).toBe(true)
+
+    const scrim = frame.querySelector<HTMLElement>('[role="presentation"]')
+    expect(scrim).not.toBeNull()
+    act(() => { scrim!.click() })
+    expect(instance.getSnapshot().layoutInfo.narrowExpanded).toBe(false)
+  })
+
+  it('reports the open drawer as expanded so its occupant renders no rail', () => {
+    const { instance, sidebarOwner } = mountPhone()
+    act(() => { instance.actions.toggleSidebar() })
+    expect(sidebarOwner()).toMatchObject({ collapsed: false })
+    expect(sidebarOwner().width).toBeGreaterThan(0)
+  })
+
+  it('never lets the drawer take width from the conversation or offer a drag handle', () => {
+    const { frame, instance } = mountPhone()
+    act(() => { instance.actions.toggleSidebar() })
+    // The single track survives: an open drawer floats above the center.
+    expect(frame.style.gridTemplateColumns).toBe('minmax(0, 1fr)')
+    expect(frame.querySelectorAll('[data-side]')).toHaveLength(0)
+  })
+
+  it('re-measures on a window resize that the observer never reports', () => {
+    const { frame } = mountPhone()
+    frameWidth = 1920
+    act(() => {
+      window.dispatchEvent(new Event('resize'))
+      flushFrames()
+    })
+    expect(frame.dataset.overlay).toBeUndefined()
+    // The mobile detour never rewrote the width preference, so the sidebar
+    // comes back at its stored width rather than the collapsed rail.
+    expect(tracks(frame)).toEqual([280, 0])
   })
 })

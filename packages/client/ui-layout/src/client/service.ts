@@ -27,7 +27,8 @@ export type PanelActions = BoundActions<ReturnType<typeof createLayoutStore>>
 /** Panel navigation and geometry actions exposed through ctx.layout. */
 export interface ILayout {
   /**
-   * Select a global central panel without changing the current Session.
+   * Select a global central panel without changing the current Session, and
+   * dismiss the phone-viewport sidebar drawer that would cover it.
    * @param panelId - registered main key, or null to show the Conversation.
    * @throws if the selected main key is not registered; preserves the current selection.
    */
@@ -71,6 +72,9 @@ export class LayoutController implements ILayout {
     }
     this.navigation.abort()
     this.panels.selectPanel(panelId)
+    // Every navigation ends here, and on a phone the sidebar drawer would
+    // otherwise stay open over the destination it just selected.
+    this.panels.collapseNarrowSidebar()
   }
 
   /** @returns the new pending navigation's cancellation signal. */
