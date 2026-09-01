@@ -31,6 +31,10 @@ const reasoning = {
   defaultEffort: 'high',
 }
 
+/** No remembered effort: what the seat resolves before the user picks a level. */
+const defaultEffortFor: ComponentProps<typeof ModelSelect>['effortFor'] =
+  (_provider, model) => model.reasoning?.defaultEffort
+
 function state(overrides: Partial<ModelDirectoryState> = {}): ModelDirectoryState {
   return {
     current: { provider: 'deepseek-official', model: 'deepseek-v4-flash' },
@@ -66,6 +70,8 @@ describe('ModelSelect reasoning effort', () => {
       available
       directory={directory}
       load={vi.fn()}
+      effortFor={defaultEffortFor}
+      rememberEffort={vi.fn()}
       select={select}
       t={t}
     />)
@@ -108,6 +114,8 @@ describe('ModelSelect reasoning effort', () => {
       available
       directory={directory}
       load={vi.fn()}
+      effortFor={defaultEffortFor}
+      rememberEffort={vi.fn()}
       select={vi.fn().mockResolvedValue({ ok: true, value: undefined })}
       t={t}
     />)
@@ -130,6 +138,8 @@ describe('ModelSelect reasoning effort', () => {
       available
       directory={directory}
       load={vi.fn()}
+      effortFor={defaultEffortFor}
+      rememberEffort={vi.fn()}
       select={select}
       t={t}
     />)
@@ -156,6 +166,8 @@ describe('ModelSelect reasoning effort', () => {
       available
       directory={directory}
       load={vi.fn()}
+      effortFor={defaultEffortFor}
+      rememberEffort={vi.fn()}
       select={vi.fn().mockResolvedValue({ ok: true, value: undefined })}
       t={t}
     />)
@@ -192,6 +204,8 @@ describe('ModelSelect reasoning effort', () => {
       available
       directory={directory}
       load={vi.fn()}
+      effortFor={defaultEffortFor}
+      rememberEffort={vi.fn()}
       select={select}
       t={t}
     />)
@@ -218,6 +232,8 @@ describe('ModelSelect reasoning effort', () => {
         available
         directory={createSnapshotStore(state())}
         load={vi.fn()}
+        effortFor={defaultEffortFor}
+        rememberEffort={vi.fn()}
         select={vi.fn().mockResolvedValue({ ok: true, value: undefined })}
         t={t}
       />)
@@ -244,6 +260,96 @@ describe('ModelSelect reasoning effort', () => {
     }
   })
 
+  it('submits the remembered effort when switching to a model, without re-picking a level', async () => {
+    const groups = [{
+      id: 'deepseek-official',
+      name: 'DeepSeek',
+      models: [
+        { id: 'deepseek-v4-flash', name: 'DeepSeek-V4-Flash', reasoning },
+        { id: 'deepseek-v4-pro', name: 'DeepSeek-V4-Pro', reasoning },
+      ],
+    }]
+    const directory = createSnapshotStore<ModelDirectoryState>(state({ groups }))
+    const select = vi.fn(async (selection: ModelSelection) => {
+      directory.set(state({ groups, current: selection }))
+      return { ok: true as const, value: undefined }
+    })
+    render(<ModelSelect
+      locked={false}
+      available
+      directory={directory}
+      load={vi.fn()}
+      // Pro was last run at max; Flash carries no memory and keeps its default.
+      effortFor={(_provider, model) => model.id === 'deepseek-v4-pro' ? 'max' : model.reasoning?.defaultEffort}
+      rememberEffort={vi.fn()}
+      select={select}
+      t={t}
+    />)
+
+    fireEvent.click(screen.getByRole('button', { name: /当前/ }))
+    fireEvent.click(screen.getByRole('menuitem', { name: /模型/ }))
+    fireEvent.click(screen.getByRole('menuitemradio', { name: /DeepSeek-V4-Pro/ }))
+
+    await waitFor(() => {
+      expect(select).toHaveBeenCalledWith({
+        provider: 'deepseek-official',
+        model: 'deepseek-v4-pro',
+        reasoningEffort: 'max',
+      })
+    })
+  })
+
+  it('records an accepted effort against the exact route and leaves a rejected one unremembered', async () => {
+    const directory = createSnapshotStore<ModelDirectoryState>(state())
+    const rememberEffort = vi.fn()
+    const select = vi.fn(async (selection: ModelSelection) => {
+      directory.set(state({ current: selection }))
+      return { ok: true as const, value: undefined }
+    })
+    const { rerender } = render(<ModelSelect
+      locked={false}
+      available
+      directory={directory}
+      load={vi.fn()}
+      effortFor={defaultEffortFor}
+      rememberEffort={rememberEffort}
+      select={select}
+      t={t}
+    />)
+
+    fireEvent.click(screen.getByRole('button', { name: /当前/ }))
+    fireEvent.click(screen.getByRole('menuitem', { name: /推理等级/ }))
+    fireEvent.click(screen.getByRole('menuitemradio', { name: /Max/ }))
+    await waitFor(() => {
+      expect(rememberEffort).toHaveBeenCalledWith('deepseek-official', 'deepseek-v4-flash', 'max')
+    })
+
+    // A Host that refuses the level must not leave a memory that would
+    // preselect the same failing selection on the next switch.
+    rememberEffort.mockClear()
+    directory.set(state())
+    rerender(<ModelSelect
+      locked={false}
+      available
+      directory={directory}
+      load={vi.fn()}
+      effortFor={defaultEffortFor}
+      rememberEffort={rememberEffort}
+      select={vi.fn().mockResolvedValue({
+        ok: false,
+        error: new RemoteError('session/model-unavailable', 'effort rejected', {
+          provider: 'deepseek-official', model: 'deepseek-v4-flash',
+        }),
+      })}
+      t={t}
+    />)
+    fireEvent.click(screen.getByRole('button', { name: /当前/ }))
+    fireEvent.click(screen.getByRole('menuitem', { name: /推理等级/ }))
+    fireEvent.click(screen.getByRole('menuitemradio', { name: /Off/ }))
+    await waitFor(() => { expect(screen.queryByRole('menuitemradio', { name: /Off/ })).toBeTruthy() })
+    expect(rememberEffort).not.toHaveBeenCalled()
+  })
+
   it('renders no Agent-bound control for an addressed subagent session', () => {
     const load = vi.fn()
     render(<ModelSelect
@@ -251,6 +357,8 @@ describe('ModelSelect reasoning effort', () => {
       available={false}
       directory={createSnapshotStore(state())}
       load={load}
+      effortFor={defaultEffortFor}
+      rememberEffort={vi.fn()}
       select={vi.fn().mockResolvedValue(undefined)}
       t={t}
     />)
@@ -268,6 +376,8 @@ describe('ModelSelect keyboard walk', () => {
       available
       directory={createSnapshotStore(state())}
       load={vi.fn()}
+      effortFor={defaultEffortFor}
+      rememberEffort={vi.fn()}
       select={select}
       t={t}
     />)
@@ -327,6 +437,8 @@ describe('ModelSelect keyboard walk', () => {
       available
       directory={createSnapshotStore(state())}
       load={vi.fn()}
+      effortFor={defaultEffortFor}
+      rememberEffort={vi.fn()}
       select={vi.fn().mockResolvedValue({ ok: true, value: undefined })}
       t={t}
     />)
@@ -374,6 +486,8 @@ describe('ModelSelect keyboard walk', () => {
       available
       directory={directory}
       load={vi.fn()}
+      effortFor={defaultEffortFor}
+      rememberEffort={vi.fn()}
       select={vi.fn().mockResolvedValue({ ok: true, value: undefined })}
       t={t}
     />)
@@ -436,6 +550,8 @@ describe('ModelSelect keyboard walk', () => {
       available
       directory={createSnapshotStore(state({ current: { provider: 'gone', model: 'gone' } }))}
       load={vi.fn()}
+      effortFor={defaultEffortFor}
+      rememberEffort={vi.fn()}
       select={vi.fn().mockResolvedValue({ ok: true, value: undefined })}
       t={t}
     />)
