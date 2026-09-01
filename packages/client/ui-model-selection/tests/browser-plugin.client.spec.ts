@@ -104,6 +104,29 @@ async function bench() {
       return () => { seats.delete(options.name) }
     },
   })
+  // A stateful settings scope: the remembered-effort section the plugin binds,
+  // held in memory so a write is visible to the next read exactly as the Host
+  // document would be.
+  let section: { rememberedEfforts: Record<string, string | null> } = { rememberedEfforts: {} }
+  ctx.provide('settingsScope', {
+    bind: () => ({
+      getSnapshot: () => ({
+        status: 'ready' as const,
+        value: section,
+        base: undefined,
+        user: undefined,
+        revision: 1,
+        writable: true,
+        mode: 'host' as const,
+      }),
+      subscribe: () => () => {},
+      set: (_field: string, value: unknown) => {
+        section = { rememberedEfforts: value as Record<string, string | null> }
+        return Promise.resolve()
+      },
+      unset: () => Promise.resolve(),
+    }),
+  })
   const localeRuntime = new LocaleRuntime(ctx)
   // This spec asserts the shipped Chinese copy. There is no jsdom `window` in
   // this lane, so browser-language detection never runs and the locale comes
@@ -136,6 +159,7 @@ async function bench() {
     address: (id: SessionId) => { addressed.add(id) },
     setRoutable: (next: boolean) => { routable = next },
     blockOf: (key: string) => blocks.get(sid(key)),
+    remembered: () => section.rememberedEfforts,
   }
 }
 
@@ -298,6 +322,44 @@ describe('ui-model-selection dual entry', () => {
   it('an unknown session fails loud at the seat inject', async () => {
     const b = await bench()
     expect(() => b.seat().inject!(sid('ghost'))).toThrow(/resolved no scope/)
+  })
+
+  it('carries a remembered effort across a model switch, a new session, and both entries', async () => {
+    const b = await bench()
+    b.mint('s1')
+    const seat = b.seat().inject!(sid('s1'))
+    seat.load()
+    await Promise.resolve()
+    await Promise.resolve()
+
+    // The user runs Pro at max, then switches away to Flash.
+    await seat.select({ provider: 'deepseek-official', model: 'deepseek-v4-pro' })
+    seat.rememberEffort('deepseek-official', 'deepseek-v4-pro', 'max')
+    await Promise.resolve()
+    expect(b.remembered()).toEqual({ 'deepseek-official/deepseek-v4-pro': 'max' })
+    await seat.select({ provider: 'deepseek-official', model: 'deepseek-v4-flash' })
+    expect(b.hostCurrent()).toEqual({ provider: 'deepseek-official', model: 'deepseek-v4-flash' })
+
+    // Switching back preselects max rather than the adapter default.
+    const pro = GROUPS[0]!.models[1]!
+    expect(seat.effortFor('deepseek-official', pro)).toBe('max')
+
+    // A different session reaches the same memory: it is per user, not per
+    // conversation, which is the whole point of storing it in settings.
+    b.mint('s2')
+    expect(b.seat().inject!(sid('s2')).effortFor('deepseek-official', pro)).toBe('max')
+
+    // The /model popup submits the same remembered level for that route.
+    await b.contribution().ui.options(projection('s1'), new AbortController().signal)
+    await b.contribution().ui.onSelect(
+      { id: 'deepseek-official/deepseek-v4-pro' } as SelectOption,
+      projection('s1'),
+    )
+    expect(b.hostCurrent()).toEqual({
+      provider: 'deepseek-official',
+      model: 'deepseek-v4-pro',
+      reasoningEffort: 'max',
+    })
   })
 
   it('withholds both model entries from addressed subagent sessions without Agent-bound RPCs', async () => {

@@ -33,7 +33,13 @@
       "path": "../ui-input-trigger"
     },
     {
+      "path": "../ui-settings"
+    },
+    {
       "path": "../ui-slots"
+    },
+    {
+      "path": "../../settings/settings"
     },
     {
       "path": "../../runtime-diagnostics/invariants"

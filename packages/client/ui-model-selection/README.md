@@ -2,7 +2,9 @@
 
 English | [中文](README.zh.md)
 
-Model selection plugin, browser half: TWO entries over ONE per-session directory owned by `ModelDirectoryResolver` (`ctx.modelDirectories`). For ordinary sessions, the `/model` popupSelect contribution (registered through `ctx.commandUi`) and the composer's named `conversation.input.model` seat both load the session's advisory directory through `session.models` and submit through `session.selectModel` via the same `ModelDirectory` instance. The compact composer trigger opens a two-level Model/Effort menu: models stay provider-grouped, while the selected exact model supplies its adapter-owned effort names, descriptions, and default. `/model` applies the selected model's default effort, and the composer can then choose any advertised effort.
+Model selection plugin: a node half registering the durable `ui-model-selection` settings section, and a browser half with TWO entries over ONE per-session directory owned by `ModelDirectoryResolver` (`ctx.modelDirectories`). For ordinary sessions, the `/model` popupSelect contribution (registered through `ctx.commandUi`) and the composer's named `conversation.input.model` seat both load the session's advisory directory through `session.models` and submit through `session.selectModel` via the same `ModelDirectory` instance. The compact composer trigger opens a two-level Model/Effort menu: models stay provider-grouped, while the selected exact model supplies its adapter-owned effort names, descriptions, and default.
+
+Selecting an effort records it for that exact `provider/model` route in the `rememberedEfforts` section, so switching to a model preselects the level last run on it instead of the adapter default; both entries read and write the one memory, and it outlives the session, the browser, and the Host process. An explicit provider-default choice stores `null`, which is distinct from an absent key carrying no choice at all. The memory is advisory in the same way the catalog is: a remembered level the adapter no longer advertises falls back to the declared default, only a level the Host accepted is recorded, and the section holds the 200 most recently written routes.
 
 The Host-reported provider/model/reasoning `ModelSelection` is the single selection fact, but it is echoed only when the exact provider/model pair remains in the advertised groups; an absent catalog row leaves the routable selection intact while the trigger prompts `Select model`, no stale row is synthesized, and no Effort row is shown until the user picks an advertised model. Directory loads and selections share a generation counter so an older response never overwrites a newer one; a connection reset drops every resident projection and repulls the Host-restored selection before display. Provider-local metadata failures list inline while usable groups stay selectable, and selection failures retain the prior selection and directory.
 
@@ -12,7 +14,7 @@ Directories are per-session, resolved lazily through `ctx.modelDirectories.direc
 
 Every resident directory refetches directly on forwarded `llm/adapters-updated` and `settings/document-updated` owner events. Provider topology, provider catalogs, and the default selection therefore converge without the Host or client runtime deriving a separate model-change alias.
 
-The `/client` exports are the plugin body (`apply`/`inject`), `ModelDirectoryResolver`, `ModelDirectory` with its state fields, and the seat's injected face type.
+The `/client` exports are the plugin body (`apply`/`inject`), `ModelDirectoryResolver`, `ModelDirectory` with its state fields, and the seat's injected face type. The node half exports its settings namespace, section field, route-key helper, and section type.
 
 ## Model Experience
 
@@ -27,3 +29,4 @@ Switching the route can reduce or invalidate provider-side cache reuse for subse
 - **No create-time or addressed-subagent selection** — both entries require an existing ordinary session's Agent; there is no draft-phase model choice to fold into session creation, and subagent continuation deliberately exposes no independent model-selection contract.
 - **Directory names are presentation-only** — selection and persistence use provider/model/effort ids; a provider whose catalog or exact-model metadata lookup fails lists as an unselectable failure row until reload.
 - **No arbitrary effort input** — the composer offers only the exact model's adapter-advertised levels; an adapter without reasoning metadata leaves the Effort row absent.
+- **Remembered efforts are not user-editable** — the section carries no settings row, so correcting one means selecting the level again or editing the settings document; a deployment without a settings provider keeps the adapter defaults and silently remembers nothing.
