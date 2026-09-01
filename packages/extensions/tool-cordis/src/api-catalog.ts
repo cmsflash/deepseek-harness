@@ -4707,10 +4707,6 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface ModelCatalogFailure {\n    readonly id: string;\n    readonly name: string;\n    readonly message: string;\n}',
   },
   {
-    name: 'ModelCatalogModel',
-    declaration: 'export interface ModelCatalogModel {\n    readonly id: string;\n    readonly name: string;\n    readonly description?: string;\n    readonly reasoning?: ModelReasoning;\n}',
-  },
-  {
     name: 'ModelMessageSource',
     declaration: 'export interface ModelMessageSource extends AssistantProvenance {\n    kind: \'model\';\n}',
   },
@@ -4725,14 +4721,6 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'ModelProviderGroup',
     declaration: 'export interface ModelProviderGroup {\n    readonly id: string;\n    readonly name: string;\n    readonly models: readonly ModelCatalogModel[];\n}',
-  },
-  {
-    name: 'ModelReasoning',
-    declaration: 'export interface ModelReasoning {\n    readonly efforts: readonly ModelReasoningEffort[];\n    readonly defaultEffort?: string;\n}',
-  },
-  {
-    name: 'ModelReasoningEffort',
-    declaration: 'export interface ModelReasoningEffort {\n    readonly id: string;\n    readonly name: string;\n    readonly description?: string;\n}',
   },
   {
     name: 'ObjectJsonSchema',
