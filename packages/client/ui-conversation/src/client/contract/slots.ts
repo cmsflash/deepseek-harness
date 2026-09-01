@@ -264,6 +264,16 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
       owner: ComposerAttachmentsOwnerProps
     }
     /**
+     * The named attach seat in the composer tool row, immediately right of the
+     * plan control — one occupant, so taking it means rendering the whole
+     * attach affordance yourself. The owner passes the composer's own image
+     * intake (see {@link ComposerAttachOwnerProps}), so a click-to-browse
+     * entry reuses the validation and rejection notices that already back
+     * paste and drop. Unoccupied, the seat renders nothing, leaving paste and
+     * drop as the only intake gestures.
+     */
+    'conversation.input.attach': { kind: 'single'; scope: 'session'; owner: ComposerAttachOwnerProps }
+    /**
      * The named plan-status seat in the composer tool row, immediately right
      * of the access-mode control — one occupant, so taking it means rendering
      * the plan affordance yourself. The owner passes only `locked` (see
@@ -637,11 +647,28 @@ export interface InputControlOwnerProps {
   locked: boolean
 }
 
+/**
+ * Owner share of the named attach seat: the bar's disable state plus the same
+ * image intake that backs paste and drop, so every gesture is validated and
+ * announced identically.
+ */
+export interface ComposerAttachOwnerProps {
+  /** Session-removed lock (the bar's chrome disable state). */
+  locked: boolean
+  /** Whether image intake is available now (false while the composer refuses input or no attachment service is mounted). */
+  canAddImages: boolean
+  /** Add one batch through the composer's validation path, which announces its own rejections. */
+  onAddImages: (files: readonly File[]) => void
+  /** Media types the deployment accepts, for the picker's file filter; absent while no attachment service is mounted. */
+  acceptedMediaTypes?: readonly string[] | undefined
+}
+
 /** Full composer-bar props: standard kit & owner share & control-seat render share & injected share (hooks bound) & locale seat. */
 export type ComposerBarProps =
   PropsRuntime<'conversation.composer.bar'>
   & PropsRenderSlots<
-    'conversation.input.attachments' | 'conversation.input.plan' | 'conversation.input.model'
+    'conversation.input.attachments' | 'conversation.input.attach'
+    | 'conversation.input.plan' | 'conversation.input.model'
   >
   & InjectFace<ComposerBarInjected>
   & PropsLocale<'conversation'>

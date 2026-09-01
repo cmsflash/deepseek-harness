@@ -1,0 +1,6 @@
+# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
+# side as of the last confirmed-consistent state. Both languages carry equal authority;
+# after editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/architecture/2026-08-31-composer-attach-seat.md
+2026-08-31-composer-attach-seat.md: 770a7aa0972ad84db50d54f2b448b4b2fad7757f
+2026-08-31-composer-attach-seat.zh.md: 31b6976d58d863f1af185ff84941d6494c5bce3f

@@ -786,6 +786,14 @@ export function InputBar({
             <div className={css.modes}>
               {accessSelect}
               {renderSlot('conversation.input.plan', { locked })}
+              {/* The attach seat shares `canAcceptDrop` with the drop target:
+                  both are the same "may an image enter the draft now" fact. */}
+              {renderSlot('conversation.input.attach', {
+                locked,
+                canAddImages: canAcceptDrop,
+                onAddImages: intakeImages,
+                acceptedMediaTypes: imageLimits?.mediaTypes,
+              })}
             </div>
             {leftItems}
           </div>

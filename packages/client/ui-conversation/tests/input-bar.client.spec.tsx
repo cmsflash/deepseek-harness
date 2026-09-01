@@ -56,6 +56,7 @@ interface BenchOptions {
   /** The `plan` projection value the standard-kit useProjection serves. */
   plan?: { active: boolean; pending: boolean }
   modelEntry?: React.ReactNode
+  attachEntry?: React.ReactNode
   /** Hot text-ref lexicon (injects a minimal slash stub exposing only lexicon()). */
   lexicon?: ReadonlyMap<'/' | '@', readonly string[]>
   permissions?: { options: { value: string; name: string; description?: string }[]; currentValue: string }
@@ -149,6 +150,7 @@ function bench(over?: BenchOptions) {
     slotCalls.push({ key, owner })
     if (key === 'conversation.input.plan') return over?.planEntry ?? null
     if (key === 'conversation.input.model') return over?.modelEntry ?? null
+    if (key === 'conversation.input.attach') return over?.attachEntry ?? null
     return null
   }) as InputBarProps['renderSlot']
   const props: InputBarProps = {
@@ -1476,7 +1478,8 @@ describe('command launcher chrome and control seats', () => {
     expect(view.queryByLabelText(/^访问模式/)).toBeNull()
     // Every seat dispatched, nothing rendered.
     expect(slotCalls.map(c => c.key)).toEqual([
-      'conversation.input.attachments', 'conversation.input.plan', 'conversation.input.model',
+      'conversation.input.attachments', 'conversation.input.plan', 'conversation.input.attach',
+      'conversation.input.model',
     ])
     expect(view.queryByLabelText('Plan mode')).toBeNull()
     expect(view.queryByLabelText('Model')).toBeNull()
@@ -1631,6 +1634,44 @@ describe('command launcher chrome and control seats', () => {
     const liveControls = live.slotCalls.filter(call => call.key !== 'conversation.input.attachments')
     expect(liveControls.every(c => !(c.owner as { locked: boolean }).locked)).toBe(true)
     expect(attachmentOwner(live.slotCalls).canAcceptDrop).toBe(true)
+  })
+
+  it('hands the attach seat the shared intake and announces its rejections', () => {
+    const addImages = vi.fn(() => null)
+    const { view, slotCalls } = bench({
+      addImages,
+      attachEntry: <i data-testid="attach-entry" />,
+      imageLimits: {
+        mediaTypes: ['image/png'], maxImagesPerMessage: 1, maxImageBytes: 1024,
+        maxMessageImageBytes: 2048, maxImagePixels: 1024, maxImageDimension: 2000,
+      },
+    })
+    expect(view.getByTestId('attach-entry')).toBeTruthy()
+    const owner = slotCalls.find(call => call.key === 'conversation.input.attach')
+      ?.owner as {
+      locked: boolean
+      canAddImages: boolean
+      onAddImages: (files: readonly File[]) => void
+      acceptedMediaTypes?: readonly string[]
+    }
+    expect(owner).toBeDefined()
+    // The seat shares the drop target's availability fact and the limits copy.
+    expect(owner.canAddImages).toBe(true)
+    expect(owner.acceptedMediaTypes).toEqual(['image/png'])
+    act(() => {
+      owner.onAddImages([new File([Uint8Array.of(1, 2)], 'ok.png', { type: 'image/png' })])
+    })
+    expect(addImages).toHaveBeenCalledTimes(1)
+    // The seat routes through the composer's intake pre-check, not addImages
+    // directly: an over-limit batch is refused as a whole and announced.
+    act(() => {
+      owner.onAddImages([
+        new File([Uint8Array.of(1)], 'a.png', { type: 'image/png' }),
+        new File([Uint8Array.of(1)], 'b.png', { type: 'image/png' }),
+      ])
+    })
+    expect(addImages).toHaveBeenCalledTimes(1)
+    expect(view.getByRole('alert').textContent).toContain('一条消息最多添加 1 张图片')
   })
 
   it('disabled locks the Access chip and command launcher (running does not)', () => {
