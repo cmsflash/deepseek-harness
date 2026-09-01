@@ -40,6 +40,9 @@
       "path": "../../feedback/message-feedback"
     },
     {
+      "path": "../../tts/read-aloud"
+    },
+    {
       "path": "../../host/plugin-inventory"
     },
     {

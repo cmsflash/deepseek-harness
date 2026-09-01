@@ -396,6 +396,16 @@
         "tests/**/*.ts"
       ]
     },
+    "packages/tts/openai-tts": {
+      "entry": [
+        "tests/**/*.spec.ts",
+        "tests/**/*.e2e.ts"
+      ],
+      "project": [
+        "src/**/*.ts",
+        "tests/**/*.ts"
+      ]
+    },
     "packages/session/session-title-first-prompt-llm": {
       "entry": [
         "tests/**/*.spec.ts",
@@ -663,6 +673,18 @@
     "packages/bundle/web-app": {
       "ignoreDependencies": [
         "@deepseek-ai/.+"
+      ]
+    },
+    "packages/tts/read-aloud": {
+      "entry": [
+        "tests/**/*.spec.ts"
+      ],
+      "project": [
+        "src/**/*.ts",
+        "tests/**/*.ts"
+      ],
+      "ignoreDependencies": [
+        "zod"
       ]
     }
   }

@@ -66,6 +66,40 @@
       config:
         maxNoteBytes: 8192
 
+    # Read-aloud: the tts seam, its routes, and the turn-end cache the browser
+    # plays from. Billing is by input characters, so `bitrate` trades stored
+    # bytes against audio quality and nothing else; MiniMax honors it and
+    # OpenAI ignores it.
+    #
+    # `model`, `voice`, and `provider` move together: `minimax/speech-2.6-hd`
+    # resolves only through the gateway, so pinning the route is correctness
+    # rather than tie-breaking. Serving OpenAI instead means setting all three
+    # (`provider: openai`, an `openai/*` model, and a voice that model accepts).
+    - id: tts
+      name: '@deepseek-ai/dsh-tts'
+      config:
+        provider: litellm
+        model: minimax/speech-2.6-hd
+        voice: alloy
+        bitrate: 64000
+        maxChars: 10000
+
+    - id: openai-tts
+      name: '@deepseek-ai/dsh-openai-tts'
+      config:
+        providers:
+          litellm:
+            apiKeyEnv: LITELLM_API_KEY
+            baseURLEnv: LITELLM_BASE_URL
+          openai:
+            apiKeyEnv: OPENAI_API_KEY
+
+    - id: read-aloud
+      name: '@deepseek-ai/dsh-read-aloud'
+      config:
+        ttlDays: 7
+        synthesizeOnTurnEnd: true
+
     # Browser Session export: `/export` command plus the shared download dialog.
     - id: session-log-download
       name: '@deepseek-ai/dsh-session-log-export'
@@ -266,6 +300,11 @@
     # assistant-message action strip, over the messageFeedback Remote.
     - id: ui-message-feedback
       name: '@deepseek-ai/dsh-client-ui-message-feedback'
+
+    # Read-aloud: the play/stop control in the assistant-message action strip,
+    # over the readAloud Remote.
+    - id: ui-read-aloud
+      name: '@deepseek-ai/dsh-client-read-aloud'
 
     # Model selection: the /model popupSelect + composer seat over session.models.
     - id: ui-model-selection

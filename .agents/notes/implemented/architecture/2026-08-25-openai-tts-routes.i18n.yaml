@@ -1,0 +1,6 @@
+# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
+# side as of the last confirmed-consistent state. Both languages carry equal authority;
+# after editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/architecture/2026-08-25-openai-tts-routes.md
+2026-08-25-openai-tts-routes.md: e8a11d20cb783088342d3f412dfd792164791937
+2026-08-25-openai-tts-routes.zh.md: 4a10c4641080929163148d5c5630f587dd429e39

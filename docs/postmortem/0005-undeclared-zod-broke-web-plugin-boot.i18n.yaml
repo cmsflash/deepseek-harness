@@ -1,0 +1,6 @@
+# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
+# side as of the last confirmed-consistent state. Both languages carry equal authority;
+# after editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write docs/postmortem/0005-undeclared-zod-broke-web-plugin-boot.md
+0005-undeclared-zod-broke-web-plugin-boot.md: aced9199340e0ebdfa97570f4cd5d2201995965d
+0005-undeclared-zod-broke-web-plugin-boot.zh.md: 5c8741072ff933158c3cf8059f3379bc4d2efdd2

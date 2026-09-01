@@ -1974,6 +1974,36 @@
       "doc": "docs/subsystems/feedback.md",
       "symbol": "MessageFeedbackDeleteResult",
       "source": "packages/feedback/message-feedback/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/tts.md",
+      "symbol": "SpeechRequest",
+      "source": "packages/tts/tts/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/tts.md",
+      "symbol": "SpeechSpec",
+      "source": "packages/tts/tts/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/tts.md",
+      "symbol": "SpeechAudio",
+      "source": "packages/tts/tts/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/tts.md",
+      "symbol": "SpeechProvider",
+      "source": "packages/tts/tts/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/tts.md",
+      "symbol": "SpeechAudioRequest",
+      "source": "packages/tts/read-aloud/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/tts.md",
+      "symbol": "SpeechAudioValue",
+      "source": "packages/tts/read-aloud/src/types.ts"
     }
   ]
 }
