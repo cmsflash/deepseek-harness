@@ -15,7 +15,7 @@ import { act, cleanup, render } from '@testing-library/react'
 import { useSyncExternalStore } from 'react'
 import { AppFrame } from '@deepseek-ai/dsh-client-ui-layout/src/client/AppFrame.tsx'
 import type { AppFrameProps } from '@deepseek-ai/dsh-client-ui-layout/src/client/AppFrame.tsx'
-import { SIDEBAR_COLLAPSED } from '@deepseek-ai/dsh-client-ui-layout/src/client/columns.ts'
+import { SIDEBAR_COLLAPSED, SIDEBAR_DEFAULT } from '@deepseek-ai/dsh-client-ui-layout/src/client/columns.ts'
 import { createLayoutStore } from '@deepseek-ai/dsh-client-ui-layout/src/client/stores.ts'
 import type {
   SessionId, SessionListState, WorkspaceListState,
@@ -88,6 +88,7 @@ function mountFrame() {
       useSessions={useSessions}
       useWorkspaces={((sel: (s: WorkspaceListState) => unknown) => sel(workspaceState)) as never}
       SessionProvider={SessionProviderStub}
+      t={(key: string) => key}
     />
   )
   const utils = render(element())
@@ -375,6 +376,73 @@ describe('AppFrame — guard branches', () => {
     act(() => { fireResize?.(); vi.advanceTimersByTime(20) })
     // Track template still reflects the last non-zero viewport.
     expect(tracks(frame)).toEqual([280, 0])
+  })
+})
+
+describe('AppFrame — mobile overlay layout', () => {
+  /** Mount at a phone width so the first paint already solves as mobile. */
+  function mountPhone() {
+    frameWidth = 390
+    return mountFrame()
+  }
+
+  it('renders one full-width track with the sidebar out of the flow', () => {
+    const { frame } = mountPhone()
+    expect(frame.style.gridTemplateColumns).toBe('minmax(0, 1fr)')
+    expect(frame.dataset.overlay).toBe('true')
+  })
+
+  it('starts with the drawer closed and hidden from assistive tech', () => {
+    const { frame } = mountPhone()
+    const drawer = frame.querySelector('[aria-hidden="true"]')
+    expect(drawer).not.toBeNull()
+    expect(drawer!.hasAttribute('inert')).toBe(true)
+    // No scrim while closed: nothing is covering the conversation.
+    expect(frame.querySelector('[role="presentation"]')).toBeNull()
+  })
+
+  it('opens the drawer from the frame-owned control and dismisses it from the scrim', () => {
+    const { frame, instance, getByLabelText } = mountPhone()
+    act(() => { getByLabelText('sidebar.open').click() })
+    expect(instance.getSnapshot().narrowExpanded).toBe(true)
+
+    const scrim = frame.querySelector('[role="presentation"]')
+    expect(scrim).not.toBeNull()
+    act(() => { (scrim as HTMLElement).click() })
+    expect(instance.getSnapshot().narrowExpanded).toBe(false)
+  })
+
+  it('reports the open drawer as expanded so its occupant renders no rail', () => {
+    const { instance, slotCalls, rerenderFrame } = mountPhone()
+    act(() => { instance.actions.toggleSidebar() })
+    rerenderFrame()
+    const last = [...slotCalls].reverse().find(c => c.key === 'sidebar')!
+    expect(last.props).toMatchObject({ collapsed: false })
+  })
+
+  it('never lets the drawer take width from the conversation', () => {
+    const { frame, instance, rerenderFrame } = mountPhone()
+    act(() => { instance.actions.toggleSidebar() })
+    rerenderFrame()
+    // The single track survives: an open drawer floats above the center.
+    expect(frame.style.gridTemplateColumns).toBe('minmax(0, 1fr)')
+  })
+
+  it('drops the resize handles that have no column border to drag', () => {
+    const { frame, instance, rerenderFrame } = mountPhone()
+    act(() => { instance.actions.toggleSidebar() })
+    rerenderFrame()
+    expect(frame.querySelectorAll('[data-side]')).toHaveLength(0)
+  })
+
+  it('restores the column layout when the window widens past the breakpoint', () => {
+    const { frame } = mountPhone()
+    frameWidth = 1920
+    act(() => { fireResize?.(); vi.advanceTimersByTime(20) })
+    expect(frame.dataset.overlay).toBeUndefined()
+    // The mobile detour never rewrote the width preference, so the sidebar
+    // comes back at its stored width rather than the collapsed rail.
+    expect(tracks(frame)).toEqual([SIDEBAR_DEFAULT, 0])
   })
 })
 

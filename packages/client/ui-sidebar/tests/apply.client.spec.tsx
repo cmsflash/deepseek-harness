@@ -9,7 +9,7 @@ import type { SidebarRootInjected } from '@deepseek-ai/dsh-client-ui-sidebar/cli
 async function bench(declare = true) {
   const ctx = new Context()
   await ctx.plugin(SlotRegistry).await()
-  const layout = { toggleSidebar: vi.fn() }
+  const layout = { toggleSidebar: vi.fn(), collapseNarrowSidebar: vi.fn() }
   const workspaces = { startSession: vi.fn() }
   const sessions = { open: vi.fn(), clear: vi.fn() }
   ctx.provide('layout', layout)
@@ -49,6 +49,9 @@ describe('ui-sidebar apply', () => {
     expect(b.workspaces.startSession).toHaveBeenCalledWith('workspace')
     injected.startSession()
     expect(b.workspaces.startSession).toHaveBeenLastCalledWith(undefined)
+    // Starting a session also dismisses the narrow-viewport drawer, which
+    // would otherwise cover the session it just created.
+    expect(b.layout.collapseNarrowSidebar).toHaveBeenCalledTimes(2)
     injected.toggleSidebar()
     expect(b.layout.toggleSidebar).toHaveBeenCalledOnce()
   })

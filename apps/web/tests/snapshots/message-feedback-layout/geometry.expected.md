@@ -8,3 +8,5 @@
 | 900px | 0px | 1 | 0 | true | true | 0px |
 | 700px | 0px | 1 | 0 | true | true | 0px |
 | 600px | 0px | 1 | 0 | true | true | 0px |
+| 414px | 0px | 1 | 0 | true | true | 58px |
+| 390px | 0px | 1 | 0 | true | true | 82px |

@@ -48,6 +48,68 @@
   border-left: none;
 }
 
+/* Mobile: the sidebar leaves the grid flow and slides over the conversation.
+   The column keeps its own transform transition because the frame's track
+   animation no longer moves it. */
+.frame[data-overlay] .sidebarCol {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: 0;
+  z-index: 30;
+  transform: translateX(-100%);
+  border-right: none;
+  box-shadow: var(--dsw-shadow-lv3);
+  transition: transform var(--ds-transition-duration-slow) var(--ds-ease-in-out);
+}
+
+.frame[data-overlay] .sidebarCol[data-open] {
+  transform: translateX(0);
+}
+
+/* Details never opens on mobile; the solver already zeroes it, and dropping
+   the track keeps its mounted subtree from reserving a scroll area. */
+.frame[data-overlay] .detailsCol {
+  display: none;
+}
+
+.scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 25;
+  background: var(--dsw-alias-bg-mask-1);
+}
+
+/* Floats over the conversation's own top-left chrome: the frame cannot
+   reserve a row without knowing what the center column drew there. 44px is
+   the minimum comfortable touch target. */
+.drawerOpener {
+  position: absolute;
+  top: 8px;
+  inset-inline-start: 8px;
+  z-index: 24;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+}
+
+.drawerOpener:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .frame[data-overlay] .sidebarCol {
+    transition: none;
+  }
+}
+
 /* Drag handles are frame children (columns clip overflow): an 8px hit strip
    centered on the column border via inline left, above column content. Details
    adds a visible 12x32 pill at vertical center; sidebar keeps only the hit strip. */

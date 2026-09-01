@@ -19,8 +19,17 @@ import {
  * (viewport < SIDEBAR_AUTO_COLLAPSE) so toggleSidebar can pick semantics, and
  * `narrowExpanded` is the manual override that re-expands the auto-collapsed
  * sidebar over the squeezed center without rewriting the width preference.
+ * `overlay` mirrors the solver's mobile layout (viewport <= MOBILE_MAX), where
+ * that override opens a drawer over the conversation instead; it is the only
+ * state in which navigating away has to close the sidebar.
  */
-type LayoutState = { sidebar: number; details: number; narrow: boolean; narrowExpanded: boolean }
+type LayoutState = {
+  sidebar: number
+  details: number
+  narrow: boolean
+  narrowExpanded: boolean
+  overlay: boolean
+}
 
 /**
  * Annotation twin of the actions literal below (the export needs a declared
@@ -30,7 +39,8 @@ type LayoutActions = {
   setSidebar: (draft: LayoutState, px: number) => void
   setDetails: (draft: LayoutState, px: number) => void
   toggleSidebar: (draft: LayoutState) => void
-  setNarrow: (draft: LayoutState, narrow: boolean) => void
+  setNarrow: (draft: LayoutState, narrow: boolean, overlay: boolean) => void
+  collapseNarrowSidebar: (draft: LayoutState) => void
   openDetails: (draft: LayoutState) => void
   closeDetails: (draft: LayoutState) => void
 }
@@ -47,7 +57,9 @@ type LayoutActions = {
  */
 export function createLayoutStore(): EngineStoreHandle<LayoutState, LayoutActions>  {
   const handle = defineStore({
-    init: (): LayoutState => ({ sidebar: SIDEBAR_DEFAULT, details: 0, narrow: false, narrowExpanded: false }),
+    init: (): LayoutState => ({
+      sidebar: SIDEBAR_DEFAULT, details: 0, narrow: false, narrowExpanded: false, overlay: false,
+    }),
     actions: {
       setSidebar: (d, px: number) => { d.sidebar = clampWidth(px, SIDEBAR_MIN, SIDEBAR_MAX) },
       setDetails: (d, px: number) => { d.details = clampWidth(px, DETAILS_MIN, DETAILS_MAX) },
@@ -59,11 +71,17 @@ export function createLayoutStore(): EngineStoreHandle<LayoutState, LayoutAction
       },
       // Crossing the breakpoint in either direction drops the override: the
       // narrow default is auto-collapsed, the wide state is the preference.
-      setNarrow: (d, narrow: boolean) => {
+      setNarrow: (d, narrow: boolean, overlay: boolean) => {
+        d.overlay = overlay
         if (d.narrow === narrow) return
         d.narrow = narrow
         d.narrowExpanded = false
       },
+      // Navigating dismisses the sidebar only where it COVERS the
+      // destination. A narrow-but-not-mobile sidebar is a column the user
+      // opened beside the conversation: closing it there would undo a
+      // deliberate choice on every navigation.
+      collapseNarrowSidebar: (d) => { if (d.overlay) d.narrowExpanded = false },
       openDetails: (d) => { if (d.details === 0) d.details = DETAILS_DEFAULT },
       closeDetails: (d) => { d.details = 0 },
     },

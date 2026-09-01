@@ -1,12 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import {
-  CENTER_MIN, clampWidth, computeColumns,
-  DETAILS_DEFAULT, DETAILS_MIN, SIDEBAR_COLLAPSED, SIDEBAR_DEFAULT, SIDEBAR_MIN,
+  CENTER_MIN, clampWidth, computeColumns, DRAWER_MAX, DRAWER_PEEK,
+  DETAILS_DEFAULT, DETAILS_MIN, MOBILE_MAX, SIDEBAR_COLLAPSED, SIDEBAR_DEFAULT, SIDEBAR_MIN,
 } from '@deepseek-ai/dsh-client-ui-layout/src/client/columns.ts'
 
 // Numeric preference form (0 = closed); helpers keep the scenario names readable.
 const open = (width: number) => width
 const closed = (_width: number) => 0
+
+/** Column-layout viewport used by every non-mobile scenario below. */
+const DESKTOP = 1920
 
 describe('clampWidth', () => {
   it('clamps into the range and rounds', () => {
@@ -19,12 +22,12 @@ describe('clampWidth', () => {
 describe('computeColumns', () => {
   it('step 1: everything fits at preferred widths', () => {
     const cols = computeColumns(1920, open(SIDEBAR_DEFAULT), open(DETAILS_DEFAULT))
-    expect(cols).toEqual({ sidebar: 280, center: 1920 - 280 - 360, details: 360 })
+    expect(cols).toEqual({ sidebar: 280, center: 1920 - 280 - 360, details: 360, overlay: false })
   })
 
   it('closed sidebar keeps its compact rail while closed details contribute zero width', () => {
     expect(computeColumns(1920, closed(300), closed(360)))
-      .toEqual({ sidebar: SIDEBAR_COLLAPSED, center: 1920 - SIDEBAR_COLLAPSED, details: 0 })
+      .toEqual({ sidebar: SIDEBAR_COLLAPSED, center: 1920 - SIDEBAR_COLLAPSED, details: 0, overlay: false })
   })
 
   it('preferences beyond the clamp range are clamped before solving', () => {
@@ -37,44 +40,47 @@ describe('computeColumns', () => {
   it('step 2: details shrinks first, center pinned at min', () => {
     // 280 + 360 + 640 = 1280 > 1250; details concedes to 1250-280-640 = 330.
     const cols = computeColumns(1250, open(SIDEBAR_DEFAULT), open(DETAILS_DEFAULT))
-    expect(cols).toEqual({ sidebar: 280, center: CENTER_MIN, details: 330 })
+    expect(cols).toEqual({ sidebar: 280, center: CENTER_MIN, details: 330, overlay: false })
   })
 
   it('boundary: exactly at the step-1/step-2 seam', () => {
     const cols = computeColumns(300 + 360 + CENTER_MIN, open(300), open(360))
-    expect(cols).toEqual({ sidebar: 300, center: CENTER_MIN, details: 360 })
+    expect(cols).toEqual({ sidebar: 300, center: CENTER_MIN, details: 360, overlay: false })
     const one = computeColumns(300 + 360 + CENTER_MIN - 1, open(300), open(360))
-    expect(one).toEqual({ sidebar: 300, center: CENTER_MIN, details: 359 })
+    expect(one).toEqual({ sidebar: 300, center: CENTER_MIN, details: 359, overlay: false })
   })
 
   it('step 3: details auto-closes when its min still starves center — sidebar holds its preference', () => {
     // 280 + 300 + 640 = 1220 > 1210 → details 0; sidebar untouched: center = 1210-280 = 930.
     const cols = computeColumns(1210, open(SIDEBAR_DEFAULT), open(DETAILS_DEFAULT))
-    expect(cols).toEqual({ sidebar: 280, center: 930, details: 0 })
+    expect(cols).toEqual({ sidebar: 280, center: 930, details: 0, overlay: false })
   })
 
   it('the sidebar never concedes: center absorbs the deficit below CENTER_MIN', () => {
     // 700 < 280+640: sidebar keeps 280, center takes 420 < CENTER_MIN.
     const cols = computeColumns(700, open(SIDEBAR_DEFAULT), closed(DETAILS_DEFAULT))
-    expect(cols).toEqual({ sidebar: SIDEBAR_DEFAULT, center: 420, details: 0 })
+    expect(cols).toEqual({ sidebar: SIDEBAR_DEFAULT, center: 420, details: 0, overlay: false })
   })
 
   it('sidebar-closed narrow window: details concedes then auto-closes', () => {
     const fits = computeColumns(SIDEBAR_COLLAPSED + DETAILS_MIN + CENTER_MIN, closed(300), open(DETAILS_DEFAULT))
-    expect(fits).toEqual({ sidebar: SIDEBAR_COLLAPSED, center: CENTER_MIN, details: DETAILS_MIN })
+    expect(fits).toEqual({ sidebar: SIDEBAR_COLLAPSED, center: CENTER_MIN, details: DETAILS_MIN, overlay: false })
     const starved = computeColumns(SIDEBAR_COLLAPSED + DETAILS_MIN + CENTER_MIN - 1, closed(300), open(DETAILS_DEFAULT))
     expect(starved).toEqual({
       sidebar: SIDEBAR_COLLAPSED,
       center: DETAILS_MIN + CENTER_MIN - 1,
       details: 0,
+      overlay: false,
     })
   })
 
-  it('tiny viewport: details closes, sidebar holds, center takes the remainder', () => {
-    const cols = computeColumns(400, open(SIDEBAR_DEFAULT), open(DETAILS_DEFAULT))
+  it('tiny column-layout viewport: details closes, sidebar holds, center takes the remainder', () => {
+    // Just above MOBILE_MAX — the narrowest viewport still solved as columns.
+    const viewport = MOBILE_MAX + 1
+    const cols = computeColumns(viewport, open(SIDEBAR_DEFAULT), open(DETAILS_DEFAULT))
     expect(cols.details).toBe(0)
     expect(cols.sidebar).toBe(SIDEBAR_DEFAULT)
-    expect(cols.center).toBe(Math.max(0, 400 - SIDEBAR_DEFAULT))
+    expect(cols.center).toBe(viewport - SIDEBAR_DEFAULT)
   })
 
   it('recovery is pure: re-widening restores preferred widths untouched', () => {
@@ -87,9 +93,67 @@ describe('computeColumns', () => {
 })
 
 describe('computeColumns — degenerate viewports', () => {
-  it('sidebar closed and viewport below CENTER_MIN: details auto-closes, center takes the rest', () => {
-    // Reaches step 3's auto-close with the compact rail sidebar.
-    expect(computeColumns(500, closed(300), open(DETAILS_DEFAULT)))
-      .toEqual({ sidebar: SIDEBAR_COLLAPSED, center: 500 - SIDEBAR_COLLAPSED, details: 0 })
+  it('sidebar closed just above the mobile breakpoint: details auto-closes, center takes the rest', () => {
+    // Reaches step 3's auto-close with the compact rail sidebar. Below
+    // MOBILE_MAX this viewport would resolve to the overlay layout instead.
+    const viewport = MOBILE_MAX + 1
+    expect(computeColumns(viewport, closed(300), open(DETAILS_DEFAULT)))
+      .toEqual({ sidebar: SIDEBAR_COLLAPSED, center: viewport - SIDEBAR_COLLAPSED, details: 0, overlay: false })
+  })
+})
+
+describe('computeColumns — mobile overlay layout', () => {
+  // Real device widths: iPhone SE/13 mini, iPhone 14/15, and a large phone.
+  const PHONES = [375, 390, 414]
+
+  it('gives center the whole viewport, with no rail and no details column', () => {
+    for (const viewport of PHONES) {
+      expect(computeColumns(viewport, closed(SIDEBAR_DEFAULT), closed(DETAILS_DEFAULT)))
+        .toEqual({ sidebar: 0, center: viewport, details: 0, overlay: true })
+    }
+  })
+
+  it('never lets an open sidebar or details steal width from the conversation', () => {
+    for (const viewport of PHONES) {
+      const drawerOpen = computeColumns(viewport, open(SIDEBAR_DEFAULT), open(DETAILS_DEFAULT))
+      expect(drawerOpen.center).toBe(viewport)
+      expect(drawerOpen.details).toBe(0)
+      expect(drawerOpen.overlay).toBe(true)
+      // The drawer floats: it is sized, but it is not part of the flow.
+      expect(drawerOpen.sidebar).toBeGreaterThan(0)
+    }
+  })
+
+  it('sizes the drawer to leave a dismissable strip of the conversation', () => {
+    // Narrow phones are peek-bound; from DRAWER_MAX + DRAWER_PEEK up the
+    // ceiling binds instead, so the drawer never becomes a second column.
+    const narrow = 320
+    expect(computeColumns(narrow, open(SIDEBAR_DEFAULT), closed(0)).sidebar).toBe(narrow - DRAWER_PEEK)
+    expect(computeColumns(390, open(SIDEBAR_DEFAULT), closed(0)).sidebar).toBe(DRAWER_MAX)
+    expect(computeColumns(MOBILE_MAX, open(SIDEBAR_DEFAULT), closed(0)).sidebar).toBe(DRAWER_MAX)
+  })
+
+  it('always leaves a strip of the conversation beside an open drawer', () => {
+    for (const viewport of PHONES) {
+      const { sidebar } = computeColumns(viewport, open(SIDEBAR_DEFAULT), closed(0))
+      expect(viewport - sidebar).toBeGreaterThanOrEqual(DRAWER_PEEK)
+    }
+  })
+
+  it('switches layouts exactly at MOBILE_MAX', () => {
+    expect(computeColumns(MOBILE_MAX, closed(0), closed(0)).overlay).toBe(true)
+    expect(computeColumns(MOBILE_MAX + 1, closed(0), closed(0)).overlay).toBe(false)
+  })
+
+  it('is pure across the breakpoint: re-widening restores the column layout', () => {
+    const phone = computeColumns(390, open(SIDEBAR_DEFAULT), open(DETAILS_DEFAULT))
+    expect(phone.overlay).toBe(true)
+    const desktop = computeColumns(DESKTOP, open(SIDEBAR_DEFAULT), open(DETAILS_DEFAULT))
+    expect(desktop).toEqual({
+      sidebar: SIDEBAR_DEFAULT,
+      center: DESKTOP - SIDEBAR_DEFAULT - DETAILS_DEFAULT,
+      details: DETAILS_DEFAULT,
+      overlay: false,
+    })
   })
 })

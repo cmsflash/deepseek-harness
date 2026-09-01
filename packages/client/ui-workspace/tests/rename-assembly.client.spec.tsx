@@ -34,6 +34,8 @@ async function createRuntime(): Promise<SlotTestRuntime> {
   runtime.provide('connection', {
     hostDescription: { getSnapshot: () => undefined, subscribe: () => () => {} },
   })
+  // The browser's navigation verbs dismiss the narrow-viewport drawer.
+  runtime.provide('layout', { collapseNarrowSidebar: () => {} })
   const locale = new LocaleRuntime(runtime.ctx)
   runtime.provide('locale', locale)
   runtime.slots.installLocale(locale)

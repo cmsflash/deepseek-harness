@@ -368,3 +368,35 @@
 .root[data-phase='settling'] .composerSeat {
   visibility: hidden;
 }
+
+/* Phone widths (the frame's overlay layout, ui-layout MOBILE_MAX). The
+   utilities cluster is flex:none, so sharing one row leaves the session title
+   a few dozen pixels of a 230px name. Wrapping gives each the full column.
+   This block sits last because it overrides shorthands the base rules set:
+   equal specificity, so source order decides. */
+@media (max-width: 640px) {
+  /* The frame's drawer opener floats over this corner. */
+  .header {
+    padding-left: 60px;
+  }
+
+  .titleRow {
+    flex-wrap: wrap;
+    row-gap: 4px;
+  }
+
+  /* The base `flex: 1` resolves to a 0% basis, which shrinks the cluster
+     beside the utilities rather than displacing them; a full-width basis
+     overflows the row so they separate. */
+  .titleCluster {
+    flex: 1 1 100%;
+  }
+
+  .headerUtilities {
+    margin-left: 0;
+  }
+
+  .tabs {
+    padding-left: 0;
+  }
+}

@@ -33,8 +33,12 @@ export function apply(ctx: ClientContext): void {
 
   const injectProps = (): SidebarRootInjected => ({
     // The shell's New Session button rides the runtime's shared action
-    // (current Session Workspace, then recent Workspace).
-    startSession: (workspaceId) => { ctx.workspaces.startSession(workspaceId) },
+    // (current Session Workspace, then recent Workspace), then dismisses the
+    // narrow-viewport drawer so the new session is visible underneath it.
+    startSession: (workspaceId) => {
+      ctx.workspaces.startSession(workspaceId)
+      ctx.layout.collapseNarrowSidebar()
+    },
     toggleSidebar: () => { ctx.layout.toggleSidebar() },
   })
   ctx.effect(

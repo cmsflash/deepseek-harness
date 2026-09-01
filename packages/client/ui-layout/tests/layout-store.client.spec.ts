@@ -19,7 +19,7 @@ beforeEach(() => { localStorage.clear() })
 describe('createLayoutStore', () => {
   it('initializes the sidebar at its default width, details closed, wide viewport assumed', () => {
     const { store } = createLayoutStore().create()
-    expect(store.getSnapshot()).toEqual({ sidebar: SIDEBAR_DEFAULT, details: 0, narrow: false, narrowExpanded: false })
+    expect(store.getSnapshot()).toEqual({ sidebar: SIDEBAR_DEFAULT, details: 0, narrow: false, narrowExpanded: false, overlay: false })
   })
 
   it('each create() is an independent instance (factory is not a singleton)', () => {
@@ -53,9 +53,9 @@ describe('createLayoutStore', () => {
   it('narrow toggleSidebar flips only the re-expand override; the width preference survives', () => {
     const { store, actions } = createLayoutStore().create()
     actions.setSidebar(400)
-    actions.setNarrow(true)
+    actions.setNarrow(true, false)
     actions.toggleSidebar()
-    expect(store.getSnapshot()).toEqual({ sidebar: 400, details: 0, narrow: true, narrowExpanded: true })
+    expect(store.getSnapshot()).toEqual({ sidebar: 400, details: 0, narrow: true, narrowExpanded: true, overlay: false })
     actions.toggleSidebar()
     expect(store.getSnapshot().narrowExpanded).toBe(false)
     expect(store.getSnapshot().sidebar).toBe(400)
@@ -63,14 +63,30 @@ describe('createLayoutStore', () => {
 
   it('crossing the breakpoint drops the override; a same-value setNarrow keeps it', () => {
     const { store, actions } = createLayoutStore().create()
-    actions.setNarrow(true)
+    actions.setNarrow(true, false)
     actions.toggleSidebar()
     expect(store.getSnapshot().narrowExpanded).toBe(true)
-    actions.setNarrow(true)
+    actions.setNarrow(true, false)
     expect(store.getSnapshot().narrowExpanded).toBe(true)
-    actions.setNarrow(false)
+    actions.setNarrow(false, false)
     expect(store.getSnapshot()).toMatchObject({ narrow: false, narrowExpanded: false })
-    actions.setNarrow(true)
+    actions.setNarrow(true, false)
+    expect(store.getSnapshot().narrowExpanded).toBe(false)
+  })
+
+  it('collapseNarrowSidebar closes only the overlay drawer, never a narrow column', () => {
+    const { store, actions } = createLayoutStore().create()
+    // Narrow but not mobile: the sidebar is a column the user opened beside
+    // the conversation, so navigating must leave it alone.
+    actions.setNarrow(true, false)
+    actions.toggleSidebar()
+    actions.collapseNarrowSidebar()
+    expect(store.getSnapshot().narrowExpanded).toBe(true)
+
+    // Mobile: the drawer covers the destination, so navigating dismisses it.
+    actions.setNarrow(true, true)
+    expect(store.getSnapshot().narrowExpanded).toBe(true)
+    actions.collapseNarrowSidebar()
     expect(store.getSnapshot().narrowExpanded).toBe(false)
   })
 
@@ -98,6 +114,7 @@ describe('createLayoutStore', () => {
       details: 0,
       narrow: false,
       narrowExpanded: false,
+      overlay: false,
     })
   })
 })

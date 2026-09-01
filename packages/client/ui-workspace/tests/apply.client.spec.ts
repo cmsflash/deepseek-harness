@@ -34,6 +34,9 @@ async function bench() {
   ctx.provide('connection', {
     hostDescription: { getSnapshot: () => undefined, subscribe: () => () => {} },
   } as never)
+  // Navigating from the narrow-viewport drawer dismisses it (ui-layout).
+  const collapseNarrowSidebar = vi.fn()
+  ctx.provide('layout', { collapseNarrowSidebar } as never)
   const locale = new LocaleRuntime(ctx)
   // These specs assert the shipped Chinese copy. There is no jsdom `window`
   // in this lane, so browser-language detection never runs and the locale
@@ -43,6 +46,7 @@ async function bench() {
   return {
     ctx, slots: ctx.get('slots') as SlotRegistry, locale, create, startSession, rename,
     insertSessionBefore, open, clear, search, renameSession, binding, fork,
+    collapseNarrowSidebar,
   }
 }
 
@@ -56,7 +60,7 @@ function declare(slots: SlotRegistry, ...names: HoleName[]): () => void {
 
 describe('ui-workspace apply', () => {
   it('declares the services it drives', () => {
-    expect(inject).toEqual(['slots', 'sessions', 'workspaces', 'locale', 'connection'])
+    expect(inject).toEqual(['slots', 'sessions', 'workspaces', 'locale', 'connection', 'layout'])
   })
 
   it('registers browser and pickers for declarations arriving before or after apply', async () => {
@@ -90,6 +94,9 @@ describe('ui-workspace apply', () => {
     expect(b.startSession).toHaveBeenLastCalledWith(undefined)
     browser.open('session' as never)
     expect(b.open).toHaveBeenCalledWith('session')
+    // Both navigation verbs dismiss the narrow-viewport drawer, which would
+    // otherwise stay open over the session the tap just selected.
+    expect(b.collapseNarrowSidebar).toHaveBeenCalledTimes(3)
     const signal = new AbortController().signal
     await expect(browser.searchSessions('match', signal)).resolves.toEqual({
       items: [{ sessionId: 'session', snippet: 'match' }],

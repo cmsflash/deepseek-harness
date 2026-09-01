@@ -39,6 +39,25 @@ function turnEndReasons(events: readonly SessionEvent[]): string[] {
   return events.flatMap(event => event.type === 'turn/end' ? [event.data.reason.kind] : [])
 }
 
+/**
+ * Resize and wait for the conversation column to stop moving. Crossing the
+ * frame's mobile breakpoint animates the sidebar out of the grid flow, so a
+ * measurement taken right after the resize reads a column mid-slide.
+ * @param page - the page under test.
+ * @param width - viewport width to settle at.
+ */
+async function resizeSettled(page: Page, width: number): Promise<void> {
+  await page.setViewportSize({ width, height: 1000 })
+  let previous = -1
+  await expect.poll(async () => {
+    const current = await page.locator('[class*="centerCol"]')
+      .evaluate(element => Math.round(element.getBoundingClientRect().x))
+    const settled = current === previous
+    previous = current
+    return settled
+  }, { timeout: 10_000 }).toBe(true)
+}
+
 describe('web e2e: queue row actions', () => {
   let scaffold: WebScaffold | undefined
   let browser: Browser | undefined
@@ -111,7 +130,7 @@ describe('web e2e: queue row actions', () => {
       { timeout: 10_000 },
     ).toBe(2)
 
-    await page.setViewportSize({ width: 640, height: 1000 })
+    await resizeSettled(page, 640)
     const queueBox = await page.locator('[data-queue-dock]').boundingBox()
     const composerBox = await page.locator('[data-composer-card]').boundingBox()
     expect(queueBox).not.toBeNull()
@@ -129,7 +148,7 @@ describe('web e2e: queue row actions', () => {
     })
     expect(queueLeftInset).toBeCloseTo(composerMetrics.dockInset, 1)
     expect(queueRightInset).toBeCloseTo(composerMetrics.dockInset, 1)
-    await page.setViewportSize({ width: 1680, height: 1000 })
+    await resizeSettled(page, 1680)
 
     const editRow = page.getByText(EDIT, { exact: true }).locator('..')
     await editRow.getByRole('button', { name: 'Edit queued message' }).click()
@@ -243,9 +262,9 @@ describe('web e2e: queue row actions', () => {
       expect(todoBox!.width).toBeCloseTo(queuePanelBox!.width, 1)
     }
     await expectAlignedContextPanels()
-    await page.setViewportSize({ width: 640, height: 1000 })
+    await resizeSettled(page, 640)
     await expectAlignedContextPanels()
-    await page.setViewportSize({ width: 1680, height: 1000 })
+    await resizeSettled(page, 1680)
 
     await queueHeader.click()
     const removeButtons = page.getByRole('button', { name: 'Remove queued message' })

@@ -46,7 +46,7 @@ const CONTROL_VIEWPORT = 600
  * Viewport widths bracketing the glow: the narrow stops retain the reported
  * bleed while the widest stop proves the relation can also be false.
  */
-const WIDTHS = [1680, 1200, 1000, 800, CONTROL_VIEWPORT]
+const WIDTHS = [1680, 1200, 1000, 800, CONTROL_VIEWPORT, 414, 390]
 /** Element id of the mutation control's injected sheet, so the test can take it back out. */
 const CONTROL_STYLE_ID = 'dsh-column-overflow-control'
 /** Horizontal wheel delta per gesture; must exceed the widest bleed the sweep can produce. */
@@ -266,7 +266,7 @@ describe('web e2e: the conversation column scrolls on one axis', () => {
     // at the narrow stops, and that reach has to still register as scrollable
     // overflow. Without both, the claim below holds for free.
     expect(stops.filter(stop => stop.glowBleeds).map(stop => stop.width)).toEqual([
-      1200, 1000, 800, CONTROL_VIEWPORT,
+      1200, 1000, 800, CONTROL_VIEWPORT, 414, 390,
     ])
     for (const stop of stops.filter(stop => stop.glowBleeds)) {
       expect(stop.bleedRange, `viewport ${String(stop.width)}`).toBeGreaterThan(0)

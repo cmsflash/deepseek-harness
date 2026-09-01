@@ -7,3 +7,5 @@
 | 1000px | hidden | true | 0px | true |
 | 800px | hidden | true | 0px | true |
 | 600px | hidden | true | 0px | true |
+| 414px | hidden | true | 0px | true |
+| 390px | hidden | true | 0px | true |

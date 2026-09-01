@@ -302,3 +302,18 @@
   text-decoration: underline var(--dsw-alias-state-business-primary);
   text-underline-offset: 3px;
 }
+
+/* Phone widths (the frame's overlay layout, ui-layout MOBILE_MAX). A cell's
+   100px floor plus its 32px of horizontal padding sets a table's minimum at
+   132px per column, so even a three-column table cannot wrap inside a ~334px
+   message column and forces a horizontal scroll a wrap-first table is not
+   supposed to need. Both budgets shrink together here: the floor still has to
+   clear a short word, and the padding still has to separate columns. Last in
+   the file because it overrides the same properties at equal specificity. */
+@media (max-width: 640px) {
+  .tableScroll th,
+  .tableScroll td {
+    padding-inline: 8px;
+    min-width: 64px;
+  }
+}
