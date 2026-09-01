@@ -62,7 +62,7 @@ const MEASURE_STYLE: CSSProperties = { visibility: 'hidden', left: 0, top: 0 }
  * @returns the trigger and, while open, the two-level menu.
  */
 export function ModelSelect(
-  { locked, available, directory, load, select, t }:
+  { locked, available, directory, load, effortFor, rememberEffort, select, t }:
   ModelSelectInjected & { locked: boolean } & PropsLocale<'model'>,
 ) {
   const state = useSyncExternalStore(
@@ -92,17 +92,18 @@ export function ModelSelect(
 
   const groups = useMemo(() => orderModelProviders(state.groups), [state.groups])
   const choices = useMemo(() => groups.flatMap(group =>
-    group.models.map(model => ({
-      group,
-      model,
-      selection: {
-        provider: group.id,
-        model: model.id,
-        ...model.reasoning?.defaultEffort === undefined
-          ? {}
-          : { reasoningEffort: model.reasoning.defaultEffort },
-      } satisfies ModelSelection,
-    }))), [groups])
+    group.models.map((model) => {
+      const remembered = effortFor(group.id, model)
+      return {
+        group,
+        model,
+        selection: {
+          provider: group.id,
+          model: model.id,
+          ...remembered === undefined ? {} : { reasoningEffort: remembered },
+        } satisfies ModelSelection,
+      }
+    })), [groups, effortFor])
   const showSearch = choices.length > 4
   const filteredGroups = useMemo(() => groups.map(group => ({
     ...group, models: rankByName(group.models, showSearch ? query.trim() : ''),
@@ -383,20 +384,27 @@ export function ModelSelect(
     })
   }
 
-  const submit = (selection: ModelSelection): void => {
+  const submit = (selection: ModelSelection, remember = false): void => {
     lastActionRef.current = 'select'
     // Disabled option rows cannot retain focus while a selection is pending.
     setSelectionFocus(true)
     triggerRef.current?.focus()
-    void select(selection).then(settleSelection)
+    void select(selection).then((accepted) => {
+      // Only a level the Host served is worth remembering: a rejected effort
+      // would preselect a selection that fails again on the next switch.
+      if (remember && accepted?.ok) rememberEffort(selection.provider, selection.model, selection.reasoningEffort)
+      settleSelection(accepted)
+    })
   }
 
-  const choose = (selection: ModelSelection): void => {
-    if (state.current?.provider === selection.provider && state.current.model === selection.model) {
+  const choose = (route: Pick<ModelSelection, 'provider' | 'model'>): void => {
+    if (state.current?.provider === route.provider && state.current.model === route.model) {
       closeAfterSelection()
       return
     }
-    submit(selection)
+    const choice = choices.find(candidate =>
+      candidate.selection.provider === route.provider && candidate.selection.model === route.model)
+    submit(choice?.selection ?? route)
   }
 
   const chooseEffort = (effort: string | undefined): void => {
@@ -410,7 +418,7 @@ export function ModelSelect(
       model: state.current.model,
       ...effort === undefined ? {} : { reasoningEffort: effort },
     }
-    submit(selection)
+    submit(selection, true)
   }
 
   const waiting = currentChoice === undefined && state.status === 'loading'
