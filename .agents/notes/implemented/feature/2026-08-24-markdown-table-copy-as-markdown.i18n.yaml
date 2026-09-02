@@ -1,0 +1,31 @@
+# Bilingual-pair consistency record for 2026-08-24-markdown-table-copy-as-markdown.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-08-24-markdown-table-copy-as-markdown.md
+/agent-note-markdown-tables-carry-a-copy-as-markdown-control:
+  en: 222e9580e18cc4fb
+  zh: 1aa58c0e336c0e82
+/agent-note-markdown-tables-carry-a-copy-as-markdown-control/problem:
+  en: 5d1b88f9ee454c8b
+  zh: b1c953b7059fc039
+/agent-note-markdown-tables-carry-a-copy-as-markdown-control/decision:
+  en: 28fabc6e8437a286
+  zh: 276add3b3d972029
+/agent-note-markdown-tables-carry-a-copy-as-markdown-control/decision/the-projection-is-a-real-serialization-not-a-dom-scrape:
+  en: 5d5c5d2ebb7432a3
+  zh: e2a1220143dafd69
+/agent-note-markdown-tables-carry-a-copy-as-markdown-control/decision/streaming-withholds-the-control:
+  en: 1aebed96985b4999
+  zh: 5a32ea8a2ac436e2
+/agent-note-markdown-tables-carry-a-copy-as-markdown-control/decision/the-control-is-a-sibling-of-the-scroller-and-the-wide-hook-moved-with-it:
+  en: a16b731cc5c57af8
+  zh: 574ca1920a7d8d92
+/agent-note-markdown-tables-carry-a-copy-as-markdown-control/decision/visibility:
+  en: 708f536e85a698dd
+  zh: 42b16f2f532d0e50
+/agent-note-markdown-tables-carry-a-copy-as-markdown-control/consequences:
+  en: ece4aeb507c1873b
+  zh: 0092f0d9b81fefa1
+/agent-note-markdown-tables-carry-a-copy-as-markdown-control/alternatives-considered:
+  en: e961efffd28557e3
+  zh: ab762fe8ba4b6127

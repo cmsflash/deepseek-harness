@@ -1,11 +1,15 @@
 <div class="_markdown_404681">
-  <div class="_tableScroll_404681 _tableFill_404681">
-    <table>
-      <thead>
-        <tr>
-          <th>
-            #text "a"
-          <th>
-            #text "b"
+  <div class="_tableBlock_404681">
+    <div class="_tableScroll_404681 _tableFill_404681">
+      <table>
+        <thead>
+          <tr>
+            <th>
+              #text "a"
+            <th>
+              #text "b"
+    <button aria-label="复制" class="_tableCopyButton_404681" data-state="idle" title="复制" type="button">
+      <svg aria-hidden="true" data-icon="dsw-icon-copy-outline-regular" height="14" width="14">
+        <use href="#dsw-icon-copy-outline-regular">
   <p>
     #text "after"

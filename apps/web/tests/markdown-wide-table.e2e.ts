@@ -162,13 +162,13 @@ function wideTableFixture(): string {
 interface TableReading {
   /** Identifying first-header-cell marker. */
   marker: string
-  /** `scrollWidth - clientWidth` of the wrapper: the residual horizontal scroll. */
+  /** `scrollWidth - clientWidth` of the scroller: the residual horizontal scroll. */
   overflow: number
-  /** Wrapper content width. */
+  /** Block content width; the breakout widens this past the message column. */
   clientWidth: number
-  /** Rendered wrapper height; wrapping shows up as growth when the column narrows. */
+  /** Rendered block height; wrapping shows up as growth when the column narrows. */
   height: number
-  /** Renderer marked the table with the `md-table-wide` breakout hook. */
+  /** Renderer marked the block with the `md-table-wide` breakout hook. */
   wideHook: boolean
   /** Resolved lead padding (the breakout's alignment compensation). */
   paddingLeft: number
@@ -176,22 +176,28 @@ interface TableReading {
   tableLeft: number
 }
 
-/** Read all three tables' relations in one pass. */
+/**
+ * Read all three tables' relations in one pass. The block carries the
+ * breakout (hook, width, lead padding) and the scroller inside it carries the
+ * residual horizontal scroll; the copy control is the block's other child.
+ */
 function readTables(page: Page): Promise<TableReading[]> {
   return page.evaluate((markers) => {
-    const wrappers = [...document.querySelectorAll<HTMLElement>('[class*="tableScroll"]')]
+    const blocks = [...document.querySelectorAll<HTMLElement>('[class*="tableBlock"]')]
     return markers.map((marker) => {
-      const wrapper = wrappers.find(candidate => candidate.textContent?.includes(marker) ?? false)
-      if (wrapper === undefined) throw new Error(`table wrapper ${marker} not rendered`)
-      const table = wrapper.querySelector('table')
+      const block = blocks.find(candidate => candidate.textContent?.includes(marker) ?? false)
+      if (block === undefined) throw new Error(`table block ${marker} not rendered`)
+      const scroller = block.querySelector<HTMLElement>('[class*="tableScroll"]')
+      if (scroller === null) throw new Error(`table scroller ${marker} not rendered`)
+      const table = scroller.querySelector('table')
       if (table === null) throw new Error(`table ${marker} not rendered`)
       return {
         marker,
-        overflow: wrapper.scrollWidth - wrapper.clientWidth,
-        clientWidth: wrapper.clientWidth,
-        height: wrapper.getBoundingClientRect().height,
-        wideHook: wrapper.classList.contains('md-table-wide'),
-        paddingLeft: Number.parseFloat(getComputedStyle(wrapper).paddingLeft),
+        overflow: scroller.scrollWidth - scroller.clientWidth,
+        clientWidth: block.clientWidth,
+        height: block.getBoundingClientRect().height,
+        wideHook: block.classList.contains('md-table-wide'),
+        paddingLeft: Number.parseFloat(getComputedStyle(block).paddingLeft),
         tableLeft: table.getBoundingClientRect().left,
       }
     })
@@ -447,13 +453,16 @@ describe('web e2e: markdown tables fill the column, wide ones break out and scro
   it('keeps a fitting wide table and its following paragraph stationary during interaction', async () => {
     onTestFailed(() => saveFailureShot(page, 'web-e2e-markdown-short-table-height'))
     await settleAt(1680)
-    const short = page.locator('[class*="tableScroll"]', { hasText: SHORT_MARKER })
+    // The block carries the breakout hook and precedes the following
+    // paragraph; the scroller inside it takes hover and keyboard focus.
+    const block = page.locator('[class*="tableBlock"]', { hasText: SHORT_MARKER })
+    const short = block.locator('[class*="tableScroll"]')
     await short.evaluate((element) => { element.scrollIntoView({ block: 'center', behavior: 'instant' }) })
     await page.mouse.move(4, 4)
     await short.evaluate((element) => { element.blur() })
-    expect(await short.evaluate(element => element.classList.contains('md-table-wide'))).toBe(true)
+    expect(await block.evaluate(element => element.classList.contains('md-table-wide'))).toBe(true)
     expect(await short.evaluate(element => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1)
-    const position = () => short.evaluate((element) => {
+    const position = () => block.evaluate((element) => {
       const following = element.nextElementSibling
       if (following === null) throw new Error('short table has no following paragraph')
       return {
