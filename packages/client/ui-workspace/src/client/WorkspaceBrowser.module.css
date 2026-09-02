@@ -77,6 +77,13 @@
     visibility 0s linear;
 }
 
+/* Inherits the section header's tertiary label color, matching the per-row
+   counts: one weight for every session count in the region. */
+.sectionCount {
+  margin-left: 6px;
+  font-variant-numeric: tabular-nums;
+}
+
 .sectionLabelHidden {
   max-width: 0;
   margin-right: -4px;

@@ -769,6 +769,15 @@ export function WorkspaceBrowser({
   const workspaces = useWorkspaces(state => state.items)
   const workspacePhase = useWorkspaces(state => state.phase)
   const archivedSessionIds = useWorkspaces(state => state.archivedSessionIds)
+  const sessionList = useSessions(s => s)
+  // Every visible session across all Workspaces, Ungrouped included. The flat
+  // derivation admits exactly the rows the grouped tree does, so this total
+  // matches the sum of the group counts in either view mode and stays
+  // independent of which groups are expanded.
+  const totalSessionCount = useMemo(
+    () => deriveFlat(sessionList, archivedSessionIds).length,
+    [sessionList, archivedSessionIds],
+  )
   // Live occupancy of this surface's directory-flow hole (the same source the
   // flow reads): a composition without a picking affordance can add nothing.
   const directoryFlowAvailable = useDirectoryFlow(occupied => occupied)
@@ -1013,6 +1022,12 @@ export function WorkspaceBrowser({
         {wide && (
           <span className={clsx(css.sectionLabel, css.wide, searchExpanded && css.sectionLabelHidden)}>
             {groupBy === 'flat' ? t('section.sessions') : t('section.workspaces')}
+            <span
+              className={css.sectionCount}
+              aria-label={t(totalSessionCount === 1 ? 'sessions.total.one' : 'sessions.total.other', { n: totalSessionCount })}
+            >
+              {totalSessionCount}
+            </span>
           </span>
         )}
         {wide && (

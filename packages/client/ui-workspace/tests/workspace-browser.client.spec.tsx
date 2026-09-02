@@ -180,6 +180,40 @@ describe('WorkspaceBrowser', () => {
     expect(b.store.getSnapshot().groupBy).toBe('workspace')
   })
 
+  it('totals every visible session beside the section label, including Ungrouped', () => {
+    // 'loose' belongs to no workspace, so it lands in the Ungrouped bucket and
+    // must still reach the total. 'archived-s' and the subagent row must not.
+    const sessions = sessionState([
+      summary('alpha-s', 4), summary('beta-s', 3), summary('loose', 2),
+      summary('archived-s', 1), summary('child-s', 1, { origin: 'subagent' }),
+    ])
+    const b = mount({
+      useSessions: hook(sessions),
+      useWorkspaces: hook(workspaceState(
+        [workspace('alpha', ['alpha-s']), workspace('beta', ['beta-s', 'archived-s'])],
+        [sid('archived-s')],
+      )),
+    })
+    expect(screen.getByLabelText('共 3 个会话').textContent).toBe('3')
+
+    // The total counts sessions, not groups, so it survives the view flip.
+    fireEvent.click(screen.getByRole('button', { name: '视图选项' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: '单列表' }))
+    expect(b.store.getSnapshot().groupBy).toBe('flat')
+    expect(screen.getByLabelText('共 3 个会话').textContent).toBe('3')
+  })
+
+  it('totals zero with no sessions and uses the singular label at one', () => {
+    const b = mount({ useWorkspaces: hook(workspaceState([workspace('alpha', [])])) })
+    expect(screen.getByLabelText('共 0 个会话').textContent).toBe('0')
+
+    rerender(b, {
+      useSessions: hook(sessionState([summary('only-s', 1)])),
+      useWorkspaces: hook(workspaceState([workspace('alpha', ['only-s'])])),
+    })
+    expect(screen.getByLabelText('共 1 个会话').textContent).toBe('1')
+  })
+
   it('persists flat-list drag order locally and applies Last updated within that account', async () => {
     const insertSessionBefore = vi.fn(async () => {})
     const sessions = sessionState([summary('one', 3), summary('two', 2), summary('three', 1)])
