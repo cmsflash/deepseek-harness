@@ -116,6 +116,8 @@ While a reply streams, `MarkdownText` parses incrementally: all but the trailing
 
 The output cards share one geometry model: `white-space: pre` with horizontal scrolling so column-aligned content keeps its alignment, and a head-plus-tail slice behind an expand button past `maxLines` (default 16) so a long body never stretches the card. `TerminalBlock` parses ANSI into React spans with a per-line column buffer for cursor movement, honoring erase-in-line, tab stops, and character width.
 
+Markdown tables size by column count (deepsuite chat parity): under four columns, or inside a blockquote, a table fills its column and wraps cell text down to the cells' minimum readable width, while four-or-more-column tables keep their natural width, scroll horizontally inside their scroller, and carry the stable `md-table-wide` class on their enclosing block so a hosting layout can widen it past its column; a wide table's horizontal bar reveals on hover or keyboard focus (the scroller carries `tabindex="0"`) instead of staying painted. Every settled table also carries a hover-revealed copy control that writes it back as GFM — canonical spacing, the delimiter row rebuilt from the parsed `align`, and cell markup re-escaped by the grammar — so a comparison matrix pastes into an editor as a table instead of as flattened cell text. The control sits outside the scroller so it holds the corner while a wide table scrolls, and is withheld while a reply streams (the trailing row is still growing) and for a cell the serializer cannot handle ([decision record](../../../.agents/notes/implemented/feature/2026-08-24-markdown-table-copy-as-markdown.md)).
+
 </details>
 
 -----

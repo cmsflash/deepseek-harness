@@ -41,7 +41,8 @@ describe('MarkdownBody', () => {
     expect(tasks.every(task => task.disabled)).toBe(true)
     expect(view.container.querySelector('del')?.textContent).toBe('Old')
     expect(view.container.querySelector('strong')?.textContent).toBe('new')
-    expect(view.getByRole('button', { name: 'Copy' })).toBeDefined()
+    // One copy control each for the fenced code and the table.
+    expect(view.getAllByRole('button', { name: 'Copy' })).toHaveLength(2)
     expect(view.getByRole('heading', { name: 'Footnotes' })).toBeDefined()
     expect(view.container.querySelector('pre')?.textContent).toBe('const answer = 42')
   })
