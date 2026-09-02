@@ -1,39 +1,17 @@
 <div class="_markdown_404681">
-  <div class="_tableScroll_404681 md-table-wide" tabindex="0">
-    <table>
-      <thead>
-        <tr>
-          <th>
-            #text "C1"
-          <th>
-            #text "C2"
-          <th>
-            #text "C3"
-          <th>
-            #text "C4"
-      <tbody>
-        <tr>
-          <td>
-            #text "a"
-          <td>
-            #text "b"
-          <td>
-            #text "c"
-          <td>
-            #text "d"
-  <blockquote>
-    <div class="_tableScroll_404681 _tableFill_404681">
+  <div class="_tableBlock_404681 md-table-wide">
+    <div class="_tableScroll_404681 _tableScrollWide_404681" tabindex="0">
       <table>
         <thead>
           <tr>
             <th>
-              #text "Q1"
+              #text "C1"
             <th>
-              #text "Q2"
+              #text "C2"
             <th>
-              #text "Q3"
+              #text "C3"
             <th>
-              #text "Q4"
+              #text "C4"
         <tbody>
           <tr>
             <td>
@@ -44,3 +22,27 @@
               #text "c"
             <td>
               #text "d"
+  <blockquote>
+    <div class="_tableBlock_404681">
+      <div class="_tableScroll_404681 _tableFill_404681">
+        <table>
+          <thead>
+            <tr>
+              <th>
+                #text "Q1"
+              <th>
+                #text "Q2"
+              <th>
+                #text "Q3"
+              <th>
+                #text "Q4"
+          <tbody>
+            <tr>
+              <td>
+                #text "a"
+              <td>
+                #text "b"
+              <td>
+                #text "c"
+              <td>
+                #text "d"
