@@ -189,6 +189,14 @@
   accent-color: var(--dsw-alias-label-secondary);
 }
 
+/* Positioning context for the copy control, and the carrier of the
+   `md-table-wide` hook: a hosting layout widens the hook with margins
+   measured against the message column, which only resolves on the
+   block-level child of that column. */
+.tableBlock {
+  position: relative;
+}
+
 .tableScroll {
   max-width: 100%;
   overflow-x: auto;
@@ -205,15 +213,67 @@
    Other engines and overlay scrollbars may reserve a different height.
    Wheel and trackpad scrolling need the pointer over the table, which is
    already the hover that re-enables scrolling. */
-.tableScroll:global(.md-table-wide) {
+.tableScrollWide {
   overflow-x: hidden;
   padding-bottom: var(--dsh-scrollbar-width, 8px);
 }
 
-.tableScroll:global(.md-table-wide):hover,
-.tableScroll:global(.md-table-wide):focus-visible {
+.tableScrollWide:hover,
+.tableScrollWide:focus-visible {
   overflow-x: scroll;
   padding-bottom: 0;
+}
+
+/* Copy-as-markdown control: revealed by hovering the table (or by keyboard
+   focus), so a resting transcript keeps no per-block chrome. It overlays the
+   header row's trailing edge instead of reserving space, which would push
+   every table down by its height. */
+.tableCopyButton {
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  margin: 0;
+  color: var(--dsw-alias-label-secondary);
+  /* The floating-control family, not a bg surface: this button hovers over
+     the table rather than painting a rung a scrollbar could sit against. */
+  background: var(--dsw-alias-button-floating-fill);
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: 6px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.tableBlock:hover .tableCopyButton,
+.tableCopyButton:focus-visible {
+  opacity: 1;
+}
+
+.tableCopyButton:hover {
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-alias-button-floating-hover);
+}
+
+/* The confirmation outlives the hover that produced it: a pointer that
+   leaves during the write, or a copy made from the keyboard, would otherwise
+   report nothing. */
+.tableCopyButton[data-state='copied'] {
+  opacity: 1;
+  color: var(--dsw-alias-state-success-primary);
+}
+
+/* Coarse pointers have no hover with which to reveal the control. */
+@media (hover: none) {
+  .tableCopyButton {
+    opacity: 1;
+  }
 }
 
 /* Chromium keyboard-focuses scrollable containers by default; the ring uses
