@@ -1,0 +1,6 @@
+# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
+# side as of the last confirmed-consistent state. Both languages carry equal authority;
+# after editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-08-24-markdown-table-copy-as-markdown.md
+2026-08-24-markdown-table-copy-as-markdown.md: 8ff6eb7da3381da487fc34a2077b023c30a4dc4f
+2026-08-24-markdown-table-copy-as-markdown.zh.md: d7fd73b1ece89bc4fafb4ba864bb8e7cc9e843f9

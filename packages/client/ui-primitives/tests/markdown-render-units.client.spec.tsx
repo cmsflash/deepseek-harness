@@ -104,8 +104,8 @@ describe('renderBlocks over hand-built trees', () => {
   it('renders a rowless align-less table as an empty fill wrapper', () => {
     // Zero columns is below the wide threshold, so the fill arm applies.
     const container = renderNodes([{ type: 'table', children: [] }])
-    const wrapper = container.querySelector('table')?.parentElement
-    expect(wrapper?.className).not.toContain('md-table-wide')
+    const block = container.querySelector('table')?.parentElement?.parentElement
+    expect(block?.className).not.toContain('md-table-wide')
     expect(container.querySelector('table')?.childElementCount).toBe(0)
   })
 

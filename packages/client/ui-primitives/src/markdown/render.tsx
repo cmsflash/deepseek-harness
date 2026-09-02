@@ -18,11 +18,12 @@
 
 import { Fragment, createElement } from 'react'
 import type { Key, ReactNode } from 'react'
-import clsx from 'clsx'
 import type * as Md from 'mdast'
 import type {} from 'mdast-util-math'
 import { normalizeUri } from 'micromark-util-sanitize-uri'
 import { CodeBlock } from './CodeBlock.tsx'
+import { TableBlock } from './TableBlock.tsx'
+import { tableToMarkdown } from './table-markdown.ts'
 import { renderTexToReact } from './katex.tsx'
 import type { PositionedBlock } from './incremental.ts'
 import css from './MarkdownText.module.css'
@@ -407,14 +408,14 @@ function renderTable(node: Md.Table, key: Key, context: MarkdownRenderContext): 
   // column and wrap instead (deepsuite chat TableWrapper parity).
   const wide = columns >= 4 && context.inBlockquote !== true
   return (
-    // Wide tables rest with overflow-x hidden (the hover-revealed bar in
-    // MarkdownText.module.css), which drops Chromium's implicit scroller
-    // focusability — the explicit tabindex keeps them keyboard-reachable,
-    // and :focus-visible restores scrolling.
-    <div
+    <TableBlock
       key={key}
-      className={clsx(css.tableScroll, wide ? 'md-table-wide' : css.tableFill)}
-      tabIndex={wide ? 0 : undefined}
+      wide={wide}
+      // A streaming table's trailing row is still growing, so its projection
+      // would copy a half-parsed cell; the control lands on the settled pass.
+      markdown={context.streaming ? undefined : tableToMarkdown(node)}
+      copyLabel={context.codeLabels?.copyLabel}
+      copiedLabel={context.codeLabels?.copiedLabel}
     >
       <table>
         {headRow !== undefined && <thead>{renderTableRow(headRow, 'th', align, 0, context)}</thead>}
@@ -424,7 +425,7 @@ function renderTable(node: Md.Table, key: Key, context: MarkdownRenderContext): 
           </tbody>
         )}
       </table>
-    </div>
+    </TableBlock>
   )
 }
 

@@ -10,11 +10,11 @@ Status: implemented
 
 ## 决定
 
-**列数在渲染器里静态决定尺寸分支。**`renderTable` 读取解析出的列数（`align` 数组，缺省回退表头行）：不足四列的表格——以及 blockquote 内的任何表格（渲染上下文的 `inBlockquote` 标志）——获得模块的 `tableFill` 类，`table { width: 100%; max-width: none }`，填满消息列，单元格按既有 `min-width: 100px` 下限换行。四列及以上的表格保持自然宽度规则，改挂稳定的全局钩子类 `md-table-wide`（沿用 `md-code-block` 先例），供宿主布局加宽。这正是 deepsuite chat 的判别式（`.wrapper:not(:has(th:nth-child(4), td:nth-child(4)))` 及其 blockquote 豁免），只是移到已经掌握列数的渲染器里计算。全程没有测量、observer 或交互状态。
+**列数在渲染器里静态决定尺寸分支。**`renderTable` 读取解析出的列数（`align` 数组，缺省回退表头行）：不足四列的表格——以及 blockquote 内的任何表格（渲染上下文的 `inBlockquote` 标志）——获得模块的 `tableFill` 类，`table { width: 100%; max-width: none }`，填满消息列，单元格按既有 `min-width: 100px` 下限换行。四列及以上的表格保持自然宽度规则，其外层区块挂稳定的全局钩子类 `md-table-wide`（沿用 `md-code-block` 先例），供宿主布局加宽。这正是 deepsuite chat 的判别式（`.wrapper:not(:has(th:nth-child(4), td:nth-child(4)))` 及其 blockquote 豁免），只是移到已经掌握列数的渲染器里计算。全程没有测量、observer 或交互状态。
 
 **聊天转录区用容器查询 CSS 加宽挂钩表格。**ChatView 的 `.scroll` 声明 `container-type: inline-size`，`AssistantMarkdown.module.css` 给 `.body :global(.md-table-wide)` 定义突破：`--dsh-table-spare` 是单侧空余宽度 `max(0px, (100cqw - --dsh-chat-content-width) / 2)`，`--dsh-table-lead` 再加上包裹层自身的缩进（`min(--dsh-chat-content-width, 100cqw) - 100%`），宽度/负 margin/前导 padding 组合起来，让包裹层的滚动区横跨整个转录区，而表格内容仍从消息列左缘起排。`100cqw` 是 deepsuite chat 用 JS 测量的 `--dsl-virtual-list-width` 的 CSS 等价物；`max(0px, …)` 钳制取代其 below-SM 的 JS 开关，转录区窄于消息列时连续退化为普通列内滚动。规则限定在 `AssistantMarkdown .body` 之下，工具卡片、压缩行等其他 `MarkdownText` 表面保持普通列内行为。
 
-**一致性 fixture 的变化是有意的。**含表格的 markdown-dom fixture pin 住判别结果：窄表与 blockquote 表为 `tableScroll tableFill`，宽表为 `tableScroll md-table-wide`；新增的 `table-wide-and-blockquote` 语料文档同时 pin 住 blockquote 豁免的两个分支。
+**一致性 fixture 的变化是有意的。**含表格的 markdown-dom fixture pin 住判别结果：窄表与 blockquote 表为 `tableScroll tableFill`，宽表为 `tableBlock md-table-wide` 区块内的 `tableScroll tableScrollWide`；新增的 `table-wide-and-blockquote` 语料文档同时 pin 住 blockquote 豁免的两个分支。区块包裹层，以及钩子挂在区块而非滚动层这一点，随[复制为 markdown 的控件](2026-08-24-markdown-table-copy-as-markdown.zh.md)一同引入。
 
 ## 曾考虑的替代方案
 
