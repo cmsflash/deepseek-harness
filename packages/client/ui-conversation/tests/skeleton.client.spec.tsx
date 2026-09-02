@@ -79,6 +79,8 @@ function conversationSnapshot(overrides: Partial<ConversationSnapshot> = {}): Co
     nodes: [], turnTimings: new Map(), turnEnds: new Map(), partial: null, runningCalls: [],
     pending: [], queue: [], running: false, composerPhase: 'active', removed: false,
     openState: 'open', openError: null, hasMore: false, loadingOlder: false,
+    stepDigests: new Map(), stepAccounts: new Map(),
+    expandingTurns: new Set(),
     promptError: null, blank: false, subagent: null, lastAgentError: null,
     ...overrides,
   }

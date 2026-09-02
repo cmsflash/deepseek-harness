@@ -159,7 +159,7 @@ function TurnStatus({ startTime, t }: {
  */
 export function ChatView({
   useSession, useSessions, useStore, useCollapseSteps, renderSlot, sessionId, openFile, loadOlder, loadImage,
-  inspectCall, chatScroll, forkAt, fileMentions, t,
+  expandTurn, inspectCall, chatScroll, forkAt, fileMentions, t,
 }: ChatViewSlotProps) {
   const order = useSession(s => s.chat.order)
   const nodeStore = useSession(s => s.chat.nodes)
@@ -222,12 +222,15 @@ export function ChatView({
   // opened, and the choice is deliberately not persisted — a fresh mount
   // starts collapsed again, matching the preference's intent.
   const collapseSteps = useCollapseSteps(value => value)
+  const stepDigests = useSession(s => s.stepDigests)
+  const stepAccounts = useSession(s => s.stepAccounts)
+  const expandingTurns = useSession(s => s.expandingTurns)
   const [expandedTurns, setExpandedTurns] = useState<ReadonlySet<number>>(() => new Set())
   const flow = useMemo(
     () => (collapseSteps
-      ? collapseSettledSteps(order, nodeStore, expandedTurns)
+      ? collapseSettledSteps(order, nodeStore, expandedTurns, stepDigests, stepAccounts)
       : order.map(key => ({ kind: 'node', key }) as const)),
-    [collapseSteps, order, nodeStore, expandedTurns],
+    [collapseSteps, order, nodeStore, expandedTurns, stepDigests, stepAccounts],
   )
 
   const listRef = useRef<HTMLDivElement | null>(null)
@@ -451,8 +454,13 @@ export function ChatView({
                 keys={row.keys}
                 metrics={row.metrics}
                 expanded={expandedTurns.has(row.turn)}
+                loading={expandingTurns.has(row.turn)}
                 renderSlot={renderSlot}
                 onToggle={() => {
+                  // Withheld steps are fetched before they can render, and the
+                  // disclosure opens either way: the row reports its own
+                  // loading state rather than staying shut until events land.
+                  if (row.withheld) void expandTurn(row.turn)
                   setExpandedTurns((current) => {
                     const next = new Set(current)
                     if (!next.delete(row.turn)) next.add(row.turn)

@@ -4,8 +4,8 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { AttachmentIdType, ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import type { SessionEvent } from '@deepseek-ai/dsh-session/types'
 import type {
-  HistoryEntry, IApiClient, MessageId, MuxFrame, PromptContentPart, QueueAction, RpcError,
-  RpcId, RpcResponse, RpcResult, SessionId, SubagentAddress, ToolEventView,
+  HistoryEntry, HistoryStepDetail, IApiClient, MessageId, MuxFrame, PromptContentPart, QueueAction,
+  RpcError, RpcId, RpcResponse, RpcResult, SessionId, StepDigest, SubagentAddress, ToolEventView,
 } from '@deepseek-ai/dsh-api-remotes/client'
 // Value import from the inline-safe wire layer (not the connection plugin):
 // plugin-to-plugin value imports are a bundle purity error.
@@ -28,8 +28,27 @@ import type { ProjectionsBaseline } from './projection-store.ts'
 import { resolvedClientTimeZone } from '../time-zone.ts'
 import { SessionQueueMirror } from './queue-mirror.ts'
 
-/** Messages requested per history page. */
+/** Messages requested per history page when every step is served whole. */
 export const PAGE_MESSAGES = 50
+
+/**
+ * Messages requested per collapsed page.
+ *
+ * Eliding step interiors makes a message far cheaper to carry, so the same
+ * page budget reaches much further back. Keeping the full-detail count would
+ * spend that saving on a smaller response rather than on more history, which
+ * is the reason to collapse in the first place: a reader scrolling up wants
+ * more turns, not the same seven turns in fewer bytes.
+ */
+export const COLLAPSED_PAGE_MESSAGES = 300
+
+/**
+ * Per-turn elided-step digests, ascending by `startSeq` within each turn.
+ *
+ * A turn is absent once every step it owns is loaded, so presence is exactly
+ * "this turn is still showing withheld work".
+ */
+export type StepDigestsByTurn = ReadonlyMap<number, readonly StepDigest[]>
 
 /** Manager-owned observers of a Session object's local state edges. */
 export interface SessionOptions {
@@ -54,6 +73,8 @@ export interface SessionOptions {
   projections?: ProjectionValueStore
   /** Runtime registries used by this Session-owned Conversation assembler. */
   conversation?: ConversationRuntime
+  /** Step detail this Session opens with; the manager seeds its current choice. */
+  stepDetail?: HistoryStepDetail
 }
 
 /**
@@ -70,6 +91,28 @@ export class Session implements SessionFace {
   private views: (ToolEventView | undefined)[] = []
   private baseSeq = 0
   private hasMore = false
+  /**
+   * Elided-step digests of the loaded window, by turn.
+   *
+   * A collapsed page withholds the interior of steps the reader is not looking
+   * at and describes each through a digest, so this is the window's account of
+   * what it does NOT hold. A turn drops out once {@link expandTurn} loads it.
+   */
+  private digests = new Map<number, StepDigest[]>()
+  /**
+   * Every digest this window has been told about, including turns already
+   * expanded.
+   *
+   * A digest is the host's account of one step, computed over the whole step.
+   * Expansion loads that step's events but does not change what it cost, so
+   * the summary row keeps reporting the same figures instead of shrinking to
+   * whatever the window happens to hold.
+   */
+  private accounts = new Map<number, StepDigest[]>()
+  /** Turns whose expansion request is in flight (one at a time per turn). */
+  private readonly expanding = new Set<number>()
+  /** How much of each step this session's pages carry; see {@link setStepDetail}. */
+  private stepDetail: HistoryStepDetail = 'full'
   private openState: OpenState = 'cold'
   private openError: RpcError | null = null
   private openPromise: Promise<void> | null = null
@@ -146,6 +189,7 @@ export class Session implements SessionFace {
     private readonly options: SessionOptions = {},
   ) {
     this.projections = options.projections ?? new ProjectionValueStore()
+    this.stepDetail = options.stepDetail ?? 'full'
     this.address = options.address
     this.parentAvailable = options.parentAvailable ?? false
     this.conversation = options.conversation === undefined
@@ -377,13 +421,79 @@ export class Session implements SessionFace {
     return promise
   }
 
+  /**
+   * Choose how much of each step this session's pages carry.
+   *
+   * The object layer owns the fetch strategy; a UI preference reaches it here
+   * rather than the Session reading a preference itself. A change re-opens the
+   * window, because a window mixing detail levels would render the same kind
+   * of step differently depending on when its page was fetched.
+   * @param detail - whole steps, or boundaries plus digests for elidable ones.
+   * @returns completion of the rebuild a change triggers.
+   */
+  async setStepDetail(detail: HistoryStepDetail): Promise<void> {
+    if (this.stepDetail === detail) return
+    this.stepDetail = detail
+    if (this.openState === 'cold') return
+    await this.resync()
+  }
+
+  /**
+   * Load the steps one collapsed page elided from a single turn.
+   *
+   * The reader expands a turn, so the turn is the unit: one request covers
+   * every step the row stands for. Concurrent gestures for the same turn
+   * collapse onto the in-flight request, and a turn with nothing withheld
+   * returns without a request.
+   * @param turn - the turn the reader opened.
+   * @returns completion; a failure leaves the window and its digests unchanged.
+   */
+  async expandTurn(turn: number): Promise<void> {
+    if (this.openState !== 'open' || this.expanding.has(turn)) return
+    if (!this.digests.has(turn)) return
+    this.expanding.add(turn)
+    this.notifier.markDirty()
+    try {
+      // baseSeq bounds the read-back to the window this Session holds. A turn
+      // routinely starts before the page showing it, and its earlier steps
+      // arrive with their own older page; without the bound they would splice
+      // in below the head and leave baseSeq describing a range with a hole.
+      const { result } = await this.api.sessions.expandSteps({
+        sessionId: this.sessionId,
+        turn,
+        fromSeq: this.baseSeq,
+      })
+      if (!result.ok || this.openState !== 'open') return
+      const entries = result.value.events
+      // Splice by seq into the interiors the page left empty. The window's ends
+      // do not move, so baseSeq, hasMore, and the tail stay as they were; a seq
+      // already held wins, because the live path may have appended it since.
+      const rows = new Map(this.events.map((event, index) => [event.seq, { event, view: this.views[index] }]))
+      for (const entry of entries) {
+        if (!rows.has(entry.event.seq)) rows.set(entry.event.seq, { event: entry.event, view: entry.view })
+      }
+      const ordered = [...rows.values()].sort((left, right) => left.event.seq - right.event.seq)
+      this.events = ordered.map(row => row.event)
+      this.views = ordered.map(row => row.view)
+      // Only the withheld marker clears: the account stays so the row keeps
+      // reporting what those steps cost.
+      this.digests.delete(turn)
+      this.scheduleConversation(this.conversation.spliceInterior(entries.map(conversationInput)))
+    } catch (error) {
+      console.error('[web-runtime] expandTurn failed:', error)
+    } finally {
+      this.expanding.delete(turn)
+      this.notifier.markDirty()
+    }
+  }
+
   /** Page up: pull one earlier page with the window's first seq as beforeSeq and prepend. */
   async loadOlder(): Promise<void> {
     if (this.openState !== 'open' || !this.hasMore || this.loadingOlder) return
     this.loadingOlder = true
     this.notifier.markDirty()
     try {
-      const { result } = await this.history({ beforeSeq: this.baseSeq, maxMessages: PAGE_MESSAGES })
+      const { result } = await this.history({ beforeSeq: this.baseSeq, maxMessages: this.pageMessages() })
       if (!result.ok) return // keep the window as-is; do not overwrite openError (open already succeeded)
       const older = result.value.events
       if (older.length === 0) {
@@ -392,6 +502,9 @@ export class Session implements SessionFace {
         return
       }
       const tail = older[older.length - 1]
+      // Continuity is asserted on the page's own tail, which a collapsed page
+      // preserves: elision withholds step interiors, never the boundaries that
+      // join one page to the next.
       if (tail === undefined || tail.event.seq + 1 !== this.baseSeq) {
         // Continuity assertion: on violation drop the page fail-soft rather than render an out-of-order stream.
         console.error(`[web-runtime] history page discontinuous: tail seq ${tail?.event.seq} vs baseSeq ${this.baseSeq}`)
@@ -404,6 +517,12 @@ export class Session implements SessionFace {
       /* v8 ignore next -- the ?? arm needs older[0] undefined, but the empty-page branch above already returned. */
       this.baseSeq = older[0]?.event.seq ?? this.baseSeq
       this.hasMore = result.value.hasMore
+      for (const [turn, added] of groupDigests(result.value.digests)) {
+        const held = this.digests.get(turn)
+        this.digests.set(turn, held === undefined ? added : [...added, ...held])
+        const account = this.accounts.get(turn)
+        this.accounts.set(turn, account === undefined ? added : [...added, ...account])
+      }
       this.conversation.prepend(older.map(conversationInput), this.hasMore)
     } catch (error) {
       console.error('[web-runtime] loadOlder failed:', error)
@@ -431,6 +550,8 @@ export class Session implements SessionFace {
     this.events = []
     this.views = []
     this.baseSeq = 0
+    this.digests = new Map()
+    this.accounts = new Map()
     // Superseded, not settled: the baseline replay re-sends still-pending requested frames verbatim
     // (same rpcId), re-minting fresh waits; a stale reference's respond() still reaches the host.
     this.pending.clear()
@@ -620,20 +741,20 @@ export class Session implements SessionFace {
     this.openError = null
     this.notifier.markDirty()
     try {
-      let { result } = await this.history({ maxMessages: PAGE_MESSAGES })
+      let { result } = await this.history({ maxMessages: this.pageMessages() })
       if (generation !== this.openGeneration) return
       if (!result.ok) {
         this.openState = 'error'
         this.openError = result.error
         return
       }
-      this.installWindow(result.value.events, result.value.hasMore, result.value.projections)
+      this.installWindow(result.value.events, result.value.hasMore, result.value.projections, result.value.digests)
       // Gap detection: baseline past the window tail and liveBuffer did not cover it -> pull the tail page once more.
       const tailSeq = this.windowTailSeq()
       if (this.subscribedLastSeq !== null && tailSeq !== null && this.subscribedLastSeq > tailSeq) {
-        result = (await this.history({ maxMessages: PAGE_MESSAGES })).result
+        result = (await this.history({ maxMessages: this.pageMessages() })).result
         if (generation !== this.openGeneration) return
-        if (result.ok) this.installWindow(result.value.events, result.value.hasMore, result.value.projections)
+        if (result.ok) this.installWindow(result.value.events, result.value.hasMore, result.value.projections, result.value.digests)
       }
       this.openState = 'open'
     } catch (error) {
@@ -654,11 +775,18 @@ export class Session implements SessionFace {
    *  A carried projections block seeds the value store (higher seq wins, so a stale
    *  baseline cannot overwrite a newer push frame); the window events themselves are
    *  never folded — the host is the only computation site. */
-  private installWindow(entries: HistoryEntry[], hasMore: boolean, projections?: ProjectionsBaseline): void {
+  private installWindow(
+    entries: HistoryEntry[],
+    hasMore: boolean,
+    projections?: ProjectionsBaseline,
+    digests?: readonly StepDigest[],
+  ): void {
     this.events = entries.map(e => e.event)
     this.views = entries.map(e => e.view)
     this.baseSeq = this.events[0]?.seq ?? 0
     this.hasMore = hasMore
+    this.digests = groupDigests(digests)
+    this.accounts = groupDigests(digests)
     if (this.events.some(event => event.type === 'turn/start')) this.firstPromptPendingTurn = false
     this.conversation.replaceWindow(entries.map(conversationInput), hasMore)
     if (projections !== undefined) this.projections.seed(projections)
@@ -715,10 +843,10 @@ export class Session implements SessionFace {
     this.stitching = true
     const generation = this.openGeneration
     try {
-      const { result } = await this.history({ maxMessages: PAGE_MESSAGES })
+      const { result } = await this.history({ maxMessages: this.pageMessages() })
       // Failure or superseded by a full resync: drop — the resync path rebuilds and clears the buffer itself.
       if (result.ok && generation === this.openGeneration && this.openState === 'open') {
-        this.installWindow(result.value.events, result.value.hasMore, result.value.projections)
+        this.installWindow(result.value.events, result.value.hasMore, result.value.projections, result.value.digests)
       }
     } catch (error) {
       console.error('[web-runtime] gap repair failed:', error)
@@ -765,20 +893,43 @@ export class Session implements SessionFace {
       openError: this.openError,
       hasMore: this.hasMore,
       loadingOlder: this.loadingOlder,
+      stepDigests: this.digests,
+      stepAccounts: this.accounts,
+      expandingTurns: this.expanding,
       promptError: this.promptError,
       blank: this.blankBit,
       lastAgentError: this.lastAgentError,
     }
   }
 
-  /** Select ordinary or addressed history transport from the stored browser fact. */
+  /**
+   * Messages one page requests, which the current step detail decides: a
+   * collapsed page carries far less per message, so it reaches further back
+   * for the same response size.
+   * @returns the message budget for the next page.
+   */
+  private pageMessages(): number {
+    return this.stepDetail === 'collapsed' ? COLLAPSED_PAGE_MESSAGES : PAGE_MESSAGES
+  }
+
+  /**
+   * Select ordinary or addressed history transport from the stored browser fact.
+   *
+   * Step detail rides every page: a window mixing collapsed and full pages
+   * would show the same kind of step both ways depending on when it was
+   * fetched.
+   */
   private history(payload: { beforeSeq?: number; maxMessages?: number }): Promise<RpcResponse<{
     events: HistoryEntry[]
     hasMore: boolean
     projections?: ProjectionsBaseline
+    digests?: StepDigest[]
   }>> {
+    const detail = this.stepDetail
     return this.address === undefined
-      ? this.api.sessions.history({ sessionId: this.sessionId, ...payload })
+      ? this.api.sessions.history({ sessionId: this.sessionId, ...payload, stepDetail: detail })
+      // Subagent transcripts are read through their own address and page whole:
+      // the catalog child view has no collapsing reader to serve.
       : this.api.subagents.history({ ...this.address, ...payload })
   }
 }
@@ -786,6 +937,21 @@ export class Session implements SessionFace {
 /** Convert one wire history row into the assembler's transport-neutral input. */
 function conversationInput(entry: HistoryEntry): ConversationEventInput {
   return { event: entry.event, view: entry.view }
+}
+
+/**
+ * Index one page's elided-step digests by the turn that owns them.
+ * @param digests - digests as served, ascending by startSeq.
+ * @returns per-turn digests, preserving that order.
+ */
+function groupDigests(digests: readonly StepDigest[] = []): Map<number, StepDigest[]> {
+  const byTurn = new Map<number, StepDigest[]>()
+  for (const digest of digests) {
+    const held = byTurn.get(digest.turn)
+    if (held === undefined) byTurn.set(digest.turn, [digest])
+    else held.push(digest)
+  }
+  return byTurn
 }
 
 /** A generic command row alone remains control-plane content; every other visible Chat Node activates the conversation. */

@@ -221,6 +221,29 @@ export class ConversationNodeAssembler implements ConversationViewSnapshotStore 
    * @returns highest requested publication cadence.
    */
   prepend(entries: readonly ConversationEventInput[], hasMore: boolean): ConversationPublication {
+    return this.merge(entries, hasMore)
+  }
+
+  /**
+   * Add Events the loaded window skipped over, without moving either end of it.
+   *
+   * A collapsed history page serves a step's boundaries and withholds its
+   * interior, so the window is contiguous in the coordinates Definitions read
+   * (every Turn and Step it spans is present) while missing events strictly
+   * inside those Steps. Reading them back lands here.
+   *
+   * Every Context this reaches already holds its start Match — the withheld
+   * Events are interior, so a Step's `step/start` arrived with the page — and
+   * Matches merge by seq, so the result is identical to a window that was
+   * never collapsed.
+   * @param entries - Events read back for one expanded Turn.
+   * @returns highest requested publication cadence.
+   */
+  spliceInterior(entries: readonly ConversationEventInput[]): ConversationPublication {
+    return this.merge(entries, this.hasMore)
+  }
+
+  private merge(entries: readonly ConversationEventInput[], hasMore: boolean): ConversationPublication {
     this.revised.clear()
     let publication: ConversationPublication = 'none'
     const previousHasMore = this.hasMore

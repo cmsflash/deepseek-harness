@@ -9,8 +9,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { SessionEvent } from '@deepseek-ai/dsh-session/types'
 import type {} from '@deepseek-ai/dsh-commands/types'
-import type { SessionId } from '@deepseek-ai/dsh-api-remotes/client'
-import { Session } from '../src/client/sessions/session.ts'
+import type { SessionId, StepDigest } from '@deepseek-ai/dsh-api-remotes/client'
+import { COLLAPSED_PAGE_MESSAGES, PAGE_MESSAGES, Session } from '../src/client/sessions/session.ts'
 import type {
   ChatConversationViewNode, ChatLocationNodeIndex, ChatNodeStore, ChatSnapshot,
   ConversationEventInput, ConversationNode, ConversationNodeDefinition,
@@ -173,6 +173,23 @@ function chatSeqs(snapshot: ConversationSnapshot): number[] {
 function histResponse(events: SessionEvent[], hasMore = false) {
   // history returns HistoryEntry[] ({event, view?}); these tests are view-less.
   return Promise.resolve(ok({ events: entries(events) as never[], hasMore }))
+}
+
+/** A Session that pages with collapsed step detail, as a collapsing reader drives it. */
+function collapsedSession(api = new FakeApiClient()): { api: FakeApiClient; session: Session } {
+  return {
+    api,
+    session: new Session(SID, api, fakeRemote(), { conversation: TEST_CONVERSATION, stepDetail: 'collapsed' }),
+  }
+}
+
+/** A collapsed history page: served rows plus the digests for what it withheld. */
+function collapsedResponse(events: SessionEvent[], extra: { hasMore?: boolean; digests?: StepDigest[] } = {}) {
+  return Promise.resolve(ok({
+    events: entries(events) as never[],
+    hasMore: extra.hasMore ?? false,
+    ...extra.digests === undefined ? {} : { digests: extra.digests },
+  }))
 }
 
 describe('open', () => {
@@ -1012,5 +1029,271 @@ describe('reference stability (the memo contract)', () => {
     expect(resolved.chat.nodes.get(settledKey)).toBe(settledNode)
     feed(ev.assistant(12, 1, '完成'))
     expect(session.getSnapshot()).not.toBe(resolved)
+  })
+})
+
+/**
+ * One turn whose step 1 is withheld: its boundaries ride the page, its
+ * interior does not, exactly as a collapsed host page serves it.
+ */
+function collapsedPage(): SessionEvent[] {
+  return [
+    ev.turnStart(0, 1),
+    ev.user(1, '问'),
+    // Step 1 withheld: boundaries only.
+    ev.stepStart(2, 1, 1),
+    { type: 'step/end', seq: 3, time: 1_700_000_000_003, data: { turn: 1, step: 1 } } as unknown as SessionEvent,
+    // Step 2 served whole.
+    ev.stepStart(4, 1, 2),
+    ev.assistant(5, 1, '答', 2),
+  ]
+}
+
+/** The interior the page withheld, as expandSteps returns it. */
+function withheldInterior(): SessionEvent[] {
+  return [ev.assistant(100, 1, 'earlier', 1)]
+}
+
+function digest(overrides: Partial<StepDigest> = {}): StepDigest {
+  return {
+    turn: 1,
+    step: 1,
+    startSeq: 2,
+    endSeq: 3,
+    elided: 1,
+    steps: 1,
+    calls: 2,
+    files: 1,
+    added: 10,
+    removed: 3,
+    elapsedMs: 500,
+    inputTokens: 120,
+    outputTokens: 40,
+    ...overrides,
+  }
+}
+
+
+describe('step detail selection', () => {
+  it('asks for whole steps by default', async () => {
+    const { api, session } = makeSession()
+    api.onHistory = () => histResponse([])
+    await session.open()
+
+    expect(api.callsOf('session.history')[0]).toMatchObject({ stepDetail: 'full' })
+  })
+
+  it('asks for collapsed pages once seeded with that detail, spending the saving on more history', async () => {
+    const { api, session } = collapsedSession()
+    api.onHistory = () => histResponse([])
+    await session.open()
+
+    // A collapsed message is far cheaper to carry, so the page reaches
+    // further back instead of merely being smaller.
+    expect(api.callsOf('session.history')[0]).toMatchObject({
+      stepDetail: 'collapsed',
+      maxMessages: COLLAPSED_PAGE_MESSAGES,
+    })
+  })
+
+  it('keeps the full-detail page budget when steps are served whole', async () => {
+    const { api, session } = makeSession()
+    api.onHistory = () => histResponse([])
+    await session.open()
+
+    expect(api.callsOf('session.history')[0]).toMatchObject({
+      stepDetail: 'full',
+      maxMessages: PAGE_MESSAGES,
+    })
+  })
+
+  it('re-opens the window when the detail changes, so one window never mixes both', async () => {
+    const { api, session } = makeSession()
+    api.onHistory = () => histResponse([])
+    await session.open()
+    expect(api.callsOf('session.history')).toHaveLength(1)
+
+    await session.setStepDetail('collapsed')
+    const calls = api.callsOf('session.history')
+    expect(calls).toHaveLength(2)
+    expect(calls[1]).toMatchObject({ stepDetail: 'collapsed' })
+  })
+
+  it('does not re-open when the detail is unchanged', async () => {
+    const { api, session } = collapsedSession()
+    api.onHistory = () => histResponse([])
+    await session.open()
+
+    await session.setStepDetail('collapsed')
+    expect(api.callsOf('session.history')).toHaveLength(1)
+  })
+
+  it('records the detail without paging a never-opened session', async () => {
+    const { api, session } = makeSession()
+    await session.setStepDetail('full')
+    expect(api.callsOf('session.history')).toHaveLength(0)
+
+    api.onHistory = () => histResponse([])
+    await session.open()
+    expect(api.callsOf('session.history')[0]).toMatchObject({ stepDetail: 'full' })
+  })
+})
+
+describe('withheld-step digests', () => {
+  it('publishes the page\'s digests under the turn that owns them', async () => {
+    const { api, session } = collapsedSession()
+    api.onHistory = () => collapsedResponse(collapsedPage(), { digests: [digest()] })
+    await session.open()
+
+    const held = session.getSnapshot().stepDigests.get(1)
+    expect(held).toHaveLength(1)
+    expect(held?.[0]).toMatchObject({ step: 1, calls: 2, inputTokens: 120, elapsedMs: 500 })
+  })
+
+  it('carries no digests for a window that was served whole', async () => {
+    const { api, session } = collapsedSession()
+    api.onHistory = () => collapsedResponse(collapsedPage())
+    await session.open()
+
+    expect(session.getSnapshot().stepDigests.size).toBe(0)
+  })
+
+  it('keeps the window contiguous: a withheld step still contributes its boundaries', async () => {
+    const { api, session } = collapsedSession()
+    const page = collapsedPage()
+    api.onHistory = () => collapsedResponse(page, { digests: [digest()] })
+    await session.open()
+
+    // Both of the turn's steps are placed even though step 1's interior is
+    // absent, which is what keeps loadOlder's continuity assertion and the
+    // Definitions' step correlation working. The seq range has no hole.
+    const seqs = page.map(item => item.seq)
+    expect(seqs).toEqual([0, 1, 2, 3, 4, 5])
+    expect(page.filter(item => item.type === 'step/start')).toHaveLength(2)
+    expect(page.filter(item => item.type === 'step/end')).toHaveLength(1)
+  })
+
+  it('merges an older page\'s digests ahead of the ones already held', async () => {
+    const { api, session } = collapsedSession()
+    // The window opens at seq 10 so a genuine older page can precede it.
+    const tail = [ev.stepStart(10, 1, 5), ev.assistant(11, 1, '答', 5)]
+    api.onHistory = () => collapsedResponse(tail, { hasMore: true, digests: [digest({ step: 4, startSeq: 10 })] })
+    await session.open()
+
+    // A real older page: contiguous, ending exactly where the window begins.
+    const older = [ev.turnStart(8, 1), ev.user(9, '问')]
+    api.onHistory = () => collapsedResponse(older, { hasMore: false, digests: [digest({ step: 3, startSeq: 8 })] })
+    await session.loadOlder()
+
+    // The older page precedes the window, so its withheld steps sort first.
+    expect(session.getSnapshot().stepDigests.get(1)?.map(item => item.step)).toEqual([3, 4])
+  })
+
+  it('drops every digest when a resync rebuilds the window', async () => {
+    const { api, session } = collapsedSession()
+    api.onHistory = () => collapsedResponse(collapsedPage(), { digests: [digest()] })
+    await session.open()
+    expect(session.getSnapshot().stepDigests.size).toBe(1)
+
+    api.onHistory = () => collapsedResponse(collapsedPage())
+    await session.resync()
+    expect(session.getSnapshot().stepDigests.size).toBe(0)
+  })
+})
+
+describe('expandTurn', () => {
+  it('splices the withheld interior in by seq and clears the turn\'s digests', async () => {
+    const { api, session } = collapsedSession()
+    api.onHistory = () => collapsedResponse(collapsedPage(), { digests: [digest()] })
+    await session.open()
+
+    api.onExpandSteps = () => Promise.resolve(ok({ events: entries(withheldInterior()) as never[] }))
+    await session.expandTurn(1)
+
+    expect(session.getSnapshot().stepDigests.has(1)).toBe(false)
+    // The revealed step folds into the flow exactly as an uncollapsed page
+    // would have delivered it, ordered by seq beside the always-visible one.
+    expect(chatSeqs(session.getSnapshot())).toEqual([0, 1, 2, 3, 4, 5, 100])
+  })
+
+  it('leaves the window\'s ends alone, so paging state is untouched', async () => {
+    const { api, session } = collapsedSession()
+    api.onHistory = () => collapsedResponse(collapsedPage(), { hasMore: true, digests: [digest()] })
+    await session.open()
+
+    api.onExpandSteps = () => Promise.resolve(ok({ events: entries(withheldInterior()) as never[] }))
+    await session.expandTurn(1)
+
+    // hasMore is a property of the window's head, which expansion never moves.
+    expect(session.getSnapshot().hasMore).toBe(true)
+  })
+
+  it('reports the turn as expanding while the read-back is in flight', async () => {
+    const { api, session } = collapsedSession()
+    api.onHistory = () => collapsedResponse(collapsedPage(), { digests: [digest()] })
+    await session.open()
+
+    let release = (): void => {}
+    api.onExpandSteps = () => new Promise((resolve) => {
+      release = () => { resolve(ok({ events: entries(withheldInterior()) as never[] })) }
+    })
+    const pending = session.expandTurn(1)
+    expect(session.getSnapshot().expandingTurns.has(1)).toBe(true)
+
+    release()
+    await pending
+    expect(session.getSnapshot().expandingTurns.has(1)).toBe(false)
+  })
+
+  it('collapses concurrent gestures for the same turn onto one request', async () => {
+    const { api, session } = collapsedSession()
+    api.onHistory = () => collapsedResponse(collapsedPage(), { digests: [digest()] })
+    await session.open()
+
+    api.onExpandSteps = () => Promise.resolve(ok({ events: entries(withheldInterior()) as never[] }))
+    await Promise.all([session.expandTurn(1), session.expandTurn(1)])
+
+    expect(api.callsOf('session.expandSteps')).toHaveLength(1)
+  })
+
+  it('makes no request for a turn with nothing withheld', async () => {
+    const { api, session } = collapsedSession()
+    api.onHistory = () => collapsedResponse(collapsedPage())
+    await session.open()
+
+    await session.expandTurn(1)
+    expect(api.callsOf('session.expandSteps')).toHaveLength(0)
+  })
+
+  it('keeps the window and its digests intact when the read-back fails', async () => {
+    const { api, session } = collapsedSession()
+    api.onHistory = () => collapsedResponse(collapsedPage(), { digests: [digest()] })
+    await session.open()
+    const before = session.getSnapshot().nodes.length
+
+    api.onExpandSteps = () => Promise.reject(new Error('socket died'))
+    await session.expandTurn(1)
+
+    const snapshot = session.getSnapshot()
+    expect(snapshot.nodes).toHaveLength(before)
+    // The row still reports withheld work, so the reader can retry.
+    expect(snapshot.stepDigests.has(1)).toBe(true)
+    expect(snapshot.expandingTurns.has(1)).toBe(false)
+  })
+
+  it('prefers an event the window already holds over the read-back copy', async () => {
+    const { api, session } = collapsedSession()
+    api.onHistory = () => collapsedResponse(collapsedPage(), { digests: [digest()] })
+    await session.open()
+
+    // The live path may have appended a seq the expansion also carries; the
+    // resident copy wins so no row is duplicated.
+    api.onExpandSteps = () => Promise.resolve(ok({
+      events: entries([ev.assistant(5, 1, 'stale duplicate', 2), ...withheldInterior()]) as never[],
+    }))
+    await session.expandTurn(1)
+
+    // Seq 5 appears once: the resident copy wins, so no row is duplicated.
+    expect(chatSeqs(session.getSnapshot())).toEqual([0, 1, 2, 3, 4, 5, 100])
   })
 })

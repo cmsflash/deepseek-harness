@@ -9,7 +9,7 @@
  */
 import type { Context } from '@deepseek-ai/cordis'
 import type {
-  RpcResult, SessionId, SubagentAddress,
+  HistoryStepDetail, RpcResult, SessionId, SubagentAddress,
 } from '@deepseek-ai/dsh-api-remotes/client'
 import type { HostObservable, SessionMaybeProvideInfo } from '@deepseek-ai/dsh-client-ui-slots'
 import type { AgentContext } from '../agents/scope.ts'
@@ -71,6 +71,16 @@ export interface ISessions {
    * @param agentPreset - the preset id the host confirmed.
    */
   noteAgentPreset(sessionId: SessionId, agentPreset: string): void
+  /**
+   * Choose how much of each step every session's history pages carry.
+   *
+   * Deployment-wide rather than per session: it follows one reading
+   * preference, and a session opened later pages the same way as one already
+   * open. A change re-opens the windows that are already loaded.
+   * @param detail - whole steps, or boundaries plus digests for elidable ones.
+   * @returns completion of the rebuilds a change triggers.
+   */
+  setStepDetail(detail: HistoryStepDetail): Promise<void>
   /** Clear the current selection into the no-session view state. */
   clear(): void
   /**

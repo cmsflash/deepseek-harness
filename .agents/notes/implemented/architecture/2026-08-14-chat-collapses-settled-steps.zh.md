@@ -18,7 +18,7 @@ Status: implemented
 
 该行为放在 Chat 视图内部，而非第二个视图。一个 keyed slot 只能由恰好一个 entry 渲染：`renderSlot` 的授权检查渲染方 entry 上的 `entry.children?.[key]`，不会向上遍历祖先；而对已声明 key 的二次声明会在加载时抛错。`conversation.chat.node` 由 chat 视图 entry 声明，并由 `ui-tool`、`ui-goal`、`ui-workflow-run` 填充，因此任何同级视图都无法分派这些 renderer。放在这里可让展开后的分组在构造上与未折叠的转录完全一致，并且对插件日后并入 `ChatNodeDataMap` 的 renderer 种类继续有效。
 
-`collapseSettledSteps` 偏好在持久化的 `ui-conversation` 设置段中默认**关闭**，因此在阅读者启用之前，组装后的转录毫无变化。`ComposerSubmissionPolicy` 本就持有该设置段的 scope 与采纳订阅，因此该偏好搭它的车，而不是另开一个订阅。
+`collapseSettledSteps` 偏好位于持久化的 `ui-conversation` 设置段中，并默认**开启**；它同时选择历史取数策略（[决策](2026-09-01-collapsed-step-digest-paging.zh.md)）。`ComposerSubmissionPolicy` 本就持有该设置段的 scope 与采纳订阅，因此该偏好搭它的车，而不是另开一个订阅。
 
 该行在一处开放：`conversation.chat.collapsedMetric` 是一个 list slot，其条目渲染在所有内置指标之后。采用「贡献者置后」而非共享 `order` 空间，是因为该行拥有日后可能新增的指标，而共享空间会在新增时静默打乱外部贡献者的位置。owner 传入被隐藏的节点键，因此贡献的指标折叠的正是内置指标所折叠的那一批；若贡献者读取整个 turn，就会把仍然可见的最后一个 step 计入，从而在无声中宣称多于该行所汇总的内容。展开控件与指标条为同级，因此贡献的指标不会嵌套进 button。正是这一点让成本展示能够作为仓库外插件交付。
 
@@ -32,7 +32,7 @@ Status: implemented
 
 ## 影响
 
-- 默认输出不变：偏好关闭时，`ChatView` 与此前完全一样地映射快照顺序，因此既有 web 快照依然有效。
-- 折叠分组的数字以窗口为范围，因为已加载的历史窗口是分页的，且 compaction 会重写它。翻页载入更早的 step 会改变这些数字。
+- 偏好关闭时，`ChatView` 与此前完全一样地映射快照顺序。它现在默认开启，组装后的转录默认折叠（[决策](2026-09-01-collapsed-step-digest-paging.zh.md)）。
+- 折叠分组的数字来自 host 侧计算的按 step digest，它们描述整个 step，因此不会随阅读者翻页或展开而改变（[决策](2026-09-01-collapsed-step-digest-paging.zh.md)）。
 - 行数来自 write 与 edit 本就返回的已应用 `card:'diff'` 结果视图，并逐条校验，因为这些视图跨进程传输且只有 `card` 经过 schema 校验。由不发出 diff 卡片的工具所做的改动不计入行数。
 - 该行本身不展示成本。`TokenUsage.costUsd` 承载已计价调用的美元金额（[决策](2026-08-24-token-usage-carries-billed-cost.zh.md)），因此该指标可由贡献者经 `conversation.chat.collapsedMetric` 提供，而不在此处计算。

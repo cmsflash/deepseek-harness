@@ -136,6 +136,17 @@ export function apply(ctx: Context): void {
     ctx.settingsScope.bind<ConversationSettings>({ namespace: CONVERSATION_SETTINGS_NAMESPACE }),
   )
 
+  // The collapse preference decides what the transcript SHOWS and therefore
+  // what its pages need to carry: a collapsing reader never looks at the
+  // elided steps, so the sessions domain stops fetching them and reads them
+  // back per turn on expansion. Following the live preference rather than
+  // reading it once also covers the durable value arriving after boot.
+  const followStepDetail = (): void => {
+    void sessions.setStepDetail(submissionPolicy.collapseSteps.getSnapshot() ? 'collapsed' : 'full')
+  }
+  ctx.effect(() => submissionPolicy.collapseSteps.subscribe(followStepDetail), 'ui-conversation: step detail')
+  followStepDetail()
+
   ctx.slots.inject('settings.general.item', () => ctx.slots.register({
     name: 'settings.general.item',
     id: 'composer-enter',
@@ -418,6 +429,7 @@ export function apply(ctx: Context): void {
           return workspaces.openPath(resolveWorkspacePath(cwd, path))
         },
         loadOlder: () => { void scoped.loadOlder() },
+        expandTurn: turn => scoped.expandTurn(turn),
         loadImage: attachment => conversation.resolveImage(sessionId, attachment),
         // Unregistered 'trajectory' id is safe: the tab ring falls back to
         // the first view, and the untouched inspect target stays inert.

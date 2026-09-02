@@ -827,6 +827,13 @@ export interface ChatViewInjected {
    */
   openFile: (path: string) => Promise<void>
   loadOlder: () => void
+  /**
+   * Load the steps a collapsed history page withheld from one turn.
+   *
+   * Only a row reporting withheld steps needs it; a turn whose steps are
+   * already loaded expands without any request.
+   */
+  expandTurn: (turn: number) => Promise<void>
   /** Resolve a session-authorized historical image for inline display. */
   loadImage: (attachment: ImageAttachmentRef) => Promise<string>
   /** Hand a call off to the trajectory view: write the one-shot inspect target and switch tabs. */

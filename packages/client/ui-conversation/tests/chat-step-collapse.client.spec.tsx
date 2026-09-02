@@ -47,6 +47,8 @@ function snapshot(nodes: readonly ChatConversationViewNode[]): ConversationSnaps
   return {
     chat, queue: [], running: false, openState: 'open', openError: null,
     hasMore: false, loadingOlder: false,
+    stepDigests: new Map(), stepAccounts: new Map(),
+    expandingTurns: new Set(),
   } as unknown as ConversationSnapshot
 }
 

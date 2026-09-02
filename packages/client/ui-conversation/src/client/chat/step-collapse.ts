@@ -10,8 +10,16 @@
 // engine state and no per-node subscription.
 
 import type {
-  ChatConversationViewNode, ChatNodeStore, ConversationLocation,
+  ChatConversationViewNode, ChatNodeStore, ConversationLocation, StepDigest, StepDigestsByTurn,
 } from '@deepseek-ai/dsh-client-runtime/client'
+
+/** A window whose pages carried every step serves no digests. */
+const EMPTY_DIGESTS: StepDigestsByTurn = new Map()
+
+/** Identity of one step within its turn. */
+function stepKey(turn: number, step: number): string {
+  return `${String(turn)}:${String(step)}`
+}
 
 /** Metrics summarizing the settled steps hidden behind one summary row. */
 export interface CollapsedStepMetrics {
@@ -40,6 +48,14 @@ export type ChatFlowRow =
     /** Hidden node keys, in render order, revealed on expand. */
     readonly keys: readonly string[]
     readonly metrics: CollapsedStepMetrics
+    /**
+     * Whether this turn still holds steps the window never loaded.
+     *
+     * A collapsed history page withholds those steps' events, so expanding
+     * reads them back before the rows can render. A row without withheld
+     * steps expands from material already in the window.
+     */
+    readonly withheld: boolean
   }
 
 function coordinates(location: ConversationLocation): { turn?: number; step?: number } {
@@ -191,18 +207,33 @@ function foldNode(node: ChatConversationViewNode, metrics: CollapsedStepMetrics,
  * turn whose collapsible rows all belong to its last step produces no marker.
  * An expanded turn contributes its hidden keys as ordinary rows, so expansion
  * renders through the same seat as everything else.
+ * A collapsed history page serves a step's boundaries and withholds its
+ * interior, so `accounts` — the host's per-step figures — is what the row
+ * reports. Those figures describe the whole step, so they stay correct after
+ * expansion loads it, and the row reads identically open or closed. A step an
+ * account covers is skipped when folding loaded nodes, so the two sources
+ * never count the same work twice.
  * @param order - the snapshot's visible node keys, in render order.
  * @param store - live node reader for those keys.
  * @param expanded - turns the reader has expanded.
+ * @param digests - per-turn digests of steps still withheld (drives the fetch-on-open marker).
+ * @param accounts - every per-step account received, expanded turns included; defaults to `digests`.
  * @returns the flow rows to render, in order.
  */
 export function collapseSettledSteps(
   order: readonly string[],
   store: ChatNodeStore,
   expanded: ReadonlySet<number>,
+  digests: StepDigestsByTurn = EMPTY_DIGESTS,
+  accounts: StepDigestsByTurn = digests,
 ): readonly ChatFlowRow[] {
-  // The last step of each turn stays visible: it is the turn's current work,
-  // and while streaming it is the live one.
+  // Steps an account already describes: their loaded nodes must not be folded
+  // a second time once expansion brings them into the window.
+  const accountedSteps = new Set<string>()
+  for (const [turn, entries] of accounts) {
+    for (const entry of entries) accountedSteps.add(stepKey(turn, entry.step))
+  }
+
   const lastStep = new Map<number, number>()
   for (const key of order) {
     const node = store.get(key)
@@ -214,36 +245,115 @@ export function collapseSettledSteps(
     if (seen === undefined || step > seen) lastStep.set(turn, step)
   }
 
+  // Where each turn's marker opens: its first assistant or tool row.
+  //
+  // Resolved over the whole order before any row is emitted, because the set
+  // of rows the marker would otherwise latch onto changes as the reader
+  // expands and folds. Anchoring on kind — rather than on the first row
+  // carrying a step coordinate — is also what keeps the marker below the
+  // prompting message and any context injection: the engine assigns a step
+  // Location by log position, so those carry one too.
+  //
+  // Only a turn that actually hides something gets an anchor: one whose
+  // collapsible rows all belong to its last step, and which withheld nothing,
+  // renders as an ordinary transcript.
+  const anchors = new Map<number, string>()
+  for (const key of order) {
+    const node = store.get(key)
+    if (node === undefined || !COLLAPSIBLE_KINDS.has(node.kind)) continue
+    const { turn, step } = coordinates(node.location)
+    if (turn === undefined || step === undefined) continue
+    if (!accounts.has(turn) && step === lastStep.get(turn)) continue
+    if (anchors.has(turn)) continue
+    anchors.set(turn, key)
+  }
+  // The last step of each turn stays visible: it is the turn's current work,
+  // and while streaming it is the live one.
+
   const rows: ChatFlowRow[] = []
   // One open marker per turn, so a turn's hidden steps collapse into a single
   // row even when later-turn rows interleave.
   const markers = new Map<number, { keys: string[]; metrics: CollapsedStepMetrics; paths: Set<string> }>()
+  const openMarker = (turn: number): { keys: string[]; metrics: CollapsedStepMetrics; paths: Set<string> } => {
+    let marker = markers.get(turn)
+    if (marker === undefined) {
+      // The marker is emitted for an expanded turn too: it carries the same
+      // metrics and doubles as the control that folds the group back. Its
+      // figures come from the turn's own account, which stays whole whether or
+      // not the withheld steps have since been loaded.
+      marker = {
+        keys: [],
+        metrics: foldDigests(accounts.get(turn)),
+        paths: new Set(),
+      }
+      markers.set(turn, marker)
+      rows.push({
+        kind: 'collapsed',
+        turn,
+        keys: marker.keys,
+        metrics: marker.metrics,
+        withheld: digests.has(turn),
+      })
+    }
+    return marker
+  }
   for (const key of order) {
     const node = store.get(key)
     if (node === undefined) continue
     const { turn, step } = coordinates(node.location)
+    // The marker opens at the turn's own anchor, decided before this pass, so
+    // expanding a turn cannot move its summary row.
+    if (turn !== undefined && anchors.get(turn) === key) openMarker(turn)
     const collapsible = COLLAPSIBLE_KINDS.has(node.kind)
       && turn !== undefined && step !== undefined && step !== lastStep.get(turn)
     if (!collapsible) {
       rows.push({ kind: 'node', key })
       continue
     }
-    // The marker is emitted for an expanded turn too: it carries the same
-    // metrics and doubles as the control that folds the group back.
-    let marker = markers.get(turn)
-    if (marker === undefined) {
-      marker = {
-        keys: [],
-        metrics: { steps: 0, calls: 0, files: 0, added: 0, removed: 0, elapsedMs: 0, inputTokens: 0, outputTokens: 0 },
-        paths: new Set(),
-      }
-      markers.set(turn, marker)
-      rows.push({ kind: 'collapsed', turn, keys: marker.keys, metrics: marker.metrics })
-    }
+    const marker = openMarker(turn)
     marker.keys.push(key)
-    foldNode(node, marker.metrics, marker.paths)
+    // A step described by an account is already counted there; folding its
+    // loaded nodes too would double it once expansion materializes them.
+    if (!accountedSteps.has(stepKey(turn, step as number))) {
+      foldNode(node, marker.metrics, marker.paths)
+    }
     if (expanded.has(turn)) rows.push({ kind: 'node', key })
   }
-  for (const [, marker] of markers) marker.metrics.files = marker.paths.size
+  for (const [turn, marker] of markers) {
+    // Accounted steps report their file count as a total rather than as paths,
+    // so the two sources add without overlapping.
+    marker.metrics.files = marker.paths.size + digestFiles(accounts.get(turn))
+  }
   return rows
+}
+
+/** Digest-side file total, kept separate from the loaded rows' path set. */
+function digestFiles(digests: readonly StepDigest[] | undefined): number {
+  let files = 0
+  for (const digest of digests ?? []) files += digest.files
+  return files
+}
+
+/**
+ * Seed a marker's metrics from the steps the window withheld.
+ *
+ * The host computed each digest over its whole step, so these figures do not
+ * depend on where the page boundary fell; the loaded rows then add to them.
+ * @param digests - withheld steps of one turn, or undefined when none.
+ * @returns metrics carrying the withheld work.
+ */
+function foldDigests(digests: readonly StepDigest[] | undefined): CollapsedStepMetrics {
+  const metrics: CollapsedStepMetrics = {
+    steps: 0, calls: 0, files: 0, added: 0, removed: 0, elapsedMs: 0, inputTokens: 0, outputTokens: 0,
+  }
+  for (const digest of digests ?? []) {
+    metrics.steps += digest.steps
+    metrics.calls += digest.calls
+    metrics.added += digest.added
+    metrics.removed += digest.removed
+    metrics.elapsedMs += digest.elapsedMs
+    metrics.inputTokens += digest.inputTokens
+    metrics.outputTokens += digest.outputTokens
+  }
+  return metrics
 }

@@ -13,6 +13,7 @@ import type { Wire } from './rpc.schema.ts'
 import type {
   HistoryEntry, ModelCatalogFailure, ModelCatalogModel, ModelProviderGroup, ModelReasoning,
   ModelReasoningEffort, ModelSelection, SessionListMetadata, SessionProjectionsBlock, SessionSearchItem, SessionSummary,
+  StepDigest,
 } from './sessions.ts'
 import type { ToolEventView } from './events.ts'
 import type { AttachmentIdType, ImageAttachmentLimits, ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
@@ -143,7 +144,15 @@ export const sessionHistoryRequestSchema = z.object({
   sessionId: sessionIdSchema,
   beforeSeq: z.number().int().nonnegative().optional(),
   maxMessages: z.number().int().positive().optional(),
+  stepDetail: z.union([z.literal('full'), z.literal('collapsed')]).optional(),
 }) satisfies z.ZodType<Wire<RequestPayload<'session.history'>>>
+
+/** session.expandSteps request payload (the turn whose elided steps to read back). */
+export const sessionExpandStepsRequestSchema = z.object({
+  sessionId: sessionIdSchema,
+  turn: z.number().int().nonnegative(),
+  fromSeq: z.number().int().nonnegative().optional(),
+}) satisfies z.ZodType<Wire<RequestPayload<'session.expandSteps'>>>
 
 /** Complete provider/model selection. */
 export const modelSelectionSchema = z.object({
@@ -235,11 +244,34 @@ export const imageLimitsProjectionSchema = z.object({
   mediaTypes: z.array(z.string()),
 }) as unknown as z.ZodType<ImageAttachmentLimits>
 
-/** session.history response value (projections rides the tail page only). */
+/** One elided step's host-computed summary (see StepDigest). */
+export const stepDigestSchema = z.object({
+  turn: z.number().int().nonnegative(),
+  step: z.number().int().nonnegative(),
+  startSeq: z.number().int().nonnegative(),
+  endSeq: z.number().int().nonnegative().optional(),
+  elided: z.number().int().nonnegative(),
+  steps: z.number().int().nonnegative(),
+  calls: z.number().int().nonnegative(),
+  files: z.number().int().nonnegative(),
+  added: z.number().int().nonnegative(),
+  removed: z.number().int().nonnegative(),
+  elapsedMs: z.number().nonnegative(),
+  inputTokens: z.number().nonnegative(),
+  outputTokens: z.number().nonnegative(),
+}) satisfies z.ZodType<Wire<StepDigest>>
+
+/** session.history response value (projections rides the tail page only; digests only under collapsed). */
 export const sessionHistoryValueSchema: z.ZodType<Wire<ResponseValue<'session.history'>>> = z.object({
   events: z.array(historyEntrySchema),
   hasMore: z.boolean(),
   projections: sessionProjectionsBlockSchema.optional(),
+  digests: z.array(stepDigestSchema).optional(),
+})
+
+/** session.expandSteps response value (the events one collapsed page withheld). */
+export const sessionExpandStepsValueSchema: z.ZodType<Wire<ResponseValue<'session.expandSteps'>>> = z.object({
+  events: z.array(historyEntrySchema),
 })
 
 /** session.models request payload. */

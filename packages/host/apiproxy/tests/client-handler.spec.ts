@@ -43,6 +43,7 @@ function scriptedApi(overrides: {
         hasMore: false,
         modelSelection: { provider: 'deepseek-official', model: 'deepseek-v4-flash' },
       }),
+      expandSteps: r => ok(r, { events: [] }),
       models: r => ok(r, {
         current: { provider: 'deepseek-official', model: 'deepseek-v4-flash' },
         routable: true,

@@ -38,11 +38,11 @@ export type {} from '@deepseek-ai/dsh-settings/types'
  */
 export type {
   ClientResponse, ConfigurableProviderView, ConnectionHandle, ConnectionSinks, ContentBlock,
-  CredentialView, DirectoryListing, DiscoveredModelView, HistoryEntry, HostFrame, IApiClient,
+  CredentialView, DirectoryListing, DiscoveredModelView, HistoryEntry, HistoryStepDetail, HostFrame, IApiClient,
   MessageId, ModelCatalogFailure, ModelProviderGroup, ModelReasoningEffort, ModelSelection,
   MuxFrame, PromptContentPart, QuestionResponsePayload, QueueAction, RpcError, RpcId, RpcReceipt,
   RpcRequest, RpcResponse, RpcResult, SessionId, SessionModels, SessionSearchItem,
-  SessionSummary, SettingsNamespaceView, SettingsPathOpView, SkillEntry, StreamChunk,
+  SessionSummary, SettingsNamespaceView, SettingsPathOpView, SkillEntry, StepDigest, StreamChunk,
   SubagentAddress, SubagentCatalog, JobView, ToolCallView, ToolEventView, ToolResultView,
   WorkspaceId, WorkspaceView,
 } from '@deepseek-ai/dsh-client-connection/client'

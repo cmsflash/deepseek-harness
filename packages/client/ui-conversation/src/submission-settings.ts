@@ -20,8 +20,15 @@ export const DEFAULT_BUSY_ENTER_BEHAVIOR: BusyEnterBehavior = 'queue'
 /** Field carrying whether settled steps collapse behind one per-turn summary. */
 export const COLLAPSE_SETTLED_STEPS_FIELD = 'collapseSettledSteps'
 
-/** Default keeps the full transcript: collapsing is opt-in. */
-export const DEFAULT_COLLAPSE_SETTLED_STEPS = false
+/**
+ * Default collapses settled steps.
+ *
+ * A turn's earlier steps are the bulk of a long transcript and rarely what a
+ * reader is looking for, and collapsing is also what lets history page by
+ * digest instead of by whole step — so the default reading mode both shows
+ * less noise and reaches much further back before paging.
+ */
+export const DEFAULT_COLLAPSE_SETTLED_STEPS = true
 
 /** Durable conversation section shared by the Host schema and the browser scope. */
 export interface ConversationSettings {

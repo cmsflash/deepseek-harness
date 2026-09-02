@@ -86,7 +86,9 @@ function snapshotWith(
     runningCalls: nestedRunningCalls,
     pending: [], queue: [], running: runningCalls.length > 0, composerPhase: 'active', removed: false,
     openState: 'open', openError: null,
-    hasMore: false, loadingOlder: false, promptError: null, blank: false, subagent: null, lastAgentError: null,
+    hasMore: false, loadingOlder: false,
+    stepDigests: new Map(), stepAccounts: new Map(),
+    expandingTurns: new Set(), promptError: null, blank: false, subagent: null, lastAgentError: null,
   }
 }
 
@@ -145,6 +147,7 @@ async function bench(snapshot: ConversationSnapshot) {
     },
     create: vi.fn(),
     open: vi.fn(),
+    setStepDetail: vi.fn(async () => {}),
   }
   ctx.provide('sessions', sessionsFake)
   const workspaces = {

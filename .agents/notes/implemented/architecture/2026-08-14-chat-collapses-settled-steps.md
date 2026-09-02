@@ -18,7 +18,7 @@ Expansion is per turn and all-or-nothing: the marker stays rendered when open an
 
 The behavior lives inside the Chat view rather than in a second view. A keyed slot is renderable by exactly one entry: `renderSlot` authorization reads `entry.children?.[key]` on the rendering entry with no ancestor walk, and a second declaration of an already-declared key throws at load. `conversation.chat.node` is declared by the chat view entry and filled by `ui-tool`, `ui-goal`, and `ui-workflow-run`, so no sibling view can dispatch those renderers. Building here makes an expanded group identical to an uncollapsed transcript by construction, and keeps working for renderer kinds that plugins merge into `ChatNodeDataMap` later.
 
-The `collapseSettledSteps` preference ships **off** in the durable `ui-conversation` settings section, so the assembled transcript is unchanged until a reader enables it. `ComposerSubmissionPolicy` already owns that section's scope and adoption subscription, so the preference rides it instead of opening a second subscription.
+The `collapseSettledSteps` preference lives in the durable `ui-conversation` settings section and ships **on**; it also selects the history fetch strategy ([decision](2026-09-01-collapsed-step-digest-paging.md)). `ComposerSubmissionPolicy` already owns that section's scope and adoption subscription, so the preference rides it instead of opening a second subscription.
 
 The row is open at one point: `conversation.chat.collapsedMetric` is a list slot whose entries render after every built-in figure. Contributed-last is the contract rather than a shared `order` space, because the row owns figures it may add later and a shared space would silently reshuffle out-of-tree contributors when it does. The owner passes the hidden node keys, so a contributed figure folds exactly the set the built-in figures fold; a contributor reading the whole turn would count the still-visible last step and silently claim more than the line summarizes. The disclosure control and the figure strip are siblings so a contributed figure is not nested inside a button. This is what lets a cost display ship as an out-of-tree plugin.
 
@@ -32,7 +32,7 @@ The row is open at one point: `conversation.chat.collapsedMetric` is a list slot
 
 ## Consequences
 
-- Default output is unchanged: with the preference off, `ChatView` maps the snapshot order exactly as before, so existing web snapshots stay valid.
-- A collapsed group's figures are window-scoped, because the loaded history window is paged and compaction rewrites it. Paging older steps in changes the numbers.
+- With the preference off, `ChatView` maps the snapshot order exactly as before. It now ships on, and the assembled transcript collapses by default ([decision](2026-09-01-collapsed-step-digest-paging.md)).
+- A collapsed group's figures come from host-computed per-step digests, which describe whole steps and so do not move as the reader pages or expands ([decision](2026-09-01-collapsed-step-digest-paging.md)).
 - Line counts come from the applied `card:'diff'` result views that write and edit already return, validated per entry because those views cross the wire with only `card` schema-checked. A mutation applied by a tool that emits no diff card contributes no lines.
 - The row shows no cost of its own. `TokenUsage.costUsd` carries a priced call's dollars ([decision](2026-08-24-token-usage-carries-billed-cost.md)), so the figure is available to a contributor through `conversation.chat.collapsedMetric` rather than being computed here.

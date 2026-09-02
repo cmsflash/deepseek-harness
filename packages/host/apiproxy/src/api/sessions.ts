@@ -71,6 +71,55 @@ export interface HistoryEntry {
 }
 
 /**
+ * How much of each step a history page carries.
+ *
+ * `full` serves every event. `collapsed` serves a turn's *elidable* steps as
+ * their `step/start` / `step/end` boundaries plus one {@link StepDigest},
+ * withholding the interior until {@link SessionsApi.expandSteps} asks for it.
+ * A step is elidable only when the reader would not be looking at it: the
+ * turn's highest step and the step carrying the turn's closing assistant text
+ * are always served whole, as is every event with no step coordinate.
+ *
+ * Boundaries are never elided, so the page stays one contiguous seq range and
+ * a client's window remains gap-free; only the interior of an elided step is
+ * absent, which that step's digest accounts for.
+ */
+export type HistoryStepDetail = 'full' | 'collapsed'
+
+/**
+ * What one elided step did, computed over the whole step rather than the
+ * loaded window.
+ *
+ * The client renders its collapsed summary row from these figures instead of
+ * folding the events it no longer has, so the row reports the step's real
+ * cost even before expansion — and stays correct regardless of where the
+ * page boundary fell.
+ */
+export interface StepDigest {
+  turn: number
+  step: number
+  /** Seq of the step's `step/start`; the client's expansion address. */
+  startSeq: number
+  /** Seq of the step's `step/end`, absent for a step whose end is unlogged. */
+  endSeq?: number
+  /** Elided events withheld from this page, the exact count a later expansion returns. */
+  elided: number
+  /** Settled model calls in this step: 1, or 0 when the step logged no assistant message. */
+  steps: number
+  /** Settled tool calls, counting nested subcalls. */
+  calls: number
+  /** Distinct file paths this step's applied diff cards touched. */
+  files: number
+  added: number
+  removed: number
+  /** `step/start` to final `assistant/message` wall time; 0 when either boundary is unrecorded. */
+  elapsedMs: number
+  /** Billed prompt-side tokens: uncached input plus cache reads and writes. */
+  inputTokens: number
+  outputTokens: number
+}
+
+/**
  * The projection baseline riding the history tail page: one synchronous cut
  * over every registered projection unit, read from the registry's watermark
  * cache. `asOfSeq` is the seq of the last committed event every value
@@ -282,9 +331,44 @@ export interface SessionsApi {
    * A deployment without the registry serves histories without the block.
    * Reading history uses an attached Session or persistence inspection and
    * never resumes or publishes an Agent.
+   *
+   * `stepDetail: 'collapsed'` elides the interior of the steps a collapsing
+   * reader is not looking at and describes each through `digests` (see
+   * {@link HistoryStepDetail}). `maxMessages` still counts whole messages, so
+   * a collapsed page spans far more turns for the same count; the client asks
+   * for it only while its collapse preference is on, and recovers the interior
+   * through {@link SessionsApi.expandSteps}.
    */
-  history(request: RpcRequest<{ sessionId: SessionId; beforeSeq?: number; maxMessages?: number }>):
-  Promise<RpcResponse<{ events: HistoryEntry[]; hasMore: boolean; projections?: SessionProjectionsBlock }>>
+  history(request: RpcRequest<{
+    sessionId: SessionId
+    beforeSeq?: number
+    maxMessages?: number
+    stepDetail?: HistoryStepDetail
+  }>):
+  Promise<RpcResponse<{
+    events: HistoryEntry[]
+    hasMore: boolean
+    projections?: SessionProjectionsBlock
+    /** One entry per elided step, ascending by `startSeq`; absent under `full`. */
+    digests?: StepDigest[]
+  }>>
+
+  /**
+   * Reads back the events one collapsed page elided from a single turn.
+   *
+   * The turn is the expansion unit because that is the unit the reader opens.
+   * Entries are the same `HistoryEntry` rows `history` would have served, so
+   * the client splices them into the step interiors it left empty and the
+   * result is indistinguishable from an uncollapsed window. Steps already
+   * served whole contribute nothing.
+   *
+   * Reads use an attached Session or persistence inspection and never resume
+   * or publish an Agent. A turn absent from the log returns no entries rather
+   * than failing: the window it was requested for may have been rewritten by
+   * a compaction between the page and the click.
+   */
+  expandSteps(request: RpcRequest<{ sessionId: SessionId; turn: number; fromSeq?: number }>):
+  Promise<RpcResponse<{ events: HistoryEntry[] }>>
 
   /**
    * Reads a fresh advisory model directory for an ordinary session. Provider

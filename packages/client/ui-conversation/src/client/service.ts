@@ -57,6 +57,12 @@ export interface IConversation {
    * @returns completion of the page pull.
    */
   loadOlder(): Promise<void>
+  /**
+   * Load the steps a collapsed history page withheld from one turn.
+   * @param turn - the turn the reader expanded.
+   * @returns completion of the read-back.
+   */
+  expandTurn(turn: number): Promise<void>
 }
 
 /** Create one browser-only draft descriptor; only its id enters input state. */
@@ -305,6 +311,15 @@ export class ConversationController extends Service implements IConversation {
   /** Pull one older history page for the scoped Session. */
   async loadOlder(): Promise<void> {
     await this.scopedSession('loadOlder').loadOlder()
+  }
+
+  /**
+   * Load the steps a collapsed history page withheld from one turn.
+   * @param turn - the turn the reader expanded.
+   * @returns completion of the read-back.
+   */
+  async expandTurn(turn: number): Promise<void> {
+    await this.scopedSession('expandTurn').expandTurn(turn)
   }
 
   /** Resolve the caller scope's session face or throw on root contexts. */

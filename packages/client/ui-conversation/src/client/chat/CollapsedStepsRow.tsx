@@ -13,6 +13,8 @@ export interface CollapsedStepsRowProps {
   keys: readonly string[]
   metrics: CollapsedStepMetrics
   expanded: boolean
+  /** Whether this turn's withheld steps are being read back right now. */
+  loading: boolean
   onToggle: () => void
   /** Contributed figures, rendered after every built-in one. */
   renderSlot: ChatViewSlotProps['renderSlot']
@@ -30,7 +32,7 @@ export interface CollapsedStepsRowProps {
  * inside a button.
  */
 export const CollapsedStepsRow = memo(function CollapsedStepsRow({
-  turn, keys, metrics, expanded, onToggle, renderSlot, t,
+  turn, keys, metrics, expanded, loading, onToggle, renderSlot, t,
 }: CollapsedStepsRowProps) {
   const parts: ReactNode[] = []
   if (metrics.elapsedMs > 0) {
@@ -86,6 +88,12 @@ export const CollapsedStepsRow = memo(function CollapsedStepsRow({
               {part}
             </Fragment>
           ))}
+          {loading && (
+            <>
+              {parts.length > 0 && <span className={css.sep} aria-hidden>·</span>}
+              <span className={css.metric} role="status">{t('loading')}</span>
+            </>
+          )}
         </span>
       </button>
       {/* Contributed figures follow every built-in one, so a plugin never has

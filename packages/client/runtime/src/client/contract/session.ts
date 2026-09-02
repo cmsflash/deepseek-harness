@@ -9,7 +9,7 @@
  */
 import type { AttachmentIdType, ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import type {
-  MessageId, PromptContentPart, QueueAction, RpcResult, SessionId,
+  HistoryStepDetail, MessageId, PromptContentPart, QueueAction, RpcResult, SessionId,
 } from '@deepseek-ai/dsh-api-remotes/client'
 import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
 import type { ConversationSnapshot } from '../sessions/conversation.ts'
@@ -76,6 +76,18 @@ export interface ISession {
    * @returns completion; failures land in snapshot.openState/loadingOlder.
    */
   loadOlder(): Promise<void>
+  /**
+   * Load the steps a collapsed history page withheld from one turn.
+   * @param turn - the turn the reader expanded.
+   * @returns completion; a turn with nothing withheld returns without a request.
+   */
+  expandTurn(turn: number): Promise<void>
+  /**
+   * Choose how much of each step this session's history pages carry.
+   * @param detail - whole steps, or boundaries plus digests for elidable ones.
+   * @returns completion of the window rebuild a change triggers.
+   */
+  setStepDetail(detail: HistoryStepDetail): Promise<void>
   /**
    * Execute one slash-command line against this session's agent — pure
    * admission semantics (the host executor durably logs the lifecycle).

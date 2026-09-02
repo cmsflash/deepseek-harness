@@ -37,6 +37,7 @@ import type {
   ToolCallView, ToolEventView, ToolResultView, WorkspaceId, WorkspaceView,
 } from './api.ts'
 import type { RequestPayload, ResponseValue, RpcMethodMap } from '@deepseek-ai/dsh-host-apiproxy/api'
+import { collapseSteps, elidedEventsOfTurn } from '@deepseek-ai/dsh-host-apiproxy/api/step-collapse'
 import { AbstractApiClient, RpcId, SESSION_SEARCH_RESULT_LIMIT } from './api.ts'
 import { randomUuid } from './random-uuid.ts'
 import type { ClientConnectionRpc } from '../rpc.ts'
@@ -2448,7 +2449,20 @@ function createFixtureWorld(options: FixtureOptions): FixtureWorld {
       history: async (request) => {
         const log = logs.get(request.payload.sessionId) ?? []
         // Snapshot at request time, deliver after the transit delay (mirrors a real host under latency).
-        const page = pageOf(log, request.payload.beforeSeq, request.payload.maxMessages ?? 50)
+        const full = pageOf(log, request.payload.beforeSeq, request.payload.maxMessages ?? 50)
+        // The host's own elision over the same whole-log scope, so a
+        // fixture-driven client exercises the collapsed wire rather than a
+        // simplified stand-in.
+        const collapsed = request.payload.stepDetail === 'collapsed'
+          ? collapseSteps(full.events, log)
+          : undefined
+        const page = collapsed === undefined
+          ? full
+          : {
+            events: collapsed.rows,
+            hasMore: full.hasMore,
+            ...collapsed.digests.length === 0 ? {} : { digests: collapsed.digests },
+          }
         // Tail page carries the projections block (host parallel: one consistent
         // cut over the registered units; asOfSeq = window tail seq, -1 on an
         // empty log — the host's session.seq-1 convention).
@@ -2461,6 +2475,15 @@ function createFixtureWorld(options: FixtureOptions): FixtureWorld {
         if (delay > 0) await new Promise(resolve => setTimeout(resolve, delay))
         if (doomed) throw new Error('fixture: simulated history transport failure')
         return ok(request, { ...page, ...projections === undefined ? {} : { projections } })
+      },
+      expandSteps: (request) => {
+        const log = logs.get(request.payload.sessionId) ?? []
+        return ok(request, {
+          events: elidedEventsOfTurn(log, request.payload.turn, request.payload.fromSeq).map((event): HistoryEntry => {
+            const view = viewFor(event, log)
+            return view === undefined ? { event } : { event, view }
+          }),
+        })
       },
       models: request => ok(request, {
         current: modelSelections.get(request.payload.sessionId)
@@ -3179,6 +3202,7 @@ export class FixtureApiClient extends AbstractApiClient {
       case 'session.search': return this.api.sessions.search(request, signal)
       case 'session.create': return this.api.sessions.create(request)
       case 'session.history': return this.api.sessions.history(request)
+      case 'session.expandSteps': return this.api.sessions.expandSteps(request)
       case 'session.models': return this.api.sessions.models(request)
       case 'session.selectModel': return this.api.sessions.selectModel(request)
       case 'session.rename': return this.api.sessions.rename(request)

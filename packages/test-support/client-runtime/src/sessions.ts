@@ -3,6 +3,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { AttachmentIdType } from '@deepseek-ai/dsh-attachment'
 import { createScope, scopeOf, SessionProvideChannel } from '@deepseek-ai/dsh-client-runtime/client'
 import { createSnapshotStore } from '@deepseek-ai/dsh-client-runtime/client'
+import type { HistoryStepDetail } from '@deepseek-ai/dsh-api-remotes/client'
 import type {
   AgentContext, ConversationSnapshot, ISessions, ObservableSnapshot, ProjectionsFace, SessionFace, SessionId,
   SessionListState, SessionProvideDescriptor, SessionSearchResultItem, SessionSummary, SnapshotStore,
@@ -137,6 +138,22 @@ export class FixtureSession implements SessionFace {
   rename(): never {
     throw new Error(`test session "${this.sessionId}": rename is not stubbed — supply it on the fixture's session face`)
   }
+
+  /**
+   * Fail-loud stub; supply `expandTurn` on the fixture's session face to exercise it.
+   * @returns never — always throws.
+   */
+  expandTurn(): never {
+    throw new Error(`test session "${this.sessionId}": expandTurn is not stubbed — supply it on the fixture's session face`)
+  }
+
+  /**
+   * Fail-loud stub; supply `setStepDetail` on the fixture's session face to exercise it.
+   * @returns never — always throws.
+   */
+  setStepDetail(): never {
+    throw new Error(`test session "${this.sessionId}": setStepDetail is not stubbed — supply it on the fixture's session face`)
+  }
 }
 
 /** One live test session: fixture-derived stores plus its minted scope state. */
@@ -185,7 +202,7 @@ export class TestSessions implements ISessions {
   /** Calls observed on the service-level face, newest last. */
   readonly calls: {
     method: 'open' | 'openSubagent' | 'setSubagentCatalogOpen' | 'refreshSubagents'
-      | 'clear' | 'search' | 'fork'
+      | 'clear' | 'search' | 'fork' | 'setStepDetail'
     args: unknown[]
   }[] = []
 
@@ -446,6 +463,17 @@ export class TestSessions implements ISessions {
       const summary = draft.byId[sessionId]
       if (summary !== undefined) draft.byId[sessionId] = { ...summary, agentPreset }
     })
+  }
+
+  /**
+   * Record the deployment-wide step detail without re-opening any window: the
+   * double serves fixture snapshots rather than paging a Host.
+   * @param detail - the requested step detail.
+   * @returns immediate completion.
+   */
+  setStepDetail(detail: HistoryStepDetail): Promise<void> {
+    this.calls.push({ method: 'setStepDetail', args: [detail] })
+    return Promise.resolve()
   }
 
   /** Clear the current selection (recorded; the production no-session flow). */

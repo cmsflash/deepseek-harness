@@ -12,7 +12,9 @@
 
 折叠行是一个开放组件：`conversation.chat.collapsedMetric` 是会话作用域的 list slot，其条目渲染在该行自身计算的所有指标之后。「内置优先」是排序契约，因此贡献者无需为该行日后可能新增的指标预留 `order` 区段；owner 传入折叠分组的 turn、它所隐藏的节点键，以及已折叠的 step 与调用计数，因此贡献者折叠的正是内置指标所折叠的那一批。若改为读取整个 turn，就会把仍然可见的最后一个 step 计入，而该行上的其它指标都不包含它。展开控件与各项指标为同级元素，因此贡献的指标可携带交互内容而不会嵌套进 button。
 
-已结束的 step 可以选择性折叠。一个 turn 是一轮用户提问，其中每个 step 是一次模型调用，因此长 turn 的阅读成本来自中间 step 而非最终答案。启用 `collapseSettledSteps` 后，每个 turn 只渲染其最高 step——流式期间即为进行中的那个——并把更早的 step 折叠成一行，报告它们产生的 step 数、工具调用数、增删行数与文件数。展开该行会通过同一个 keyed node seat 就地恢复被隐藏的行，因此展开后的分组与未折叠的转录渲染完全一致；展开以 turn 为单位、全有或全无、由阅读者掌握，并且刻意不做持久化。该偏好默认关闭；不携带 step 坐标的行——发起消息、turn 尾部——永不折叠。
+已结束的 step 默认折叠。一个 turn 是一轮用户提问，其中每个 step 是一次模型调用，因此长 turn 的阅读成本来自中间 step 而非最终答案。启用 `collapseSettledSteps` 后，每个 turn 只渲染其最高 step——流式期间即为进行中的那个——并把更早的 step 折叠成一行，报告它们产生的 step 数、工具调用数、增删行数与文件数。展开该行会通过同一个 keyed node seat 就地恢复被隐藏的行，因此展开后的分组与未折叠的转录渲染完全一致；展开以 turn 为单位、全有或全无、由阅读者掌握，并且刻意不做持久化。不携带 step 坐标的行——发起消息、turn 尾部——永不折叠；该行锚定在这个 turn 的首个 assistant 或工具行上，因此它渲染在发起该 turn 的消息之下，并在阅读者展开它时保持原位。
+
+该偏好同时决定历史如何拉取。开启期间，分页请求 `stepDetail: 'collapsed'`：Host 提供折叠 step 的边界外加一个 `StepDigest`，并扣下其内部内容，直到 `session.expandSteps` 回读该 turn。该行的指标来自这些 digest，而 digest 描述的是完整 step，因此它们既不取决于分页边界落在何处，也不会因阅读者展开而改变（[决策](../../../.agents/notes/implemented/architecture/2026-09-01-collapsed-step-digest-paging.zh.md)）。
 
 视图环是一个 slot：严格会话主体注册在 `children` 表中声明会话作用域的 `'conversation.view'` 列表，并通过自身的 renderSlot share 渲染活跃配置项（`only: <active id>`）；视图标签页则从注册选项（`id`／`order`／`label`）投影而来。聊天视图是该包自身的配置项；ui-trajectory 等插件通过 `ctx.slots.register` 贡献标签页，每个视图负责自己的 chrome。
 

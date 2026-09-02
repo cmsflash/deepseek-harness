@@ -14,6 +14,7 @@ import type { TodoItem } from '@deepseek-ai/dsh-session/types'
 import type {
   RpcError, SessionId, SubagentAddress, ToolCallView, ToolResultView,
 } from '@deepseek-ai/dsh-api-remotes/client'
+import type { StepDigestsByTurn } from './session.ts'
 import type { PendingInteraction } from './pending.ts'
 import type { ContextProvenanceView, KnownContextForm } from './context-provenance.ts'
 import type {
@@ -465,6 +466,28 @@ export interface ConversationSnapshot {
   openError: RpcError | null
   hasMore: boolean
   loadingOlder: boolean
+  /**
+   * Elided-step digests of the loaded window, by turn.
+   *
+   * A collapsed page withholds the interior of the steps a collapsing reader
+   * is not looking at, so this is the window's account of what it does not
+   * hold: each entry is one step's real cost, computed over the whole step by
+   * the host. A turn is absent once its steps are loaded, so presence is
+   * exactly "this turn still hides withheld work".
+   */
+  stepDigests: StepDigestsByTurn
+  /**
+   * Every step account this window has received, including turns already
+   * expanded.
+   *
+   * A digest describes one step's whole cost, so expansion changes which
+   * events are loaded but not what those steps cost. The summary row folds
+   * these instead of the loaded nodes, which keeps its figures identical
+   * before and after the reader opens it.
+   */
+  stepAccounts: StepDigestsByTurn
+  /** Turns whose expansion request is in flight. */
+  expandingTurns: ReadonlySet<number>
   promptError: PromptError | null
   /**
    * Whether this session still has an empty log (no user message yet).

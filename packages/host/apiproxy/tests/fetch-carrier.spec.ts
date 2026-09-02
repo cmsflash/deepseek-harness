@@ -56,6 +56,9 @@ function fakeApi(overrides: Partial<{ muxFrames: MuxFrame[]; hostFrames: HostFra
           result: { ok: false, error: { code: 'session-not-found', message: 'nope', details: { sessionId: request.payload.sessionId } } },
         }
       },
+      async expandSteps(request) {
+        return { rpcId: request.rpcId, result: { ok: true, value: { events: [] } } }
+      },
       async models(request) {
         return {
           rpcId: request.rpcId,

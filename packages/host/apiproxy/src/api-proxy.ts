@@ -37,12 +37,13 @@ import {
 import type { PresetBearingSession } from '@deepseek-ai/dsh-agent-presets'
 import type {} from '@deepseek-ai/dsh-tools'
 import type {
-  ApiProxy, ConfigurableProviderView, CredentialView, GoalRef, HistoryEntry, HostFrame,
+  ApiProxy, ConfigurableProviderView, CredentialView, GoalRef, HistoryEntry, HistoryStepDetail, HostFrame,
   ModelCatalogFailure, ModelProviderGroup,
   ModelReasoning, MuxFrame, PromptContentPart, QuestionResponsePayload, SessionListMetadata, SessionProjectionsBlock, SessionSearchItem,
-  QueuedInboxItem, SessionSummary, SettingsNamespaceView, SubagentAddress, JobView, ToolEventView,
+  QueuedInboxItem, SessionSummary, SettingsNamespaceView, StepDigest, SubagentAddress, JobView, ToolEventView,
   WorkspaceId, WorkspaceView,
 } from './api/index.ts'
+import { collapseSteps, elidedEventsOfTurn } from './api/step-collapse.ts'
 import {
   DEFAULT_SESSION_LOG_COMPRESSION_LEVEL,
   flushLiveSessionLog,
@@ -742,21 +743,37 @@ function backscanArgs(events: readonly SessionEvent[], callId: string): { name: 
   return undefined
 }
 
-/** Render one detached history page through the same presenter path as ordinary history. */
+/**
+ * Render one detached history page through the same presenter path as ordinary
+ * history.
+ *
+ * Under `stepDetail: 'collapsed'` the rendered rows pass through
+ * {@link collapseSteps}, which withholds the interior of the steps a
+ * collapsing reader is not looking at and returns one digest each. Views are
+ * computed BEFORE the elision so a digest's line counts come from the same
+ * render intents the expanded rows would carry, and the retention decision
+ * reads the whole `events` range rather than the page, so a turn split across
+ * pages keeps the same steps whole on both.
+ */
 function historyPage(
   ctx: Context,
   events: readonly SessionEvent[],
   beforeSeq: number | undefined,
   maxMessages: number | undefined,
   scope?: ScopeKey,
-): { events: HistoryEntry[]; hasMore: boolean } {
+  stepDetail: HistoryStepDetail = 'full',
+): { events: HistoryEntry[]; hasMore: boolean; digests?: StepDigest[] } {
   const page = paginate(events, beforeSeq, maxMessages ?? DEFAULT_MAX_MESSAGES)
+  const rendered = page.events.map((event): HistoryEntry => {
+    const view = viewFor(ctx, event, callId => backscanArgs(page.events, callId), scope)
+    return { event, ...view === undefined ? {} : { view } }
+  })
+  if (stepDetail === 'full') return { events: rendered, hasMore: page.hasMore }
+  const collapsed = collapseSteps(rendered, events)
   return {
-    events: page.events.map((event) => {
-      const view = viewFor(ctx, event, callId => backscanArgs(page.events, callId), scope)
-      return { event, ...view === undefined ? {} : { view } }
-    }),
+    events: collapsed.rows,
     hasMore: page.hasMore,
+    ...collapsed.digests.length === 0 ? {} : { digests: collapsed.digests },
   }
 }
 
@@ -2152,7 +2169,7 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
       },
 
       async history(request) {
-        const { sessionId, beforeSeq, maxMessages } = request.payload
+        const { sessionId, beforeSeq, maxMessages, stepDetail } = request.payload
         try {
           const source = await historySourceFor(sessionId)
           // Both awaits happen BEFORE the cut. Ensuring the recorded
@@ -2163,11 +2180,12 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
           // at N with a baseline folded to N+1.
           const scope = await presenterScopeFor(sessionId, sourceSession(source))
           const cut = historyCutOf(source, beforeSeq === undefined)
-          const page = historyPage(ctx, cut.events, beforeSeq, maxMessages, scope)
+          const page = historyPage(ctx, cut.events, beforeSeq, maxMessages, scope, stepDetail)
           return ok(request, {
             events: page.events,
             hasMore: page.hasMore,
             ...cut.projections === undefined ? {} : { projections: cut.projections },
+            ...page.digests === undefined ? {} : { digests: page.digests },
           })
         } catch (error: unknown) {
           if (error instanceof SessionNotFound) {
@@ -2176,6 +2194,35 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
           return err(request, {
             code: 'internal',
             message: `history unavailable for session "${sessionId}": ${String(error)}`,
+            details: {},
+          })
+        }
+      },
+
+      async expandSteps(request) {
+        const { sessionId, turn, fromSeq } = request.payload
+        try {
+          const source = await historySourceFor(sessionId)
+          const scope = await presenterScopeFor(sessionId, sourceSession(source))
+          const events = historyCutOf(source, false).events
+          const elided = elidedEventsOfTurn(events, turn, fromSeq)
+          return ok(request, {
+            events: elided.map((event): HistoryEntry => {
+              // Pairing scans the whole cut rather than the returned slice: a
+              // tool/result is elided while its tool/call may have been served
+              // whole, so a slice-local backscan would lose the view that the
+              // collapsed row's own figures were computed from.
+              const view = viewFor(ctx, event, callId => backscanArgs(events, callId), scope)
+              return { event, ...view === undefined ? {} : { view } }
+            }),
+          })
+        } catch (error: unknown) {
+          if (error instanceof SessionNotFound) {
+            return err(request, { code: 'session-not-found', message: error.message, details: { sessionId } })
+          }
+          return err(request, {
+            code: 'internal',
+            message: `step expansion unavailable for session "${sessionId}": ${String(error)}`,
             details: {},
           })
         }

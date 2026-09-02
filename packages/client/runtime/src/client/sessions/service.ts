@@ -16,7 +16,7 @@
  */
 import type { Context, Fiber } from '@deepseek-ai/cordis'
 import type {
-  IApiClient, RpcError, RpcResult, SessionId, SubagentAddress, JobView, WorkspaceId,
+  HistoryStepDetail, IApiClient, RpcError, RpcResult, SessionId, SubagentAddress, JobView, WorkspaceId,
 } from '@deepseek-ai/dsh-api-remotes/client'
 // Value import from the inline-safe wire layer (not the connection plugin):
 // plugin-to-plugin value imports are a bundle purity error.
@@ -410,6 +410,10 @@ export class SessionRuntime implements ISessions {
 
   noteAgentPreset(sessionId: SessionId, agentPreset: string): void {
     this.manager.noteAgentPreset(sessionId, agentPreset)
+  }
+
+  setStepDetail(detail: HistoryStepDetail): Promise<void> {
+    return this.manager.setStepDetail(detail)
   }
 
   /**

@@ -4,7 +4,7 @@
 import type {
   ClientResponse, HostFrame, IApiClient, ModelSelection, MuxFrame,
   RpcError, RpcReceipt, RpcRequest, RpcResponse, SessionId, SessionModels, SessionSearchItem, SkillEntry,
-  WorkspaceId, WorkspaceView,
+  WorkspaceId, WorkspaceView, StepDigest,
 } from '@deepseek-ai/dsh-api-remotes/client'
 import { RpcId } from '@deepseek-ai/dsh-client-connection/client'
 import type { SessionRemotes } from '../src/client/sessions/remotes.ts'
@@ -81,9 +81,13 @@ export class FakeApiClient implements IApiClient {
   readonly defaultModel: ModelSelection = { provider: 'deepseek-official', model: 'deepseek-v4-flash' }
   onRename: (payload: unknown) => Promise<RpcResponse<{ title: string; seq: number }>> = () => Promise.resolve(ok({ title: 'fk-renamed', seq: 0 }))
   onFork: (payload: unknown) => Promise<RpcResponse<{ sessionId: SessionId }>> = () => Promise.resolve(ok({ sessionId: 'fk-fork' as SessionId }))
-  onHistory: (payload: { sessionId: SessionId; beforeSeq?: number; maxMessages?: number })
-  => Promise<RpcResponse<{ events: never[]; hasMore: boolean }>> =
+  onHistory: (payload: { sessionId: SessionId; beforeSeq?: number; maxMessages?: number; stepDetail?: string })
+  => Promise<RpcResponse<{ events: never[]; hasMore: boolean; digests?: StepDigest[] }>> =
     () => Promise.resolve(ok({ events: [], hasMore: false }))
+
+  onExpandSteps: (payload: { sessionId: SessionId; turn: number })
+  => Promise<RpcResponse<{ events: never[] }>> =
+    () => Promise.resolve(ok({ events: [] }))
 
   onModels: (payload: unknown) => Promise<RpcResponse<SessionModels>> = () => Promise.resolve(ok({
     current: this.defaultModel,
@@ -147,6 +151,8 @@ export class FakeApiClient implements IApiClient {
     create: (payload: unknown) => this.record('session.create', payload, this.onCreate(payload)),
     history: (payload: { sessionId: SessionId; beforeSeq?: number; maxMessages?: number }) =>
       this.record('session.history', payload, this.onHistory(payload)),
+    expandSteps: (payload: { sessionId: SessionId; turn: number }) =>
+      this.record('session.expandSteps', payload, this.onExpandSteps(payload)),
     models: (payload: unknown) => this.record('session.models', payload, this.onModels(payload)),
     selectModel: (payload: { provider: string; model: string }) =>
       this.record('session.selectModel', payload, this.onSelectModel(payload)),

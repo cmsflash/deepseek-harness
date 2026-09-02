@@ -52,7 +52,9 @@ function snapshotBase(): ConversationSnapshot {
     sessionId: SID, views: EMPTY_CONVERSATION_VIEWS, chat: chatSnapshotFixture(), nodes: [],
     turnTimings: new Map(), turnEnds: new Map(), partial: null, runningCalls: [],
     pending: [], queue: [], running: false, composerPhase: 'active', removed: false, openState: 'open', openError: null,
-    hasMore: false, loadingOlder: false, promptError: null, blank: false, subagent: null, lastAgentError: null,
+    hasMore: false, loadingOlder: false,
+    stepDigests: new Map(), stepAccounts: new Map(),
+    expandingTurns: new Set(), promptError: null, blank: false, subagent: null, lastAgentError: null,
   }
 }
 
@@ -154,6 +156,7 @@ function makeHarness(init?: Partial<ConversationSnapshot>) {
   const openDetails = vi.fn<(t: SelectionTarget) => void>()
   const openFile = vi.fn<(path: string) => Promise<void>>().mockResolvedValue(undefined)
   const loadOlder = vi.fn()
+  const expandTurn = vi.fn(async () => {})
   const inspectCall = vi.fn<(callId: string) => void>()
   // In-memory scroll memory matching the apply.ts per-session map contract.
   let savedScroll: ReturnType<ChatViewSlotProps['chatScroll']['read']> = null
@@ -284,6 +287,7 @@ function makeHarness(init?: Partial<ConversationSnapshot>) {
     openDetails,
     openFile,
     loadOlder,
+    expandTurn,
     loadImage: vi.fn(() => Promise.reject(new Error('not used'))),
     inspectCall,
     chatScroll,
@@ -295,7 +299,7 @@ function makeHarness(init?: Partial<ConversationSnapshot>) {
   }
   const setSelection = (next: SelectionTarget | null): void => { chat.actions.select(next) }
   return {
-    set, ChatView, props, openDetails, openFile, loadOlder, inspectCall,
+    set, ChatView, props, openDetails, openFile, loadOlder, expandTurn, inspectCall,
     chatScroll, forkAt, setSelection, toolOwners,
   }
 }

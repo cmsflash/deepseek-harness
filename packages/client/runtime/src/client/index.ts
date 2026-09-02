@@ -52,7 +52,7 @@ export { abbreviateHomePath, resolveWorkspacePath } from './workspaces/path.ts'
 export type {
   SettingsScope, SettingsScopeSnapshot, SettingsScopeSpec,
 } from './contract/settings-scope.ts'
-export type { Session } from './sessions/session.ts'
+export type { Session, StepDigestsByTurn } from './sessions/session.ts'
 export type { ISession, ProjectionsFace, SessionFace } from './contract/session.ts'
 export type { AgentContext, ISessions } from './contract/sessions.ts'
 export type { IWorkspaces } from './contract/workspaces.ts'
@@ -60,7 +60,7 @@ export type {
   SessionBinding, SessionListState, SessionProvideContribution, SessionProvideDescriptor, SessionSummary,
 } from './sessions/service.ts'
 export type { SessionListPhase, SessionSearchResultItem, SubagentCatalogSnapshot } from './sessions/manager.ts'
-export type { SubagentAddress, JobView } from '@deepseek-ai/dsh-client-connection/client'
+export type { SubagentAddress, JobView, StepDigest } from '@deepseek-ai/dsh-client-connection/client'
 export type { WorkspaceListPhase } from './workspaces/manager.ts'
 export type { WorkspaceListState } from './workspaces/service.ts'
 export type {

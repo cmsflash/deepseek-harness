@@ -3,7 +3,7 @@
 // List data never enters zustand; React connects via subscribe/getListSnapshot.
 
 import type {
-  IApiClient, HostFrame, MuxFrame, RpcError, RpcRequest, RpcResult, SessionId,
+  IApiClient, HistoryStepDetail, HostFrame, MuxFrame, RpcError, RpcRequest, RpcResult, SessionId,
   SessionSummary, SubagentAddress, SubagentCatalog, JobView, WorkspaceId,
 } from '@deepseek-ai/dsh-api-remotes/client'
 // Value import from the inline-safe wire layer (not the connection plugin):
@@ -105,6 +105,8 @@ function questionInteractionStatus(
 /** Instance cluster + frame entry + the session list. */
 export class SessionManager {
   private readonly sessions = new Map<SessionId, Session>()
+  /** Deployment-wide step detail every Session pages with; see {@link setStepDetail}. */
+  private stepDetail: HistoryStepDetail = 'full'
   /** Pre-instantiation buffer for answerable requests and the queued-turn snapshot, which history
    *  cannot reconstruct on open. Live requests remain until resolution; queue and replay duplicates
    *  compact by identity. Instantiation replays and clears it, while removal drops it. */
@@ -308,6 +310,9 @@ export class SessionManager {
   private createSession(sessionId: SessionId): Session {
     const address = this.addresses.get(sessionId)
     return new Session(sessionId, this.api, this.remote, {
+      // Seeded rather than defaulted: a Session created after the reader chose
+      // collapsed paging must open the same way as one already open.
+      stepDetail: this.stepDetail,
       ...(address === undefined ? {} : {
         address,
         parentAvailable: this.catalogs.get(address.parentSessionId)?.parentAvailable ?? false,
@@ -325,6 +330,21 @@ export class SessionManager {
   /** Rebuild every resident Session after one coalesced registry transaction. */
   rebuildConversationRegistry(): void {
     for (const session of this.sessions.values()) session.rebuildConversationRegistry()
+  }
+
+  /**
+   * Choose how much of each step every session's history pages carry.
+   *
+   * The choice is deployment-wide rather than per session: it follows one
+   * reading preference, and a Session created later must page the same way as
+   * one already open, so the manager holds it and seeds new instances.
+   * @param detail - whole steps, or boundaries plus digests for elidable ones.
+   * @returns completion of the rebuilds a change triggers.
+   */
+  async setStepDetail(detail: HistoryStepDetail): Promise<void> {
+    if (this.stepDetail === detail) return
+    this.stepDetail = detail
+    await Promise.all([...this.sessions.values()].map(session => session.setStepDetail(detail)))
   }
 
   /** Resident per-session projection store (create-on-demand; outlives instantiation). */
