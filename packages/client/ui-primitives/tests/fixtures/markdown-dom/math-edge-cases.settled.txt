@@ -22,74 +22,79 @@
     #text "Unbalanced errors render the error arm: "
     <span class="katex-error" style="color: rgb(204, 0, 0);" title="ParseError: KaTeX parse error: Unexpected end of input in a macro argument, expected '}' at end of input: \\frac{">
       #text "\\frac{"
-  <div class="_tableScroll_404681 _tableFill_404681">
-    <table>
-      <thead>
-        <tr>
-          <th>
-            #text "Symbol"
-          <th>
-            #text "Value"
-      <tbody>
-        <tr>
-          <td>
-            <span class="katex">
-              <span class="katex-mathml">
-                <math xmlns="http://www.w3.org/1998/Math/MathML">
-                  <semantics>
-                    <mrow>
-                      <mi>
-                        #text "θ"
-                    <annotation encoding="application/x-tex">
-                      #text "\\theta"
-              <span aria-hidden="true" class="katex-html">
-                <span class="katex-base">
-                  <span class="katex-strut" style="height: 0.6944em;">
-                  <span class="mord mathnormal" style="margin-right: 0.0278em;">
-                    #text "θ"
-          <td>
-            <span class="katex">
-              <span class="katex-mathml">
-                <math xmlns="http://www.w3.org/1998/Math/MathML">
-                  <semantics>
-                    <mrow>
-                      <mfrac>
-                        <mn>
-                          #text "1"
-                        <mn>
-                          #text "5"
-                    <annotation encoding="application/x-tex">
-                      #text "\\frac{1}{5}"
-              <span aria-hidden="true" class="katex-html">
-                <span class="katex-base">
-                  <span class="katex-strut" style="height: 1.1901em; vertical-align: -0.345em;">
-                  <span class="mord">
-                    <span class="mopen nulldelimiter">
-                    <span class="mfrac">
-                      <span class="vlist-t vlist-t2">
-                        <span class="vlist-r">
-                          <span class="vlist" style="height: 0.8451em;">
-                            <span style="top: -2.655em;">
-                              <span class="pstrut" style="height: 3em;">
-                              <span class="katex-sizing reset-size6 size3 mtight">
-                                <span class="mord mtight">
+  <div class="_tableBlock_404681">
+    <div class="_tableScroll_404681 _tableFill_404681">
+      <table>
+        <thead>
+          <tr>
+            <th>
+              #text "Symbol"
+            <th>
+              #text "Value"
+        <tbody>
+          <tr>
+            <td>
+              <span class="katex">
+                <span class="katex-mathml">
+                  <math xmlns="http://www.w3.org/1998/Math/MathML">
+                    <semantics>
+                      <mrow>
+                        <mi>
+                          #text "θ"
+                      <annotation encoding="application/x-tex">
+                        #text "\\theta"
+                <span aria-hidden="true" class="katex-html">
+                  <span class="katex-base">
+                    <span class="katex-strut" style="height: 0.6944em;">
+                    <span class="mord mathnormal" style="margin-right: 0.0278em;">
+                      #text "θ"
+            <td>
+              <span class="katex">
+                <span class="katex-mathml">
+                  <math xmlns="http://www.w3.org/1998/Math/MathML">
+                    <semantics>
+                      <mrow>
+                        <mfrac>
+                          <mn>
+                            #text "1"
+                          <mn>
+                            #text "5"
+                      <annotation encoding="application/x-tex">
+                        #text "\\frac{1}{5}"
+                <span aria-hidden="true" class="katex-html">
+                  <span class="katex-base">
+                    <span class="katex-strut" style="height: 1.1901em; vertical-align: -0.345em;">
+                    <span class="mord">
+                      <span class="mopen nulldelimiter">
+                      <span class="mfrac">
+                        <span class="vlist-t vlist-t2">
+                          <span class="vlist-r">
+                            <span class="vlist" style="height: 0.8451em;">
+                              <span style="top: -2.655em;">
+                                <span class="pstrut" style="height: 3em;">
+                                <span class="katex-sizing reset-size6 size3 mtight">
                                   <span class="mord mtight">
-                                    #text "5"
-                            <span style="top: -3.23em;">
-                              <span class="pstrut" style="height: 3em;">
-                              <span class="frac-line" style="border-bottom-width: 0.04em;">
-                            <span style="top: -3.394em;">
-                              <span class="pstrut" style="height: 3em;">
-                              <span class="katex-sizing reset-size6 size3 mtight">
-                                <span class="mord mtight">
+                                    <span class="mord mtight">
+                                      #text "5"
+                              <span style="top: -3.23em;">
+                                <span class="pstrut" style="height: 3em;">
+                                <span class="frac-line" style="border-bottom-width: 0.04em;">
+                              <span style="top: -3.394em;">
+                                <span class="pstrut" style="height: 3em;">
+                                <span class="katex-sizing reset-size6 size3 mtight">
                                   <span class="mord mtight">
-                                    #text "1"
-                          <span class="vlist-s">
-                            #text "​"
-                        <span class="vlist-r">
-                          <span class="vlist" style="height: 0.345em;">
-                            <span>
-                    <span class="mclose nulldelimiter">
+                                    <span class="mord mtight">
+                                      #text "1"
+                            <span class="vlist-s">
+                              #text "​"
+                          <span class="vlist-r">
+                            <span class="vlist" style="height: 0.345em;">
+                              <span>
+                      <span class="mclose nulldelimiter">
+    <button aria-label="复制" class="_tableCopyButton_404681" data-state="idle" title="复制" type="button">
+      <svg aria-hidden="true" fill="none" height="14" stroke-width="1" viewBox="0 0 16 16" width="14" xmlns="http://www.w3.org/2000/svg">
+        <rect height="10.3932" rx="2" stroke="currentColor" width="10.3932" x="1.52075" y="4.07373">
+        <path d="M11.9792 1.53296C13.36 1.53296 14.4792 2.65225 14.4792 4.03296V9.42847C14.4792 10.3756 13.9521 11.1987 13.1755 11.6228V10.3298C13.3652 10.0787 13.4792 9.7674 13.4792 9.42847V4.03296C13.4792 3.20453 12.8077 2.53296 11.9792 2.53296H6.58374C6.27966 2.53301 5.99684 2.6235 5.7605 2.77905H4.42358C4.85652 2.03463 5.66056 1.53304 6.58374 1.53296H11.9792Z" fill="currentColor">
   <span class="katex-display">
     <span class="katex">
       <span class="katex-mathml">
