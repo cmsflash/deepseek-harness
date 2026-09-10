@@ -99,6 +99,8 @@ export type SessionEventChange =
   | { readonly kind: 'replace'; readonly entries: readonly SessionEventLikeEntry[] }
   | { readonly kind: 'prepend'; readonly entries: readonly SessionEventLikeEntry[] }
   | { readonly kind: 'append'; readonly entries: readonly SessionEventLikeEntry[] }
+  /** Step interiors a collapsed page withheld, spliced by seq inside the window's existing range. */
+  | { readonly kind: 'splice'; readonly entries: readonly SessionEventLikeEntry[] }
   | {
     readonly kind: 'settle-assistant'
     readonly attemptId: LlmAttemptId
@@ -158,6 +160,23 @@ export class MutableSessionEventSource implements SessionEventSource {
   prepend(entries: readonly SessionEventLikeEntry[], hasMore: boolean): void {
     this.window = concat(leaf(entries), this.window)
     this.publish(hasMore, { kind: 'prepend', entries })
+  }
+
+  /**
+   * Splice withheld step interiors into the window by seq. The window's ends
+   * do not move: every spliced entry falls strictly inside the range the
+   * window already spans, and a seq already held wins because the live path
+   * may have appended it since the page was served.
+   * @param entries - the interior entries a collapsed page withheld.
+   */
+  splice(entries: readonly SessionEventLikeEntry[]): void {
+    const held = materialize(this.window)
+    const seqs = new Set(held.map(entry => entry.event.seq))
+    const fresh = entries.filter(entry => !seqs.has(entry.event.seq))
+    if (fresh.length === 0) return
+    const merged = [...held, ...fresh].sort((left, right) => left.event.seq - right.event.seq)
+    this.window = leaf(merged)
+    this.publish(this.snapshot.hasMore, { kind: 'splice', entries: fresh })
   }
 
   /**

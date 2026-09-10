@@ -20,6 +20,7 @@ function row(overrides: Partial<CollapsedStepsRowProps> = {}) {
     keys: ['hidden-1', 'hidden-2'],
     metrics: { steps: 12, calls: 15, files: 2, added: 40, removed: 7, elapsedMs: 0, inputTokens: 0, outputTokens: 0 },
     expanded: false,
+    loading: false,
     onToggle: vi.fn(),
     renderSlot: () => null,
     t,

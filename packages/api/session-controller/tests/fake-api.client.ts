@@ -12,6 +12,8 @@ import type {
   SessionAssistantStreamBaseline,
   SessionControlBaseline,
   SessionControlFrame,
+  SessionExpandStepsRequest,
+  SessionExpandStepsValue,
   SessionFollowFrame,
   SessionFollowRequest,
   SessionPage,
@@ -19,6 +21,7 @@ import type {
   SessionProjectionBaseline,
   SessionSelectModelRequest,
   SessionSelectModelValue,
+  SessionStepDetail,
 } from '@deepseek-ai/dsh-api-session-controller/types'
 import type { WorkspaceRemote } from '@deepseek-ai/dsh-api-workspace-controller/client'
 import type { WorkspaceFollowFrame } from '@deepseek-ai/dsh-api-workspace-controller/types'
@@ -138,9 +141,17 @@ export class FakeApiClient {
     }))
   onRename: (payload: unknown) => Promise<RemoteResult<{ title: string; seq: number }>> = () => Promise.resolve(ok({ title: 'fk-renamed', seq: 0 }))
   onFork: (payload: unknown) => Promise<RemoteResult<{ sessionId: SessionId }>> = () => Promise.resolve(ok({ sessionId: 'fk-fork' as SessionId }))
-  onHistory: (payload: { sessionId: SessionId; throughSeq?: number; beforeSeq?: number; maxMessages?: number })
+  onHistory: (payload: {
+    sessionId: SessionId
+    throughSeq?: number
+    beforeSeq?: number
+    maxMessages?: number
+    stepDetail?: SessionStepDetail
+  })
   => Promise<RemoteResult<SessionPage & { readonly projections?: SessionProjectionBaseline }>> =
     () => Promise.resolve(ok({ records: [], hasMore: false }))
+  onExpandSteps: (payload: SessionExpandStepsRequest) => Promise<RemoteResult<SessionExpandStepsValue>> =
+    () => Promise.resolve(ok({ records: [] }))
 
   onPrompt: (payload: unknown) => Promise<RemoteResult<{ accepted: true }>> = () => Promise.resolve(ok({ accepted: true as const }))
   onAttachment: (payload: unknown) => Promise<RemoteResult<{ attachment: { attachmentId: never; mediaType: 'image/png'; bytes: number; width: number; height: number }; data: string }>> =
@@ -238,6 +249,7 @@ export class FakeApiClient {
           this.onOpenWorkspacePath(payload),
         ),
         page: request => this.page(request),
+        expandSteps: request => this.record('session.expandSteps', request, this.onExpandSteps(request)),
         follow: (request, signal) => this.openFollow(request, signal),
         control: signal => this.openControl(signal),
       },
@@ -344,6 +356,7 @@ export class FakeApiClient {
         throughSeq: request.throughSeq,
         ...request.beforeSeq === undefined ? {} : { beforeSeq: request.beforeSeq },
         ...request.maxMessages === undefined ? {} : { maxMessages: request.maxMessages },
+        ...request.stepDetail === undefined ? {} : { stepDetail: request.stepDetail },
       }
       : {
         parentSessionId: request.address.parentSessionId,
@@ -352,6 +365,7 @@ export class FakeApiClient {
         throughSeq: request.throughSeq,
         ...request.beforeSeq === undefined ? {} : { beforeSeq: request.beforeSeq },
         ...request.maxMessages === undefined ? {} : { maxMessages: request.maxMessages },
+        ...request.stepDetail === undefined ? {} : { stepDetail: request.stepDetail },
       }
     const method = request.address.kind === 'session' ? 'session.history' : 'subagent.history'
     const result = await this.record(method, payload, response ?? this.onHistory({
@@ -359,6 +373,7 @@ export class FakeApiClient {
       throughSeq: request.throughSeq,
       ...request.beforeSeq === undefined ? {} : { beforeSeq: request.beforeSeq },
       ...request.maxMessages === undefined ? {} : { maxMessages: request.maxMessages },
+      ...request.stepDetail === undefined ? {} : { stepDetail: request.stepDetail },
     }))
     if (!result.ok) return result
     return {
@@ -385,6 +400,7 @@ export class FakeApiClient {
       const response = await this.onHistory({
         sessionId,
         maxMessages: request.maxMessages ?? 50,
+        ...request.stepDetail === undefined ? {} : { stepDetail: request.stepDetail },
       })
       if (!response.ok) throw response.error
       const page = response.value
@@ -404,6 +420,7 @@ export class FakeApiClient {
         cursor,
         records: page.records.filter(record => historyRecordLastSeq(record) <= cursor),
         hasMore: page.hasMore,
+        ...page.digests === undefined ? {} : { digests: page.digests },
         projections: page.projections ?? { asOfSeq: cursor, values: {} },
         ...request.assistantStream === true
           ? { assistantStream: this.assistantStreamBaseline }

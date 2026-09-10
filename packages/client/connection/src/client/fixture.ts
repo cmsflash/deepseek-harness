@@ -3982,6 +3982,9 @@ function createFixtureWorld(options: FixtureOptions): FixtureWorld {
             ...page.maxMessages === undefined ? {} : { maxMessages: page.maxMessages },
           })
         }
+        // The fixture serves every page whole, so a collapsed request withholds
+        // nothing and a turn expansion has nothing to read back.
+        case 'session/expandSteps': return sessionOk({ records: [] })
         case '$events/result': return Promise.resolve(answerRemoteEvent(args as unknown as FixtureRemoteEventResult))
         case 'workspace/create': return workspaceApi.create(request as WorkspaceCreateRequest)
         case 'workspace/rename': return workspaceApi.rename(request as WorkspaceRenameRequest)

@@ -284,8 +284,10 @@ export class ConversationNodeAssembler implements ConversationViewSnapshotStore 
   }
 
   /**
-   * Add an older page while preserving existing Context and view identities.
-   * @param entries - newly loaded older Events.
+   * Merge older or interior Events while preserving existing Context and view
+   * identities. Entries merge by seq into the held inputs, so an older page
+   * and the step interiors a collapsed page withheld take the same path.
+   * @param entries - newly loaded Events absent from the window.
    * @param hasMore - whether history still precedes the expanded window.
    * @returns highest requested publication cadence.
    */

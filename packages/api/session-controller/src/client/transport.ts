@@ -40,7 +40,7 @@ export type ClientSessionPageRequest = Omit<SessionPageRequest, 'address' | 'thr
 /** Complete generated `ctx.remote.session` namespace. */
 export type SessionRemote = ClientRemote['session']
 
-/** Opening metadata carried only by a follow snapshot, never by loadOlder pages. */
+/** Opening metadata carried only by a follow snapshot, never by loadOlder pages; digests ride both. */
 interface SessionJournalPage extends SessionPage {
   readonly projections?: SessionProjectionBaseline
   readonly assistantStream?: SessionAssistantStreamBaseline
@@ -168,6 +168,24 @@ export class SessionEventStream extends RemoteJournalStream<
     })
   }
 
+  /**
+   * Read back the events one collapsed page withheld from a turn, at the
+   * journal's current cursor so the result never outruns the published window.
+   * @param turn - the turn the reader expanded.
+   * @param fromSeq - lowest seq the caller's window holds.
+   * @param signal - caller cancellation for the read.
+   * @returns the withheld records, ascending by seq.
+   */
+  async expandSteps(turn: number, fromSeq: number, signal?: AbortSignal): Promise<readonly SessionHistoryRecord[]> {
+    const result = await this.remote.session.expandSteps(
+      { address: this.address, throughSeq: this.cursor(), turn, fromSeq },
+      signal ?? this.signal,
+    )
+    if (!result.ok) throw result.error
+    for (const record of result.value.records) assertSessionWireEvent(record.event)
+    return result.value.records
+  }
+
   /** @inheritdoc */
   protected override async * follow(
     request: ClientSessionPageRequest,
@@ -180,6 +198,7 @@ export class SessionEventStream extends RemoteJournalStream<
       address: this.address,
       assistantStream: true,
       ...(request.maxMessages === undefined ? {} : { maxMessages: request.maxMessages }),
+      ...(request.stepDetail === undefined ? {} : { stepDetail: request.stepDetail }),
     }, signal)) {
       if (frame.type === 'snapshot') {
         for (const record of frame.records) assertSessionWireEvent(record.event)
@@ -197,6 +216,7 @@ export class SessionEventStream extends RemoteJournalStream<
           page: {
             records: frame.records,
             hasMore: frame.hasMore,
+            ...(frame.digests === undefined ? {} : { digests: frame.digests }),
             projections: frame.projections,
             assistantStream: frame.assistantStream,
           },
@@ -238,6 +258,9 @@ export class SessionEventStream extends RemoteJournalStream<
   protected override repairRequest(
     request: ClientSessionPageRequest,
   ): ClientSessionPageRequest {
-    return request.maxMessages === undefined ? {} : { maxMessages: request.maxMessages }
+    return {
+      ...(request.maxMessages === undefined ? {} : { maxMessages: request.maxMessages }),
+      ...(request.stepDetail === undefined ? {} : { stepDetail: request.stepDetail }),
+    }
   }
 }

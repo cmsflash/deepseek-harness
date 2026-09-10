@@ -72,6 +72,7 @@ export type {
   PromptError,
   QueuedMessage,
   SessionSnapshot,
+  StepDigestsByTurn,
 } from './contract/snapshot.ts'
 
 declare module '@deepseek-ai/cordis' {

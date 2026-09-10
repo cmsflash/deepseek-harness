@@ -71,6 +71,9 @@ function sessionSnapshot(overrides: Partial<SessionSnapshot> = {}): SessionSnaps
     openError: null,
     hasMore: false,
     loadingOlder: false,
+    stepDigests: new Map(),
+    stepAccounts: new Map(),
+    expandingTurns: new Set(),
     promptError: null,
     blank: false,
     subagent: null,
@@ -252,6 +255,7 @@ function makeHarness(
   const openFile = vi.fn<(path: string) => Promise<void>>().mockResolvedValue(undefined)
   const loadOlder = vi.fn()
   const loadThrough = vi.fn<(seq: number) => Promise<void>>().mockResolvedValue(undefined)
+  const expandTurn = vi.fn<(turn: number) => Promise<void>>().mockResolvedValue(undefined)
   // Mutable outline holder: tests swap the value and drive a re-render via set().
   let outlineValue: unknown
   const openView = vi.fn<(view: string, focus: string) => void>()
@@ -398,6 +402,7 @@ function makeHarness(
     openFile,
     loadOlder,
     loadThrough,
+    expandTurn,
     loadImage: vi.fn(() => Promise.reject(new Error('not used'))),
     chatScroll,
     forkAt,
@@ -425,7 +430,7 @@ function makeHarness(
   }
   return {
     set, setSession: session.set, setChat: chatSource.set, ChatView, props,
-    openFile, loadOlder, loadThrough, openView,
+    openFile, loadOlder, loadThrough, expandTurn, openView,
     setOutline: (value: unknown) => { outlineValue = value },
     chatScroll, forkAt, toolOwners,
     setTranscriptView: (mode: TranscriptViewMode) => { transcriptView.set(mode) },

@@ -290,3 +290,104 @@ describe('collapseSettledSteps', () => {
     expect(collapseSettledSteps([], store([]), EMPTY)).toEqual([])
   })
 })
+
+/** One host step account, as a collapsed page reports it. */
+function account(turn: number, step: number, over: Partial<{
+  steps: number
+  calls: number
+  inputTokens: number
+  outputTokens: number
+  files: number
+}> = {}) {
+  return {
+    turn,
+    step,
+    startSeq: step,
+    elided: 1,
+    steps: over.steps ?? 1,
+    calls: over.calls ?? 2,
+    files: over.files ?? 0,
+    added: 0,
+    removed: 0,
+    elapsedMs: 100,
+    inputTokens: over.inputTokens ?? 1000,
+    outputTokens: over.outputTokens ?? 50,
+  }
+}
+
+describe('collapseSettledSteps with withheld steps', () => {
+  it('places the marker below the prompting message, not above it', () => {
+    // The engine assigns a step Location by log position, so the user message
+    // that opened the turn carries one too. The marker must still follow it.
+    const nodes = [
+      node({ key: 'ask', kind: 'user', turn: 1, step: 1 }),
+      node({ key: 'a1', turn: 1, step: 1 }),
+      node({ key: 'a2', turn: 1, step: 2 }),
+    ]
+    const digests = new Map([[1, [account(1, 1)]]])
+    const rows = collapseSettledSteps(['ask', 'a1', 'a2'], store(nodes), EMPTY, digests)
+
+    expect(rows.map(row => (row.kind === 'node' ? row.key : `collapsed:${String(row.turn)}`)))
+      .toEqual(['ask', 'collapsed:1', 'a2'])
+  })
+
+  it('keeps the marker in place when the reader opens it', () => {
+    const nodes = [
+      node({ key: 'ask', kind: 'user', turn: 1, step: 1 }),
+      node({ key: 'a1', turn: 1, step: 1 }),
+      node({ key: 'a2', turn: 1, step: 2 }),
+    ]
+    const withheld = new Map([[1, [account(1, 1)]]])
+    const closed = collapseSettledSteps(['ask', 'a1', 'a2'], store(nodes), EMPTY, withheld)
+    // Expansion clears the withheld marker but keeps the account, which is
+    // what stops the row from moving to a different anchor.
+    const opened = collapseSettledSteps(['ask', 'a1', 'a2'], store(nodes), new Set([1]), new Map(), withheld)
+
+    expect(closed.findIndex(row => row.kind === 'collapsed'))
+      .toBe(opened.findIndex(row => row.kind === 'collapsed'))
+    expect(opened.map(row => (row.kind === 'node' ? row.key : `collapsed:${String(row.turn)}`)))
+      .toEqual(['ask', 'collapsed:1', 'a1', 'a2'])
+  })
+
+  it('reports the same figures before and after expansion', () => {
+    const nodes = [
+      node({ key: 'a1', turn: 1, step: 1, data: { usage: { inputTokens: 1000, outputTokens: 50 } } }),
+      node({ key: 'a2', turn: 1, step: 2 }),
+    ]
+    const withheld = new Map([[1, [account(1, 1)]]])
+    const closed = collapseSettledSteps(['a1', 'a2'], store(nodes), EMPTY, withheld)
+    const opened = collapseSettledSteps(['a1', 'a2'], store(nodes), new Set([1]), new Map(), withheld)
+
+    const metricsOf = (rows: readonly { kind: string }[]) =>
+      (rows.find(row => row.kind === 'collapsed') as { metrics: unknown } | undefined)?.metrics
+    // A step's cost does not change because its events were loaded, so the
+    // row must not shrink to whatever the window happens to hold.
+    expect(metricsOf(opened)).toEqual(metricsOf(closed))
+    expect(metricsOf(closed)).toMatchObject({ steps: 1, calls: 2, inputTokens: 1000, outputTokens: 50 })
+  })
+
+  it('counts an accounted step once even when its nodes are loaded', () => {
+    // Both the account and the materialized node describe step 1; folding
+    // both would double the turn's reported cost.
+    const nodes = [
+      node({ key: 'a1', turn: 1, step: 1, data: { usage: { inputTokens: 1000, outputTokens: 50 } } }),
+      node({ key: 'a2', turn: 1, step: 2 }),
+    ]
+    const accounts = new Map([[1, [account(1, 1)]]])
+    const rows = collapseSettledSteps(['a1', 'a2'], store(nodes), new Set([1]), new Map(), accounts)
+    const marker = rows.find(row => row.kind === 'collapsed') as { metrics: { steps: number; inputTokens: number } }
+
+    expect(marker.metrics.steps).toBe(1)
+    expect(marker.metrics.inputTokens).toBe(1000)
+  })
+
+  it('marks a turn as withheld only while its steps are still unloaded', () => {
+    const nodes = [node({ key: 'a1', turn: 1, step: 1 }), node({ key: 'a2', turn: 1, step: 2 })]
+    const withheld = new Map([[1, [account(1, 1)]]])
+    const closed = collapseSettledSteps(['a1', 'a2'], store(nodes), EMPTY, withheld)
+    const opened = collapseSettledSteps(['a1', 'a2'], store(nodes), new Set([1]), new Map(), withheld)
+
+    expect((closed.find(row => row.kind === 'collapsed') as { withheld: boolean }).withheld).toBe(true)
+    expect((opened.find(row => row.kind === 'collapsed') as { withheld: boolean }).withheld).toBe(false)
+  })
+})

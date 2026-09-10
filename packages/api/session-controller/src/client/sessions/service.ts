@@ -20,7 +20,10 @@ import { SessionSeq, type SessionId } from '@deepseek-ai/dsh-session/types'
 import { workspaceTitleOf } from '@deepseek-ai/dsh-util-workspace-path'
 import type { WorkspaceId } from '@deepseek-ai/dsh-workspace/types'
 import { SESSION_SEARCH_RESULT_LIMIT } from '../../types.ts'
-import type { SessionJob as JobView } from '../../types.ts'
+import type {
+  SessionJob as JobView,
+  SessionStepDetail,
+} from '../../types.ts'
 import type { SessionProjectionMap } from '@deepseek-ai/dsh-session-projection/types'
 import {
   createSnapshotStore, type SnapshotStore,
@@ -315,6 +318,11 @@ export class ClientSessions implements ISessions {
    */
   clear(): void {
     this.manager.clearSelection()
+  }
+
+  /** @inheritdoc */
+  setStepDetail(detail: SessionStepDetail): Promise<void> {
+    return this.manager.setStepDetail(detail)
   }
 
   /**

@@ -17,19 +17,31 @@ export function historyEntries(
 }
 
 /**
- * Read the first logical sequence represented by one wire record.
+ * Read the first logical sequence represented by one wire record, including
+ * withheld events a collapsed-page record stands for.
  * @param record - validated Session event.
  * @returns inclusive first Session sequence.
  */
 export function historyRecordFirstSeq(record: SessionHistoryRecord): number {
-  return record.event.seq
+  return record.covers?.from ?? record.event.seq
 }
 
 /**
- * Read the final logical sequence represented by one wire record.
+ * Read the final logical sequence represented by one wire record, including
+ * withheld events a collapsed-page record stands for.
  * @param record - validated Session event.
  * @returns inclusive final Session sequence.
  */
 export function historyRecordLastSeq(record: SessionHistoryRecord): number {
-  return record.event.seq
+  return record.covers?.to ?? record.event.seq
+}
+
+/**
+ * Read the first logical sequence a page's records stand for.
+ * @param records - one page's records, ascending.
+ * @returns the covered head, or undefined for an empty page.
+ */
+export function historyPageFirstSeq(records: readonly SessionHistoryRecord[]): number | undefined {
+  const head = records[0]
+  return head === undefined ? undefined : historyRecordFirstSeq(head)
 }
