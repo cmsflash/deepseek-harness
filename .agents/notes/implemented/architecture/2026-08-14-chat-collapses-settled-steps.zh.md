@@ -34,6 +34,6 @@ Status: implemented
 ## 影响
 
 - 默认输出不变：不在 `collapsed` 模式时，`ChatView` 与此前完全一样地映射快照顺序，因此既有 web 快照依然有效。
-- 折叠分组的数字以窗口为范围，因为已加载的历史窗口是分页的，且 compaction 会重写它。翻页载入更早的 step 会改变这些数字。
+- 折叠分组的数字来自 Host 计算的逐 step digest，它们描述完整的 step，因此不会随读者翻页或展开而变化（[决策](2026-09-01-collapsed-step-digest-paging.zh.md)）；只有没有 digest 覆盖的 step 才从已加载节点折叠得出。
 - 行数来自 write 与 edit 本就返回的已应用 `card:'diff'` 结果视图，并逐条校验，因为这些视图跨进程传输且只有 `card` 经过 schema 校验。由不发出 diff 卡片的工具所做的改动不计入行数。
 - 该行本身不展示成本。`TokenUsage.costUsd` 承载已计价调用的美元金额（[决策](2026-08-24-token-usage-carries-billed-cost.zh.md)），因此该指标可由贡献者经 `conversation.chat.collapsedMetric` 提供，而不在此处计算。

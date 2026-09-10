@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/architecture/2026-08-14-chat-collapses-settled-steps.md
-2026-08-14-chat-collapses-settled-steps.md: fa91d8ac2f19dd1158939c86b603a9812b54b6bb
-2026-08-14-chat-collapses-settled-steps.zh.md: c61f987abb18b76d426e23d2b65b09b734798103
+2026-08-14-chat-collapses-settled-steps.md: 368db433a7c6516f9fc0d559050641b755f12891
+2026-08-14-chat-collapses-settled-steps.zh.md: 7f5380a652dfcf09bc635dbccbfd8e35f41fda43

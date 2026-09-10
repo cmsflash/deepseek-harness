@@ -3,7 +3,10 @@ import type { FileAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { SubagentAddress } from '@deepseek-ai/dsh-subagent/client'
 import type { RemoteFailure } from '@deepseek-ai/dsh-typert-protocol'
-import type { SessionRequestId } from '../../types.ts'
+import type {
+  SessionRequestId,
+  StepDigest,
+} from '../../types.ts'
 
 /** One image displayed by a local submission echo before durable admission. */
 export interface PendingSubmissionImage {
@@ -65,6 +68,15 @@ export interface PromptError {
   readonly error: RemoteFailure
 }
 
+/**
+ * Per-turn elided-step digests, ascending by `startSeq` within each turn.
+ *
+ * Keyed by turn because a turn is the unit the reader expands, and a key's
+ * presence in the window's `stepDigests` reads "this turn is still showing
+ * withheld work".
+ */
+export type StepDigestsByTurn = ReadonlyMap<number, readonly StepDigest[]>
+
 /** Immutable Session lifecycle and control snapshot. */
 export interface SessionSnapshot {
   readonly sessionId: SessionId
@@ -81,6 +93,19 @@ export interface SessionSnapshot {
   readonly openError: RemoteFailure | null
   readonly hasMore: boolean
   readonly loadingOlder: boolean
+  /**
+   * Steps a collapsed page withheld from the window, by turn. A turn drops out
+   * once its interior is loaded; empty under full step detail.
+   */
+  readonly stepDigests: StepDigestsByTurn
+  /**
+   * Every digest the window has been served, including turns since expanded.
+   * A digest describes a whole step, so loading its events does not change what
+   * it cost; a collapsed summary keeps its figures after expansion.
+   */
+  readonly stepAccounts: StepDigestsByTurn
+  /** Turns whose withheld steps are being loaded. */
+  readonly expandingTurns: ReadonlySet<number>
   readonly promptError: PromptError | null
   readonly blank: boolean
   readonly lastAgentError: string | null

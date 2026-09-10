@@ -417,8 +417,24 @@ export type SessionWireSurfaceOp =
   | 'append'
   | { readonly op: 'replace'; readonly startSeq: number; readonly endSeq: number }
 
-/** One history-page record with compact Assistant streams embedded inside events. */
-export type SessionHistoryRecord = SessionEventEntry
+/** Inclusive seq range one collapsed-page record stands for (see {@link SessionHistoryRecord}). */
+export interface SessionHistoryCoverage {
+  readonly from: number
+  readonly to: number
+}
+
+/**
+ * One history-page record with compact Assistant streams embedded inside events.
+ *
+ * Under collapsed step detail a record may stand for withheld neighbours: the
+ * elided events immediately before it, and for a page's last record also those
+ * after it, so a page's records still partition its seq range and the journal
+ * stays gap-free without carrying the interiors.
+ */
+export interface SessionHistoryRecord extends SessionEventEntry {
+  /** Inclusive seq range this record stands for; absent when it stands for its event alone. */
+  readonly covers?: SessionHistoryCoverage
+}
 
 /**
  * Exact Session event envelope accepted by the Client journal adapter.
@@ -437,6 +453,55 @@ export interface SessionWireEvent {
   readonly surfaceOp?: JsonValue
 }
 
+/**
+ * How much of each step a history page carries.
+ *
+ * `full` serves every event. `collapsed` serves a turn's *elidable* steps as
+ * their `step/start` / `step/end` boundaries plus one {@link StepDigest},
+ * withholding the interior until an expand request asks for it. A step is
+ * elidable only when the reader would not be looking at it: the turn's highest
+ * step and the step carrying the turn's closing assistant text are always
+ * served whole, as is every event with no step coordinate.
+ *
+ * Boundaries are never elided, so the page stays one contiguous seq range and
+ * a client's window remains gap-free; only the interior of an elided step is
+ * absent, which that step's digest accounts for.
+ */
+export type SessionStepDetail = 'full' | 'collapsed'
+
+/**
+ * What one elided step did, computed over the whole step rather than the
+ * loaded window.
+ *
+ * The client renders its collapsed summary row from these figures instead of
+ * folding the events it no longer has, so the row reports the step's real
+ * cost even before expansion, and stays correct regardless of where the page
+ * boundary fell.
+ */
+export interface StepDigest {
+  readonly turn: number
+  readonly step: number
+  /** Seq of the step's `step/start`; the client's expansion address. */
+  readonly startSeq: number
+  /** Seq of the step's `step/end`, absent for a step whose end is unlogged. */
+  readonly endSeq?: number
+  /** Elided events withheld from this page, the exact count a later expansion returns. */
+  readonly elided: number
+  /** Settled model calls in this step: 1, or 0 when the step logged no assistant message. */
+  readonly steps: number
+  /** Settled tool calls. */
+  readonly calls: number
+  /** Distinct file paths this step's applied diff cards touched. */
+  readonly files: number
+  readonly added: number
+  readonly removed: number
+  /** `step/start` to final `assistant/message` wall time; 0 when either boundary is unrecorded. */
+  readonly elapsedMs: number
+  /** Billed prompt-side tokens: uncached input plus cache reads and writes. */
+  readonly inputTokens: number
+  readonly outputTokens: number
+}
+
 /** One message-aligned backwards-history request. */
 export interface SessionPageRequest {
   readonly address: SessionAddress
@@ -444,6 +509,8 @@ export interface SessionPageRequest {
   readonly throughSeq: number
   readonly beforeSeq?: number
   readonly maxMessages?: number
+  /** Step detail served; omitted means `full`. */
+  readonly stepDetail?: SessionStepDetail
 }
 
 /** One live event request for a durable Session address. */
@@ -452,6 +519,35 @@ export interface SessionFollowRequest {
   readonly maxMessages?: number
   /** Include process-local assistant presentation frames for the Web client. */
   readonly assistantStream?: true
+  /** Step detail served by the opening snapshot; omitted means `full`. */
+  readonly stepDetail?: SessionStepDetail
+}
+
+/**
+ * Request for the events one collapsed page elided from a single turn.
+ *
+ * The turn is the expansion unit because that is the unit the reader opens.
+ * `fromSeq` bounds the result to the window the caller holds: a turn routinely
+ * starts before the page that shows it, and its earlier steps belong to pages
+ * the client has not loaded, so returning them would splice events below the
+ * window head and leave that head describing a range with a hole.
+ */
+export interface SessionExpandStepsRequest {
+  readonly address: SessionAddress
+  /** Inclusive log cut obtained from the corresponding follow opening frame. */
+  readonly throughSeq: number
+  readonly turn: number
+  /** Lowest seq the caller's window holds; omitted expands the whole turn. */
+  readonly fromSeq?: number
+}
+
+/**
+ * The events one collapsed page withheld from a turn, ascending by seq. A turn
+ * absent from the log yields no records rather than failing: the window it was
+ * requested for may have been rewritten by a compaction between page and click.
+ */
+export interface SessionExpandStepsValue {
+  readonly records: readonly SessionHistoryRecord[]
 }
 
 /** One active assistant attempt in a reconnect opening snapshot. */
@@ -510,6 +606,8 @@ export type SessionAssistantStreamFrame =
 export interface SessionPage {
   readonly records: readonly SessionHistoryRecord[]
   readonly hasMore: boolean
+  /** One entry per elided step, ascending by `startSeq`; absent under `full` detail. */
+  readonly digests?: readonly StepDigest[]
 }
 
 /** Complete opening window followed by ordered durable events and opted-in assistant frames. */
@@ -520,6 +618,8 @@ export type SessionFollowFrame =
     readonly cursor: number
     readonly records: readonly SessionHistoryRecord[]
     readonly hasMore: boolean
+    /** One entry per elided step, ascending by `startSeq`; absent under `full` detail. */
+    readonly digests?: readonly StepDigest[]
     readonly projections: SessionProjectionBaseline
     readonly assistantStream?: SessionAssistantStreamBaseline
   }

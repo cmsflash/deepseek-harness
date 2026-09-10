@@ -362,6 +362,8 @@ export const LINK_MAP: Readonly<Record<string, string>> = {
   SessionCreateRequest: 'session.md',
   SessionCreateValue: 'session.md',
   SessionEvent: 'session.md',
+  SessionExpandStepsRequest: 'session.md',
+  SessionExpandStepsValue: 'session.md',
   SessionFollowFrame: 'session.md',
   SessionFollowRequest: 'session.md',
   SessionForkRequest: 'session.md',

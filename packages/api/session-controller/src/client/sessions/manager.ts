@@ -7,8 +7,9 @@ import type { WorkspaceId } from '@deepseek-ai/dsh-workspace/types'
 import type {
   SessionControlBaseline,
   SessionControlFrame,
-  SessionSummary,
   SessionJob as JobView,
+  SessionStepDetail,
+  SessionSummary,
 } from '../../types.ts'
 import { mergeOrderedBaseline } from '../ordered-baseline.ts'
 import { isRemoteFailure } from '@deepseek-ai/dsh-api-gateway/client'
@@ -90,6 +91,8 @@ type SessionListMutation =
 /** Instance cluster + frame entry + the session list. */
 export class SessionManager {
   private readonly sessions = new Map<SessionId, Session>()
+  /** Deployment-wide step detail every Session pages with; see {@link setStepDetail}. */
+  private stepDetail: SessionStepDetail = 'full'
   /** In-flight Session disposals remain here after instances leave `sessions`, so manager disposal can await quiescence. */
   private readonly sessionDisposals = new Set<Promise<void>>()
   /** Per-session projection value stores, retained independently of instance arrival (the
@@ -262,12 +265,26 @@ export class SessionManager {
     return session
   }
 
+  /**
+   * Choose how much of each step every Session's history pages carry.
+   * Deployment-wide rather than per Session: it follows one reading preference,
+   * and a Session opened later pages the same way as one already open.
+   * @param detail - whole steps, or boundaries plus digests for elidable ones.
+   * @returns completion of the rebuilds a change triggers on open windows.
+   */
+  async setStepDetail(detail: SessionStepDetail): Promise<void> {
+    if (this.stepDetail === detail) return
+    this.stepDetail = detail
+    await Promise.all([...this.sessions.values()].map(session => session.setStepDetail(detail)))
+  }
+
   private createSession(sessionId: SessionId): Session {
     const address = this.addresses.get(sessionId)
     const parentAvailable = address === undefined
       ? undefined
       : this.catalogs.get(address.parentSessionId)?.parentAvailable
     return new Session(sessionId, this.remote, {
+      stepDetail: this.stepDetail,
       ...(address === undefined ? {} : {
         address,
         ...catalogAvailability(parentAvailable),

@@ -42,6 +42,7 @@ export function followSnapshot(
     cursor,
     records: pageThrough(page, cursor).records,
     hasMore: page.hasMore,
+    ...(page.digests === undefined ? {} : { digests: page.digests }),
     projections: page.projections ?? { asOfSeq: cursor, values: {} },
     ...(request.assistantStream === true ? { assistantStream } : {}),
   }

@@ -206,11 +206,12 @@ function TurnStatus({ startTime, t }: {
 type ChatNodeListProps = Omit<ComponentProps<typeof ChatNodeSeat>, 'nodeKey'> & {
   readonly flow: readonly ChatFlowRow[]
   readonly expandedTurns: ReadonlySet<number>
-  readonly toggleTurn: (turn: number) => void
+  readonly expandingTurns: ReadonlySet<number>
+  readonly toggleTurn: (turn: number, withheld: boolean) => void
 }
 
 const ChatNodeList = memo(function ChatNodeList({
-  flow, expandedTurns, toggleTurn, ...seatProps
+  flow, expandedTurns, expandingTurns, toggleTurn, ...seatProps
 }: ChatNodeListProps) {
   return flow.map(row => (row.kind === 'collapsed'
     ? (
@@ -220,7 +221,8 @@ const ChatNodeList = memo(function ChatNodeList({
         keys={row.keys}
         metrics={row.metrics}
         expanded={expandedTurns.has(row.turn)}
-        onToggle={() => { toggleTurn(row.turn) }}
+        loading={expandingTurns.has(row.turn)}
+        onToggle={() => { toggleTurn(row.turn, row.withheld) }}
         renderSlot={seatProps.renderSlot}
         t={seatProps.t}
       />
@@ -234,8 +236,8 @@ const ChatNodeList = memo(function ChatNodeList({
  */
 export function ChatView({
   useSession, useChat, useChatNode, useChatNodeProcess, useSessions, useStore, actions, renderSlot,
-  sessionId, openFile, openSkill, openExternalLink, loadOlder, loadThrough, loadImage, openView, chatScroll, forkAt, fileMentions,
-  useTranscriptView, useProjection, t,
+  sessionId, openFile, openSkill, openExternalLink, loadOlder, loadThrough, expandTurn, loadImage, openView, chatScroll, forkAt,
+  fileMentions, useTranscriptView, useProjection, t,
 }: ChatViewSlotProps) {
   const order = useChat(s => s.order)
   const nodeStore = useChat(s => s.nodes)
@@ -261,22 +263,29 @@ export function ChatView({
   const loadingOlder = useSession(s => s.loadingOlder)
   const compactTranscript = useTranscriptView(mode => mode === 'compact')
   const collapseSteps = useTranscriptView(mode => mode === 'collapsed')
+  const stepDigests = useSession(s => s.stepDigests)
+  const stepAccounts = useSession(s => s.stepAccounts)
+  const expandingTurns = useSession(s => s.expandingTurns)
   // Reader-owned disclosure: only this view knows which turns the reader
   // opened, and the choice is deliberately not persisted — a fresh mount
   // starts collapsed again, matching the preference's intent.
   const [expandedTurns, setExpandedTurns] = useState<ReadonlySet<number>>(() => new Set())
-  const toggleTurn = useCallback((turn: number) => {
+  const toggleTurn = useCallback((turn: number, withheld: boolean) => {
+    // Withheld steps are fetched before they can render, and the disclosure
+    // opens either way: the row reports its own loading state rather than
+    // staying shut until events land.
+    if (withheld) void expandTurn(turn)
     setExpandedTurns((current) => {
       const next = new Set(current)
       if (!next.delete(turn)) next.add(turn)
       return next
     })
-  }, [])
+  }, [expandTurn])
   const flow = useMemo<readonly ChatFlowRow[]>(
     () => (collapseSteps
-      ? collapseSettledSteps(order, nodeStore, expandedTurns)
+      ? collapseSettledSteps(order, nodeStore, expandedTurns, stepDigests, stepAccounts)
       : order.map(key => ({ kind: 'node', key }) as const)),
-    [collapseSteps, order, nodeStore, expandedTurns],
+    [collapseSteps, order, nodeStore, expandedTurns, stepDigests, stepAccounts],
   )
   const inspectCall = useCallback((callId: string) => {
     openView('trajectory', callId)
@@ -821,6 +830,7 @@ export function ChatView({
             <ChatNodeList
               flow={flow}
               expandedTurns={expandedTurns}
+              expandingTurns={expandingTurns}
               toggleTurn={toggleTurn}
               useChatNode={useChatNode}
               useChatNodeProcess={useChatNodeProcess}

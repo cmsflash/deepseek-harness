@@ -84,6 +84,17 @@ export function apply(ctx: Context): void {
     ctx.settingsScope.bind<ChatSettings>({ namespace: CHAT_SETTINGS_NAMESPACE }),
   )
 
+  // The transcript mode decides what the transcript SHOWS and therefore what
+  // its pages need to carry: a collapsing reader never looks at the elided
+  // steps, so the sessions domain stops fetching them and reads them back per
+  // turn on expansion. Following the live preference rather than reading it
+  // once also covers the durable value arriving after boot.
+  const followStepDetail = (): void => {
+    void ctx.sessions.setStepDetail(transcriptView.mode.getSnapshot() === 'collapsed' ? 'collapsed' : 'full')
+  }
+  ctx.effect(() => transcriptView.mode.subscribe(followStepDetail), 'ui-chat: step detail')
+  followStepDetail()
+
   ctx.slots.inject('settings.general.item', () => ctx.slots.register({
     name: 'settings.general.item',
     id: 'transcript-view',
@@ -153,6 +164,7 @@ export function apply(ctx: Context): void {
           },
           loadOlder: () => { void session.loadOlder() },
           loadThrough: seq => session.loadThrough(seq),
+          expandTurn: turn => session.expandTurn(turn),
           loadImage: Object.assign(
             (attachment: ImageAttachmentRef) => ctx.uiConversation.imageUrl(sessionId, attachment),
             { peek: (attachment: ImageAttachmentRef) => ctx.uiConversation.peekImageUrl(sessionId, attachment) },

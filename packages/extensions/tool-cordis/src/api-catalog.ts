@@ -1768,6 +1768,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'one chronological page.',
       },
       {
+        signature: '@Remote(\'expandSteps\') expandSteps(request: SessionExpandStepsRequest, signal: AbortSignal): Promise<SessionExpandStepsValue>',
+        description: 'Read back the events one collapsed history page withheld from a single turn.',
+        parameters: [{ name: 'request', description: 'durable address, log cut, expanded turn, and window head.' }, { name: 'signal', description: 'cancellation for persistence reads.' }],
+        returns: 'that turn\'s withheld events, ascending by seq.',
+      },
+      {
         signature: '@Remote({ mode: \'stream\' }) follow(request: SessionFollowRequest, signal: AbortSignal): AsyncIterable<SessionFollowFrame>',
         description: 'Follow one Session log from its opening or resume cursor.',
         parameters: [{ name: 'request', description: 'durable address and last committed sequence already held by the caller.' }, { name: 'signal', description: 'cancellation owned by the Remote stream carrier.' }],
@@ -5785,6 +5791,14 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface SessionEventWindow {\n    session: SessionHeader;\n    inheritedEventCount: SessionLogOffset;\n    target: SessionEvent;\n    events: SessionEvent[];\n    startSeq: SessionSeq;\n    endSeq: SessionSeq;\n}',
   },
   {
+    name: 'SessionExpandStepsRequest',
+    declaration: 'export interface SessionExpandStepsRequest {\n    readonly address: SessionAddress;\n    readonly throughSeq: number;\n    readonly turn: number;\n    readonly fromSeq?: number;\n}',
+  },
+  {
+    name: 'SessionExpandStepsValue',
+    declaration: 'export interface SessionExpandStepsValue {\n    readonly records: readonly SessionHistoryRecord[];\n}',
+  },
+  {
     name: 'SessionFeedbackRecordRequest',
     declaration: 'export interface SessionFeedbackRecordRequest {\n    readonly sessionId: SessionId;\n    readonly text?: string;\n    readonly category?: FeedbackCategory;\n}',
   },
@@ -5802,11 +5816,11 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'SessionFollowFrame',
-    declaration: 'export type SessionFollowFrame = {\n    readonly type: \'snapshot\';\n    readonly header: SessionWireHeader;\n    readonly cursor: number;\n    readonly records: readonly SessionHistoryRecord[];\n    readonly hasMore: boolean;\n    readonly projections: SessionProjectionBaseline;\n    readonly assistantStream?: SessionAssistantStreamBaseline;\n} | SessionEventEntry | {\n    readonly type: \'assistant-stream\';\n    readonly frame: SessionAssistantStreamFrame;\n};',
+    declaration: 'export type SessionFollowFrame = {\n    readonly type: \'snapshot\';\n    readonly header: SessionWireHeader;\n    readonly cursor: number;\n    readonly records: readonly SessionHistoryRecord[];\n    readonly hasMore: boolean;\n    readonly digests?: readonly StepDigest[];\n    readonly projections: SessionProjectionBaseline;\n    readonly assistantStream?: SessionAssistantStreamBaseline;\n} | SessionEventEntry | {\n    readonly type: \'assistant-stream\';\n    readonly frame: SessionAssistantStreamFrame;\n};',
   },
   {
     name: 'SessionFollowRequest',
-    declaration: 'export interface SessionFollowRequest {\n    readonly address: SessionAddress;\n    readonly maxMessages?: number;\n    readonly assistantStream?: true;\n}',
+    declaration: 'export interface SessionFollowRequest {\n    readonly address: SessionAddress;\n    readonly maxMessages?: number;\n    readonly assistantStream?: true;\n    readonly stepDetail?: SessionStepDetail;\n}',
   },
   {
     name: 'SessionForkRequest',
@@ -5845,8 +5859,12 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface SessionHeader {\n    readonly version: typeof SESSION_FORMAT_VERSION;\n    readonly id: SessionId;\n    readonly createdAt: number;\n    readonly cwd?: string;\n    readonly parentSession?: SessionId;\n    readonly isSeeded: boolean;\n    readonly origin?: \'subagent\';\n    readonly delegationDepth?: number;\n    readonly agentPreset?: string;\n}',
   },
   {
+    name: 'SessionHistoryCoverage',
+    declaration: 'export interface SessionHistoryCoverage {\n    readonly from: number;\n    readonly to: number;\n}',
+  },
+  {
     name: 'SessionHistoryRecord',
-    declaration: 'export type SessionHistoryRecord = SessionEventEntry;',
+    declaration: 'export interface SessionHistoryRecord extends SessionEventEntry {\n    readonly covers?: SessionHistoryCoverage;\n}',
   },
   {
     name: 'SessionId',
@@ -5910,11 +5928,11 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'SessionPage',
-    declaration: 'export interface SessionPage {\n    readonly records: readonly SessionHistoryRecord[];\n    readonly hasMore: boolean;\n}',
+    declaration: 'export interface SessionPage {\n    readonly records: readonly SessionHistoryRecord[];\n    readonly hasMore: boolean;\n    readonly digests?: readonly StepDigest[];\n}',
   },
   {
     name: 'SessionPageRequest',
-    declaration: 'export interface SessionPageRequest {\n    readonly address: SessionAddress;\n    readonly throughSeq: number;\n    readonly beforeSeq?: number;\n    readonly maxMessages?: number;\n}',
+    declaration: 'export interface SessionPageRequest {\n    readonly address: SessionAddress;\n    readonly throughSeq: number;\n    readonly beforeSeq?: number;\n    readonly maxMessages?: number;\n    readonly stepDetail?: SessionStepDetail;\n}',
   },
   {
     name: 'SessionPersistenceCreateOptions',
@@ -6059,6 +6077,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'SessionStartSource',
     declaration: 'export type SessionStartSource = \'startup\' | \'resume\' | \'clear\' | \'compact\';',
+  },
+  {
+    name: 'SessionStepDetail',
+    declaration: 'export type SessionStepDetail = \'full\' | \'collapsed\';',
   },
   {
     name: 'SessionStorageMetadata',
@@ -6319,6 +6341,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'SshStreamEndpoint',
     declaration: 'export type SshStreamEndpoint = z.infer<typeof streamEndpointSchema>;',
+  },
+  {
+    name: 'StepDigest',
+    declaration: 'export interface StepDigest {\n    readonly turn: number;\n    readonly step: number;\n    readonly startSeq: number;\n    readonly endSeq?: number;\n    readonly elided: number;\n    readonly steps: number;\n    readonly calls: number;\n    readonly files: number;\n    readonly added: number;\n    readonly removed: number;\n    readonly elapsedMs: number;\n    readonly inputTokens: number;\n    readonly outputTokens: number;\n}',
   },
   {
     name: 'StorageBackend',

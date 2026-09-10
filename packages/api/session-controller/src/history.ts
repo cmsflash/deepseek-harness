@@ -23,6 +23,8 @@ import type {
   SessionAddress,
   SessionAssistantStreamFrame,
   SessionEventEntry,
+  SessionExpandStepsRequest,
+  SessionExpandStepsValue,
   SessionFollowRequest,
   SessionFollowFrame,
   SessionHistoryRecord,
@@ -30,10 +32,13 @@ import type {
   SessionPageRequest,
   SessionProjectionBaseline,
   SessionProjectionValues,
+  SessionStepDetail,
   SessionWireHeader,
   SessionWireEvent,
+  StepDigest,
 } from './types.ts'
 import { SessionAssistantStreamAccumulator } from './assistant-stream.ts'
+import { collapseSteps, elidedEventsOfTurn } from './step-collapse.ts'
 
 const DEFAULT_MAX_MESSAGES = 50
 const MESSAGE_TYPES = new Set(['user/message', 'assistant/message'])
@@ -103,11 +108,36 @@ export class SessionHistoryController {
       request.maxMessages ?? DEFAULT_MAX_MESSAGES,
       throughSeq,
     )
-    const records = pageRecords(page.events)
     return {
-      records,
+      ...detailPage(page.events, sourceLog.slice(0, throughSeq + 1), request.stepDetail),
       hasMore: page.hasMore,
     }
+  }
+
+  /**
+   * Read back the events one collapsed page elided from a single turn, without
+   * activating an Agent.
+   * @param request - durable address, log cut, expanded turn, and window head.
+   * @param signal - caller cancellation for persistence reads.
+   * @returns that turn's withheld events at or after the window head, ascending by seq.
+   */
+  async expandSteps(request: SessionExpandStepsRequest, signal: AbortSignal): Promise<SessionExpandStepsValue> {
+    validateExpandStepsRequest(request)
+    using source = await this.sourceFor(request.address, signal, false)
+    signal.throwIfAborted()
+    const sourceLog = source.events
+    const sourceCursor: SessionSeqCursor = sourceLog.at(-1)?.seq ?? -1
+    if (request.throughSeq > sourceCursor) {
+      throw new RemoteError(
+        'gateway/bad-request',
+        `session expand through seq ${String(request.throughSeq)} is past cursor ${String(sourceCursor)}`,
+        {},
+      )
+    }
+    // Retention is decided over the same range a page decides it over: every
+    // event through the cut, so the two agree on which steps a turn withheld.
+    const scope = sourceLog.slice(0, request.throughSeq + 1)
+    return { records: pageRecords(elidedEventsOfTurn(scope, request.turn, request.fromSeq)) }
   }
 
   /**
@@ -193,7 +223,7 @@ export class SessionHistoryController {
         type: 'snapshot',
         header: wireHeader(source.header),
         cursor,
-        records: pageRecords(page.events),
+        ...detailPage(page.events, events, request.stepDetail),
         hasMore: page.hasMore,
         projections: source.projections === undefined
           ? { asOfSeq: cursor, values: {} }
@@ -326,6 +356,21 @@ function validateFollowRequest(request: SessionFollowRequest): void {
   }
 }
 
+function validateExpandStepsRequest(request: SessionExpandStepsRequest): void {
+  if (!Number.isSafeInteger(request.throughSeq)
+    || request.throughSeq < -1
+    || Object.is(request.throughSeq, -0)) {
+    throw new RemoteError('gateway/bad-request', 'throughSeq must be an integer greater than or equal to -1', {})
+  }
+  if (!Number.isSafeInteger(request.turn) || request.turn < 0 || Object.is(request.turn, -0)) {
+    throw new RemoteError('gateway/bad-request', 'turn must be a non-negative safe integer', {})
+  }
+  if (request.fromSeq !== undefined
+    && (!Number.isSafeInteger(request.fromSeq) || request.fromSeq < 0 || Object.is(request.fromSeq, -0))) {
+    throw new RemoteError('gateway/bad-request', 'fromSeq must be a non-negative safe integer', {})
+  }
+}
+
 function addressId(address: SessionAddress): SessionId {
   return address.kind === 'session' ? address.sessionId : address.childSessionId
 }
@@ -425,4 +470,43 @@ function entryFor(event: SessionEvent): SessionEventEntry {
 /** Encode one bounded logical page without changing its pagination cut. */
 function pageRecords(events: readonly SessionEvent[]): SessionHistoryRecord[] {
   return events.map(entryFor)
+}
+
+/**
+ * Encode one paginated range at the requested step detail. Under `collapsed`,
+ * elidable step interiors leave the records and return as digests; retention is
+ * decided over `scope`, the whole log through the cut, so a turn split across
+ * pages keeps the same steps whole on each. A page that would keep nothing (a
+ * one-message page inside one elidable step) is served whole instead, so every
+ * page carries at least one record.
+ */
+function detailPage(
+  page: readonly SessionEvent[],
+  scope: readonly SessionEvent[],
+  detail: SessionStepDetail | undefined,
+): { readonly records: SessionHistoryRecord[]; readonly digests?: readonly StepDigest[] } {
+  if (detail !== 'collapsed') return { records: pageRecords(page) }
+  const collapsed = collapseSteps(page, scope)
+  if (collapsed.digests.length === 0) return { records: pageRecords(page) }
+  if (collapsed.events.length === 0) return { records: pageRecords(page) }
+  return { records: coveringRecords(page, collapsed.events), digests: collapsed.digests }
+}
+
+/**
+ * Encode the kept events of a collapsed page so their inclusive ranges partition
+ * the page's seq range: each record stands for the withheld events before it,
+ * and the last record also for those after it.
+ * @param page - the complete contiguous page the kept events were drawn from.
+ * @param kept - the events the collapsed page serves, ascending by seq; non-empty.
+ * @returns records whose coverage joins end to end from the page's first seq to its last.
+ */
+function coveringRecords(page: readonly SessionEvent[], kept: readonly SessionEvent[]): SessionHistoryRecord[] {
+  const pageStart = (page[0] as SessionEvent).seq
+  const pageEnd = (page.at(-1) as SessionEvent).seq
+  return kept.map((event, index) => {
+    const from = index === 0 ? pageStart : (kept[index - 1] as SessionEvent).seq + 1
+    const to = index === kept.length - 1 ? pageEnd : event.seq
+    const record = entryFor(event)
+    return from === event.seq && to === event.seq ? record : { ...record, covers: { from, to } }
+  })
 }

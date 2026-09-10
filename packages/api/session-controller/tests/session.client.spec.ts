@@ -15,8 +15,8 @@ import { ok, type RemoteMock } from '@deepseek-ai/dsh-remote-mock'
 import { createClientTest, type TestClient, webApp } from '@deepseek-ai/dsh-client-test-runtime/src/assembly/index.ts'
 import { JUMP_PAGE_MESSAGES, Session } from '../src/client/sessions/session.ts'
 import { SessionEventStream } from '../src/client/transport.ts'
-import type { SessionFollowRequest, SessionPage, SessionPageRequest } from '../src/types.ts'
-import { entries, ev, historyValue, plainTurn } from './event-script.client.ts'
+import type { SessionExpandStepsValue, SessionFollowRequest, SessionPage, SessionPageRequest } from '../src/types.ts'
+import { collapsedRecords, entries, ev, historyValue, plainTurn } from './event-script.client.ts'
 import { sessionBench } from './remote/bench.client.ts'
 import {
   FOLLOW, PAGE, err, followScript, followSnapshot, frame, history, pageRule, pushEvent,
@@ -914,5 +914,139 @@ describe('snapshot ownership', () => {
     expect(windowAfter).not.toBe(windowBefore)
     expect(windowAfter.entries[0]).toBe(firstEntry)
     expect(windowAfter.change).toMatchObject({ kind: 'append' })
+  })
+})
+
+describe('collapsed step detail', () => {
+  /** A two-step turn at `startSeq`: step 1 is a tool round, step 2 carries the closing text. */
+  function twoStepTurn(startSeq: number, turn: number): SessionEvent[] {
+    const s = (offset: number) => SessionSeq(startSeq + offset)
+    return [
+      ev.turnStart(s(0), turn),
+      ev.user(s(1), '问'),
+      ev.stepStart(s(2), turn, 1),
+      ev.toolCall(s(3), turn, `c${String(turn)}`, 'read', '{}', 1),
+      ev.toolResult(s(4), turn, `c${String(turn)}`, 'ok', 1),
+      ev.assistant(s(5), turn, '', 1),
+      ev.stepEnd(s(6), turn, 1),
+      ev.stepStart(s(7), turn, 2),
+      ev.assistant(s(8), turn, '答', 2),
+      ev.stepEnd(s(9), turn, 2),
+      ev.turnEnd(s(10), turn),
+    ]
+  }
+
+  /** The collapsed form of {@link twoStepTurn}: step 1's interior withheld behind one digest. */
+  function collapsed(events: SessionEvent[], turn: number) {
+    const interior = new Set([3, 4, 5].map(offset => (events[0] as SessionEvent).seq + offset))
+    const startSeq = (events[0] as SessionEvent).seq
+    const served = events.filter(event => !interior.has(event.seq))
+    return {
+      served,
+      page: (hasMore: boolean) => ({ records: collapsedRecords(events, served), hasMore }),
+      withheld: events.filter(event => interior.has(event.seq)),
+      digest: {
+        turn, step: 1, startSeq: startSeq + 2, endSeq: startSeq + 6, elided: 3, steps: 1, calls: 1,
+        files: 0, added: 0, removed: 0, elapsedMs: 0, inputTokens: 0, outputTokens: 0,
+      },
+    }
+  }
+
+  it('requests collapsed pages, keeps their digests, and splices the withheld interior on expansion', async ({ mock, start }) => {
+    const turn = twoStepTurn(20, 1)
+    const { served, page, withheld, digest } = collapsed(turn, 1)
+    const session = await sessionBench(mock, start, SID, { stepDetail: 'collapsed' })
+    mock.stream(FOLLOW, followScript(ok({ ...page(false), digests: [digest] })))
+    mock.remote.session.expandSteps.mockResolvedValue(ok({ records: entries(withheld) }))
+    await session.open()
+
+    expect(mock.log.requests(FOLLOW)).toMatchObject([{ stepDetail: 'collapsed', maxMessages: 300 }])
+    expect(eventSeqs(session)).toEqual(served.map(event => event.seq))
+    expect(session.getSnapshot().stepDigests.get(1)).toEqual([digest])
+    expect(session.getSnapshot().stepAccounts.get(1)).toEqual([digest])
+
+    await session.expandTurn(1)
+    expect(mock.log.requests('session/expandSteps')).toMatchObject([{ turn: 1, fromSeq: 20, throughSeq: 30 }])
+    expect(eventSeqs(session)).toEqual(turn.map(event => event.seq))
+    expect(session.eventSource.getSnapshot().change.kind).toBe('splice')
+    expect(session.getSnapshot().stepDigests.has(1)).toBe(false)
+    expect(session.getSnapshot().stepAccounts.get(1)).toEqual([digest])
+    expect(session.getSnapshot().expandingTurns.size).toBe(0)
+  })
+
+  it('merges an older collapsed page ahead of held digests and bounds expansion to the window head', async ({ mock, start }) => {
+    const older = twoStepTurn(0, 1)
+    const newer = twoStepTurn(11, 2)
+    const olderPage = collapsed(older, 1)
+    const newerPage = collapsed(newer, 2)
+    const session = await sessionBench(mock, start, SID, { stepDetail: 'collapsed' })
+    mock.stream(FOLLOW, followScript(ok({ ...newerPage.page(true), digests: [newerPage.digest] })))
+    mock.remote.session.page.mockImplementation(pageRule(ok({ ...olderPage.page(false), digests: [olderPage.digest] })))
+    await session.open()
+    expect([...session.getSnapshot().stepDigests.keys()]).toEqual([2])
+
+    await session.loadOlder()
+    expect(mock.log.requests(PAGE)).toMatchObject([{ beforeSeq: 11, stepDetail: 'collapsed', maxMessages: 300 }])
+    expect([...session.getSnapshot().stepDigests.keys()].sort()).toEqual([1, 2])
+    expect(session.getSnapshot().stepDigests.get(1)).toEqual([olderPage.digest])
+
+    await session.expandTurn(7)
+    expect(mock.log.requests('session/expandSteps')).toHaveLength(0)
+  })
+
+  it('joins a repeated expansion onto the in-flight request and reports it as busy', async ({ mock, start }) => {
+    const turn = twoStepTurn(0, 1)
+    const { page, withheld, digest } = collapsed(turn, 1)
+    const session = await sessionBench(mock, start, SID, { stepDetail: 'collapsed' })
+    mock.stream(FOLLOW, followScript(ok({ ...page(false), digests: [digest] })))
+    const pending = Promise.withResolvers<RemoteResult<SessionExpandStepsValue>>()
+    mock.remote.session.expandSteps.mockReturnValue(pending.promise)
+    await session.open()
+
+    const first = session.expandTurn(1)
+    const second = session.expandTurn(1)
+    expect(session.getSnapshot().expandingTurns.has(1)).toBe(true)
+    await vi.waitFor(() => { expect(mock.log.requests('session/expandSteps')).toHaveLength(1) })
+    pending.resolve(ok({ records: entries(withheld) }))
+    await Promise.all([first, second])
+    expect(session.getSnapshot().expandingTurns.has(1)).toBe(false)
+    expect(eventSeqs(session)).toEqual(turn.map(event => event.seq))
+  })
+
+  it('leaves the window and digests unchanged when expansion fails', async ({ mock, start }) => {
+    const turn = twoStepTurn(0, 1)
+    const { served, page, digest } = collapsed(turn, 1)
+    const session = await sessionBench(mock, start, SID, { stepDetail: 'collapsed' })
+    mock.stream(FOLLOW, followScript(ok({ ...page(false), digests: [digest] })))
+    mock.remote.session.expandSteps.mockResolvedValue(err(new RemoteError('gateway/internal', 'boom', {})))
+    await session.open()
+
+    await session.expandTurn(1)
+    expect(eventSeqs(session)).toEqual(served.map(event => event.seq))
+    expect(session.getSnapshot().stepDigests.get(1)).toEqual([digest])
+    expect(session.getSnapshot().expandingTurns.size).toBe(0)
+  })
+
+  it('re-opens an open window when the step detail changes, and only then', async ({ mock, start }) => {
+    const turn = twoStepTurn(0, 1)
+    const { served, page, digest } = collapsed(turn, 1)
+    const session = await sessionBench(mock, start, SID)
+    mock.stream(FOLLOW, followScript(request => ok(request.stepDetail === 'collapsed'
+      ? { ...page(false), digests: [digest] }
+      : historyValue(turn, false))))
+    await session.setStepDetail('collapsed')
+    expect(mock.log.requests(FOLLOW)).toHaveLength(0)
+    await session.open()
+    expect(mock.log.requests(FOLLOW)).toHaveLength(1)
+    expect(eventSeqs(session)).toEqual(served.map(event => event.seq))
+
+    await session.setStepDetail('collapsed')
+    expect(mock.log.requests(FOLLOW)).toHaveLength(1)
+
+    await session.setStepDetail('full')
+    expect(mock.log.requests(FOLLOW)).toHaveLength(2)
+    expect(eventSeqs(session)).toEqual(turn.map(event => event.seq))
+    expect(session.getSnapshot().stepDigests.size).toBe(0)
+    expect(session.getSnapshot().stepAccounts.size).toBe(0)
   })
 })

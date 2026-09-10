@@ -882,6 +882,14 @@ workspaceDesktop(): { name: string; available: boolean; fileManager: 'finder' | 
 @Remote('page') page(request: SessionPageRequest, signal: AbortSignal): Promise<SessionPage>
 
 /**
+ * Read back the events one collapsed history page withheld from a single turn.
+ * @param request - durable address, log cut, expanded turn, and window head.
+ * @param signal - cancellation for persistence reads.
+ * @returns that turn's withheld events, ascending by seq.
+ */
+@Remote('expandSteps') expandSteps(request: SessionExpandStepsRequest, signal: AbortSignal): Promise<SessionExpandStepsValue>
+
+/**
  * Follow one Session log from its opening or resume cursor.
  * @param request - durable address and last committed sequence already held by the caller.
  * @param signal - cancellation owned by the Remote stream carrier.

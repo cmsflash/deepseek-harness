@@ -170,6 +170,13 @@ export interface ChatViewInjected {
   loadOlder: () => void
   /** Jump loader: page history back through seq; resolves when the window covers it. */
   loadThrough: (seq: SessionSeq) => Promise<void>
+  /**
+   * Read back the steps a collapsed history page withheld from one turn, so
+   * the rows can render once the reader opens it. Only a row reporting
+   * withheld steps needs it; a turn whose steps are already loaded expands
+   * without any request.
+   */
+  expandTurn: (turn: number) => Promise<void>
   loadImage: MessageImageLoader
   chatScroll: {
     save: (position: ChatScrollPosition | null) => void

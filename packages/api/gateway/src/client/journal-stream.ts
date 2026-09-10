@@ -159,6 +159,17 @@ export abstract class RemoteJournalStream<
   }
 
   /**
+   * Inclusive journal cursor the published window currently reaches, for
+   * domain reads that must not outrun it.
+   * @returns the current cursor.
+   * @throws when the stream has not published its opening window.
+   */
+  protected cursor(): Cursor {
+    if (!this.opened || this.disposed) throw new Error(`${this.options.name} is not open`)
+    return this.currentCursor()
+  }
+
+  /**
    * Establish follow and publish the opening snapshot carried by its first frame.
    * @param request - initial tail-page request.
    * @returns after the first complete window is published.

@@ -1830,7 +1830,7 @@ describe('Workspace tree grouping', () => {
     expect(b.props.insertWorkspaceBefore).toHaveBeenCalledExactlyOnceWith(root.workspaceId, undefined)
     rerender(b, { useWorkspaces: hook(workspaceState([team, child, other, outside, root])) })
     expect(screen.getAllByRole('treeitem').map(row => row.textContent)).toEqual([
-      'outside', 'Projects', 'Team', 'Child', 'other',
+      'outside0', 'Projects0', 'Team0', 'Child0', 'other0',
     ])
     expect(within(section('Team')).getByText('Child')).toBeTruthy()
   })

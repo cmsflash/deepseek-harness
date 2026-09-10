@@ -9,6 +9,7 @@ import type { SubagentAddress } from '@deepseek-ai/dsh-subagent/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { WorkspaceId } from '@deepseek-ai/dsh-workspace/types'
 import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
+import type { SessionStepDetail } from '../../types.ts'
 import type { AgentContext } from '../scope.ts'
 import type { SessionSearchResultItem } from '../sessions/manager.ts'
 import type { SessionBinding, SessionListState } from '../sessions/service.ts'
@@ -107,6 +108,15 @@ export interface ISessions {
    */
   refreshSubagents(parentSessionId: SessionId): Promise<void>
 
+  /**
+   * Choose how much of each step every Session's history pages carry.
+   * Deployment-wide rather than per Session: it follows one reading
+   * preference, and a Session opened later pages the same way as one already
+   * open. A change re-opens the windows that are already loaded.
+   * @param detail - whole steps, or boundaries plus digests for elidable ones.
+   * @returns completion of the rebuilds a change triggers.
+   */
+  setStepDetail(detail: SessionStepDetail): Promise<void>
   /**
    * Refresh the Host-authoritative Session list.
    * @returns completion of the current or newly started Session-list refresh.

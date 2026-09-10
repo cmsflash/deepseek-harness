@@ -12,7 +12,12 @@ import type { MessageId } from '@deepseek-ai/dsh-llm/brand'
 import type { SessionId, SessionSeq } from '@deepseek-ai/dsh-session/types'
 import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
 import type { ObservableSnapshot } from '@deepseek-ai/dsh-client-store'
-import type { PromptContentPart, QueueAction, SessionRequestId } from '../../types.ts'
+import type {
+  PromptContentPart,
+  QueueAction,
+  SessionRequestId,
+  SessionStepDetail,
+} from '../../types.ts'
 import type { PendingSubmissionAttachment, SessionSnapshot } from './snapshot.ts'
 
 /**
@@ -131,6 +136,25 @@ export interface ISession {
    * @returns completion once covered, exhausted, superseded, or failed soft.
    */
   loadThrough(seq: SessionSeq): Promise<void>
+  /**
+   * Choose how much of each step this session's pages carry. The object layer
+   * owns the fetch strategy; a UI preference reaches it here rather than the
+   * Session reading a preference itself. A change re-opens the window, because
+   * a window mixing detail levels would render the same kind of step
+   * differently depending on when its page was fetched.
+   * @param detail - whole steps, or boundaries plus digests for elidable ones.
+   * @returns completion of the rebuild a change triggers.
+   */
+  setStepDetail(detail: SessionStepDetail): Promise<void>
+  /**
+   * Load the steps one collapsed page withheld from a single turn and splice
+   * them into the window. Concurrent gestures for the same turn join the
+   * in-flight request; a turn with nothing withheld returns without a request.
+   * `snapshot.expandingTurns` is the busy signal.
+   * @param turn - the turn the reader opened.
+   * @returns completion; a failure leaves the window and its digests unchanged.
+   */
+  expandTurn(turn: number): Promise<void>
   /**
    * Execute one slash-command line against this session's agent — pure
    * admission semantics (the host executor durably logs the lifecycle).

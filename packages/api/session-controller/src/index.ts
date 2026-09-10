@@ -33,6 +33,8 @@ import type {
   SessionControlFrame,
   SessionCreateRequest,
   SessionCreateValue,
+  SessionExpandStepsRequest,
+  SessionExpandStepsValue,
   SessionFollowFrame,
   SessionFollowRequest,
   SessionForkRequest,
@@ -388,6 +390,17 @@ export class SessionController extends TypertRemoteService {
   @Remote('page')
   page(request: SessionPageRequest, signal: AbortSignal): Promise<SessionPage> {
     return this.history.page(request, signal)
+  }
+
+  /**
+   * Read back the events one collapsed history page withheld from a single turn.
+   * @param request - durable address, log cut, expanded turn, and window head.
+   * @param signal - cancellation for persistence reads.
+   * @returns that turn's withheld events, ascending by seq.
+   */
+  @Remote('expandSteps')
+  expandSteps(request: SessionExpandStepsRequest, signal: AbortSignal): Promise<SessionExpandStepsValue> {
+    return this.history.expandSteps(request, signal)
   }
 
   /**

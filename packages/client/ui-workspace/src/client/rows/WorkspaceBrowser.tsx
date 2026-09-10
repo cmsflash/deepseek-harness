@@ -793,16 +793,6 @@ export function WorkspaceBrowser({
   const workspacePhase = useWorkspaces(state => state.phase)
   const workspaceStreamState = useWorkspaces(state => state.state)
   const archivedSessionIds = useWorkspaces(state => state.archivedSessionIds)
-  const sessionList = useSessions(s => s)
-  const sessionPendingInteractions = useSessionPendingInteraction(s => s)
-  // Every visible session across all Workspaces, Ungrouped included. The flat
-  // derivation admits exactly the rows the grouped tree does, so this total
-  // matches the sum of the group counts in either view mode and stays
-  // independent of which groups are expanded.
-  const totalSessionCount = useMemo(
-    () => deriveFlat(sessionList, archivedSessionIds, sessionPendingInteractions).length,
-    [sessionList, archivedSessionIds, sessionPendingInteractions],
-  )
   // Live occupancy of this surface's directory-flow hole (the same source the
   // flow reads): a composition without a picking affordance can add nothing.
   const directoryFlowAvailable = useDirectoryFlow(occupied => occupied)
@@ -824,6 +814,7 @@ export function WorkspaceBrowser({
     () => visibleSessionIds(list, archivedSessionIds),
     [archivedSessionIds, list],
   )
+  const totalSessionCount = flatMemberIds.length
   const orderedWorkspaces = useMemo(() => workspaces.map((workspace) => {
     const memberIds = workspace.sessionIds
     const baseOrder = orderBy === 'updated'

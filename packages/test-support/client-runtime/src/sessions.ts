@@ -11,7 +11,7 @@ import type {
   SessionSnapshot, SessionSummary, SessionTarget, SubmissionHandle,
 } from '@deepseek-ai/dsh-api-session-controller/client'
 import { scopeIdentityOf } from '@deepseek-ai/dsh-api-session-controller/src/client/scope.ts'
-import type { SessionRequestId } from '@deepseek-ai/dsh-api-session-controller/types'
+import type { SessionRequestId, SessionStepDetail } from '@deepseek-ai/dsh-api-session-controller/types'
 import type { SubagentAddress } from '@deepseek-ai/dsh-subagent/client'
 import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
 import type { ObservableSnapshot, SnapshotStore } from '@deepseek-ai/dsh-client-store'
@@ -171,6 +171,22 @@ export class FixtureSession implements SessionFace {
   }
 
   /**
+   * Fixtures publish complete snapshots, so a detail change has no page to re-fetch.
+   * @returns resolved.
+   */
+  setStepDetail(): Promise<void> {
+    return Promise.resolve()
+  }
+
+  /**
+   * Fail-loud stub; supply `expandTurn` on the fixture's session face to exercise it.
+   * @returns never — always throws.
+   */
+  expandTurn(): never {
+    throw new Error(`test session "${this.sessionId}": expandTurn is not stubbed — supply it on the fixture's session face`)
+  }
+
+  /**
    * Fail-loud stub; supply `rename` on the fixture's session face to exercise it.
    * @returns never — always throws.
    */
@@ -311,7 +327,7 @@ export class TestSessions implements ISessions {
 
   /** Calls observed on the service-level face, newest last. */
   readonly calls: {
-    method: 'create' | 'setSubagentCatalogOpen' | 'refreshSubagents' | 'refresh' | 'search' | 'fork'
+    method: 'create' | 'setSubagentCatalogOpen' | 'refreshSubagents' | 'refresh' | 'search' | 'fork' | 'setStepDetail'
     args: unknown[]
   }[] = []
 
@@ -652,6 +668,16 @@ export class TestSessions implements ISessions {
   /** Record a list refresh; fixture callers publish list state explicitly. */
   refresh(): Promise<void> {
     this.calls.push({ method: 'refresh', args: [] })
+    return Promise.resolve()
+  }
+
+  /**
+   * Record the deployment-wide step detail; fixtures publish complete windows, so nothing re-pages.
+   * @param detail - requested step detail.
+   * @returns resolved.
+   */
+  setStepDetail(detail: SessionStepDetail): Promise<void> {
+    this.calls.push({ method: 'setStepDetail', args: [detail] })
     return Promise.resolve()
   }
 
