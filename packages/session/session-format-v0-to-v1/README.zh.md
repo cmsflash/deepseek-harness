@@ -44,7 +44,7 @@ const targetInheritedEventCount = stage.finish(migrationContext)
 
 Alpha 迁移边会拒绝冻结清单之外的所有事件类型，包括带有 `ignorable: true` 标记的未知事件。它也会拒绝意外的 payload 成员。`tool/result.meta` 与嵌套 PTC `arguments` 是显式的不透明 JSON 字段；迁移会原样保留它们，不把其中的数字解释为会话序号。内容块中未知的 `type` 分支、消息来源中未知的 `kind` 分支、assistant 结束原因中未知的 `kind` 分支与 `turn/end` 原因中未知的 `kind` 分支保持 owner-opaque JSON，已知分支则接受结构校验。
 
-有限的历史规范化会把 `steering/message` 转换为 `user/message`、把 `compact/*` 事件重命名为 `compaction/*`、移除 `turn/start.trigger`、转换已停用的 `turn/end` reason、添加当前消息包装层，并为旧消息、retry chain 与压缩（compaction）组补充确定性 id，同时移除已停用且重复的 `request/header.header.messagePrefix`。已停用的 `request/header-delta`、`mode/set` 和 `request/header` fallback reason 会使迁移失败。除此之外，任何事件、引用、来源或 payload 事实都不得改变。
+有限的历史规范化会把 `steering/message` 转换为 `user/message`、把 `compact/*` 事件重命名为 `compaction/*`、移除 `turn/start.trigger`、转换已停用的 `turn/end` reason、添加当前消息包装层，并为旧消息、retry chain 与压缩（compaction）组补充确定性 id，移除已停用且重复的 `request/header.header.messagePrefix`，并把已发布的 `subagent/descriptor` version 2 payload 标记为 version 3（version 3 仅新增了可选的 `agentReasoningEffort` 成员，已发布的键集合不变；携带该成员的 version 2 payload 会被拒绝）。`assistant/message`、`assistant/chunk` 与 `compaction/summary` 上的 token `usage` 在整数计数之外接受已发布的 `costUsd` 计费金额，它必须是非负有限数。已停用的 `request/header-delta`、`mode/set`、`request/header` fallback reason，以及 2 和 3 以外的 descriptor version 会使迁移失败。除此之外，任何事件、引用、来源或 payload 事实都不得改变。
 
 -----
 

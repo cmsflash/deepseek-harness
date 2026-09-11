@@ -238,6 +238,55 @@ describe('released v0 legacy normalization', () => {
     ]).events[1]).toMatchObject({ data: { reason: { kind: 'future-reason' } } })
   })
 
+  it('promotes released descriptor version 2 to version 3 without other payload changes', () => {
+    const descriptor = (data: Record<string, unknown>) => ({
+      type: 'subagent/descriptor', seq: 0, time: 1, data,
+    })
+    const continuable = {
+      version: 2, mode: 'continuable', provider: 'spawn', label: 'Research pricing',
+      agentProvider: 'litellm', agentModel: 'research-model',
+    }
+    const oneShot = { version: 2, mode: 'one-shot', provider: 'spawn', label: 'Audit' }
+    const scoped = { ...continuable, persona: 'reviewer', toolFilter: { deny: ['bash'] } }
+    for (const data of [continuable, oneShot, scoped]) {
+      expect(migrate([descriptor(data)]).events).toEqual([descriptor({ ...data, version: 3 })])
+    }
+    const current = { ...continuable, version: 3, agentReasoningEffort: 'high' }
+    expect(migrate([descriptor(current)]).events).toEqual([descriptor(current)])
+
+    expect(() => migrate([descriptor({ ...continuable, agentReasoningEffort: 'high' })]))
+      .toThrow(/unexpected member "agentReasoningEffort"/)
+    expect(() => migrate([descriptor({ ...oneShot, agentModel: 'm' })])).toThrow(/unexpected member "agentModel"/)
+    expect(() => migrate([descriptor({ ...continuable, agentModel: undefined, agentProvider: 'litellm' })]))
+      .toThrow(/must be paired/)
+    expect(() => migrate([descriptor({ ...continuable, version: 1 })])).toThrow(SessionFormatUnsupportedMigrationError)
+    expect(() => migrate([descriptor({ ...continuable, version: 4 })])).toThrow(SessionFormatUnsupportedMigrationError)
+  })
+
+  it('preserves the released billed cost member on every usage carrier', () => {
+    const usage = { inputTokens: 65430, outputTokens: 283, costUsd: 0.188056 }
+    const rows = [
+      { type: 'turn/start', seq: 0, time: 1, data: { turn: 1 } },
+      { type: 'step/start', seq: 1, time: 2, data: { turn: 1, step: 1 } },
+      { type: 'assistant/chunk', seq: 2, time: 3, data: { turn: 1, step: 1, chunk: { type: 'usage', usage } } },
+      { type: 'assistant/chunk', seq: 3, time: 4, data: { turn: 1, step: 1, chunk: { type: 'finish', reason: { kind: 'stop' } } } },
+      {
+        type: 'assistant/message', seq: 4, time: 5, surfaceOp: 'append', sourceEventSeqs: [2, 3],
+        data: {
+          turn: 1, step: 1, usage,
+          message: { id: 'a', role: 'assistant', content: [{ type: 'text', text: 'hi' }], source: { kind: 'model', provider: 'p', model: 'm' } },
+        },
+      },
+      { type: 'step/end', seq: 5, time: 6, data: { turn: 1, step: 1 } },
+      { type: 'turn/end', seq: 6, time: 7, data: { turn: 1, reason: { kind: 'completed' } } },
+    ]
+    expect(migrate(rows).events).toEqual(rows)
+    const negative = rows.map(row => row.seq === 4
+      ? { ...row, data: { ...row.data, usage: { ...usage, costUsd: -1 } } }
+      : row)
+    expect(() => migrate(negative)).toThrow(/costUsd must not be negative/)
+  })
+
   it('refuses a legacy replacement whose cited message has no imported identity', () => {
     expect(() => migrate([
       { type: 'turn/start', seq: 0, time: 1, data: { turn: 1 } },
