@@ -7,7 +7,7 @@ import {
   assertFixtureInventory, compareOrRefreshGolden, launchWebScaffold, seedSession, watchConsole, webSnapshotMode,
 } from './scaffold.ts'
 import { createChatScrollFixture } from './chat-scroll-fixture.ts'
-import { connectFreshWorkspace, newEnglishPage, saveFailureShot } from './support.ts'
+import { connectFreshWorkspace, connectFreshWorkspacePhone, newEnglishPage, saveFailureShot } from './support.ts'
 
 const SNAPSHOT_DIR = fileURLToPath(new URL('./expected/composer-focus', import.meta.url))
 const EXPECTED = join(SNAPSHOT_DIR, 'focus.expected.md')
@@ -240,7 +240,7 @@ it('keeps mobile submission keyboard navigation in the composer while retaining 
         })
         try {
           await page.goto(scaffold.authenticatedUrl)
-          await connectFreshWorkspace(page, scaffold.workspaceCwd, `submission-${platform}`)
+          await connectFreshWorkspacePhone(page, scaffold.workspaceCwd, `submission-${platform}`)
           const input = page.locator('[data-composer-input][contenteditable="true"]')
           await input.fill('Reply with a one-sentence description of event sourcing, then stop.')
           expect(await input.evaluate(element => document.activeElement === element)).toBe(true)

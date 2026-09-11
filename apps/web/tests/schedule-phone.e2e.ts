@@ -25,6 +25,12 @@ interface ViewFacts {
 /** Open the Automation tasks page and return its panel. */
 async function openTaskManager(page: Page, url: string): Promise<Locator> {
   await page.goto(url, { waitUntil: 'load' })
+  const opener = page.getByRole('button', { name: '打开侧边栏', exact: true })
+  if ((await opener.count()) > 0 && (await opener.isVisible())) await opener.click()
+  else {
+    const openerEn = page.getByRole('button', { name: 'Open sidebar', exact: true })
+    if ((await openerEn.count()) > 0 && (await openerEn.isVisible())) await openerEn.click()
+  }
   await page.getByRole('button', { name: '自动化任务', exact: true }).click()
   const panel = page.getByTestId('task-manager-page')
   await panel.getByRole('heading', { name: '自动化任务', exact: true }).waitFor({ timeout: 30_000 })

@@ -36,6 +36,7 @@ export const ja = {
   'back': '戻る',
   'brand.localBuild': 'DSHローカルビルド',
   'workspace.defaultName': 'デフォルトワークスペース',
+  'sidebar.open': 'サイドバーを開く',
   'unknown': '不明',
   'none': 'なし',
   'truncated': '切り詰め済み',

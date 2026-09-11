@@ -185,6 +185,7 @@
     "apps/web/tests/prompt-admission.e2e.ts",
     "apps/web/tests/idle-submission-handoff.e2e.ts",
     "apps/web/tests/queue-image.e2e.ts",
+    "apps/web/tests/mobile-viewport.e2e.ts",
     "apps/web/tests/skill-invocation-policy.e2e.ts",
     "apps/web/tests/skill-user-invoke.e2e.ts",
     "apps/web/tests/skill-menu-plugin-change.e2e.ts",

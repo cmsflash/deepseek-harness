@@ -56,6 +56,8 @@ it('stacks font fields at narrow widths while keeping font-size controls on the 
     try {
       const page = await context.newPage()
       await page.goto(scaffold.authenticatedUrl, { waitUntil: 'load' })
+      const opener1 = page.getByRole('button', { name: '打开侧边栏', exact: true })
+      if ((await opener1.count()) > 0 && (await opener1.isVisible())) await opener1.click()
       await openSettings(page, 'zh')
       const dialog = page.getByRole('dialog', { name: '设置', exact: true })
       await dialog.getByRole('button', { name: '更多字体设置', exact: true }).click()
@@ -111,6 +113,8 @@ it('uses 16px text for coarse-pointer font fields and preserves compact fine-poi
     try {
       const page = await context.newPage()
       await page.goto(scaffold.authenticatedUrl, { waitUntil: 'load' })
+      const opener2 = page.getByRole('button', { name: '打开侧边栏', exact: true })
+      if ((await opener2.count()) > 0 && (await opener2.isVisible())) await opener2.click()
       await openSettings(page, 'zh')
       const dialog = page.getByRole('dialog', { name: '设置', exact: true })
       await dialog.getByRole('button', { name: '更多字体设置', exact: true }).click()

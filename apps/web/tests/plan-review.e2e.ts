@@ -22,7 +22,7 @@ import {
   compareOrRefreshGolden, fixtureUserPrompts,
   launchWebScaffold, recordFixture, seedSession, watchConsole, webSnapshotMode, type WebScaffold,
 } from './scaffold.ts'
-import { connectFreshWorkspace, newEnglishPage, saveFailureShot } from './support.ts'
+import { connectFreshWorkspace, connectFreshWorkspacePhone, newEnglishPage, saveFailureShot } from './support.ts'
 
 const SNAPSHOT_DIR = fileURLToPath(new URL('../../../snapshots/web/plan-review', import.meta.url))
 const FIXTURE = join(SNAPSHOT_DIR, 'session.v3.jsonl')
@@ -414,7 +414,7 @@ describe('web e2e: dismissed plan history', () => {
       await page.setViewportSize({ width: 620, height: 900 })
       const tripwire = watchConsole(page)
       await page.goto(scaffold.authenticatedUrl, { waitUntil: 'load' })
-      await connectFreshWorkspace(page, scaffold.workspaceCwd)
+      await connectFreshWorkspacePhone(page, scaffold.workspaceCwd)
       const input = page.locator('[data-composer-input]').first()
       const settled = scaffold.whenTurnSettled(30_000)
       await input.fill(LINE)

@@ -36,6 +36,7 @@ export const de = {
   'back': 'Zurück',
   'brand.localBuild': 'Lokaler DSH-Build',
   'workspace.defaultName': 'Standardarbeitsbereich',
+  'sidebar.open': 'Seitenleiste öffnen',
   'unknown': 'Unbekannt',
   'none': 'Keine',
   'truncated': 'Abgeschnitten',

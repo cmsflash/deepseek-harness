@@ -95,12 +95,9 @@ it('preserves both header layouts and follows the scroll position without changi
             expect(initial.tabs).toEqual(resting.tabs)
             if (hasTabs && width <= 600) {
               const tabs = initial.tabs!
-              if (width === 390) {
-                expect(initial.toolbar.y).toBeGreaterThanOrEqual(tabs.y + tabs.height)
-              } else {
-                expect(initial.toolbar.x).toBeGreaterThanOrEqual(tabs.x + tabs.width)
-                expect(initial.toolbar.y + initial.toolbar.height / 2).toBeCloseTo(tabs.y + tabs.height / 2, 5)
-              }
+              // Phone drawer gives 56px more width, so 390px still fits beside tabs (wraps only below ~340px).
+              expect(initial.toolbar.x).toBeGreaterThanOrEqual(tabs.x + tabs.width)
+              expect(initial.toolbar.y + initial.toolbar.height / 2).toBeCloseTo(tabs.y + tabs.height / 2, 5)
             }
             const refresh = await page.getByRole('button', { name: 'Refresh', exact: true }).elementHandle()
             if (refresh === null) throw new Error('The refresh control is missing')

@@ -278,6 +278,8 @@ describe('web e2e: settings modal and General preferences', () => {
     onTestFailed(() => saveSettingsFailureShot(phone, 'web-e2e-settings-phone'))
     const console = watchConsole(phone)
     await phone.goto(scaffold.authenticatedUrl, { waitUntil: 'load' })
+    // A phone keeps the sidebar, and its account menu, in a closed overlay drawer.
+    await phone.getByRole('button', { name: '打开侧边栏', exact: true }).click()
     await openSettings(phone, 'zh')
     const dialog = phone.getByRole('dialog', { name: '设置', exact: true })
     await dialog.waitFor({ timeout: 10_000 })

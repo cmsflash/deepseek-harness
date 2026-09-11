@@ -8,7 +8,7 @@ import {
   acknowledgeReloadConnectionLoss, assertFixtureInventory, captureStableAria, compareOrRefreshGolden,
   fixtureUserPrompts, launchWebScaffold, watchConsole, type WebScaffold,
 } from './scaffold.ts'
-import { connectFreshWorkspace, newEnglishPage } from './support.ts'
+import { connectFreshWorkspacePhone, newEnglishPage } from './support.ts'
 
 const directory = fileURLToPath(new URL('../../../snapshots/web/creation-recommendations', import.meta.url))
 const fixture = join(directory, 'session.v4.jsonl')
@@ -31,7 +31,7 @@ describe('creation recommendation after an explicit wish', () => {
     const tripwire = watchConsole(page)
     await page.setViewportSize({ width: 620, height: 900 })
     await page.goto(scaffold.authenticatedUrl, { waitUntil: 'load' })
-    await connectFreshWorkspace(page, scaffold.workspaceCwd)
+    await connectFreshWorkspacePhone(page, scaffold.workspaceCwd)
     const input = page.locator('[data-composer-input]').first()
     const settled = scaffold.whenTurnSettled()
     await input.fill(fixtureUserPrompts(await readFile(fixture, 'utf8'))[0]!)

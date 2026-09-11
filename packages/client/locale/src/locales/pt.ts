@@ -36,6 +36,7 @@ export const pt = {
   'back': 'Voltar',
   'brand.localBuild': 'Versão local do DSH',
   'workspace.defaultName': 'Espaço de trabalho padrão',
+  'sidebar.open': 'Abrir barra lateral',
   'unknown': 'Desconhecido',
   'none': 'Nenhum',
   'truncated': 'Truncado',

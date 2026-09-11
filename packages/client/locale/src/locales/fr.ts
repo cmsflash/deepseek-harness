@@ -36,6 +36,7 @@ export const fr = {
   'back': 'Retour',
   'brand.localBuild': 'Version locale de DSH',
   'workspace.defaultName': 'Espace de travail par défaut',
+  'sidebar.open': 'Ouvrir la barre latérale',
   'unknown': 'Inconnu',
   'none': 'Aucun',
   'truncated': 'Tronqué',

@@ -269,7 +269,7 @@ describe('web e2e: plugin manager', () => {
       await add.focus()
       for (const [width, icons, narrowTabs, wraps] of [
         [1280, false, false, false], [600, true, false, false],
-        [470, true, true, false], [390, true, true, true], [300, true, true, true],
+        [470, true, false, false], [390, true, true, false], [300, true, true, true],
       ] as const) {
         await probe.setViewportSize({ width, height: 480 })
         await body.evaluate((element) => { element.scrollTop = 180 })
