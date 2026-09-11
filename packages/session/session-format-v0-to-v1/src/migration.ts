@@ -95,7 +95,8 @@ function normalizeReleasedV0Event(
   const steering = normalizeLegacySteering(header, sessionId)
   const retry = normalizeLegacyRetry(steering, sessionId, state.retryIds)
   const compaction = normalizeLegacyCompaction(retry, sessionId, state)
-  const message = normalizeLegacyMessage(compaction, sessionId, state.messageIds)
+  const descriptor = normalizeLegacySubagentDescriptor(compaction)
+  const message = normalizeLegacyMessage(descriptor, sessionId, state.messageIds)
   if (message.type !== 'assistant/chunk') assertReleasedEventPayload(message, 0)
   const messageId = eventMessageId(message)
   if (messageId !== undefined) state.messageIds.set(message.seq, messageId)
@@ -196,6 +197,29 @@ function normalizeLegacyCompaction(
       },
     },
   }
+}
+
+/** Descriptor members released by v0 writers stamping descriptor version 2. */
+const RELEASED_DESCRIPTOR_V2_BASE = ['version', 'mode', 'provider'] as const
+const RELEASED_DESCRIPTOR_V2_CONTINUABLE = ['label', 'agentProvider', 'agentModel', 'persona', 'toolFilter'] as const
+
+/**
+ * Promote the released descriptor version 2 to version 3. Version 3 added only
+ * the optional `agentReasoningEffort` member, so a released v2 payload is a
+ * valid v3 payload under its own key set; a v2 payload carrying a member outside
+ * that released set is refused rather than reinterpreted.
+ */
+function normalizeLegacySubagentDescriptor(event: SessionFormatEvent): SessionFormatEvent {
+  if (event.type !== 'subagent/descriptor') return event
+  const data = releasedV0Record(event.data, `subagent/descriptor ${event.seq} data`)
+  if (data['version'] !== 2) return event
+  const label = `subagent/descriptor ${event.seq} data`
+  if (data['mode'] === 'one-shot') {
+    assertReleasedV0Keys(data, RELEASED_DESCRIPTOR_V2_BASE, ['label'], label)
+  } else {
+    assertReleasedV0Keys(data, RELEASED_DESCRIPTOR_V2_BASE, RELEASED_DESCRIPTOR_V2_CONTINUABLE, label)
+  }
+  return { ...event, data: { ...data, version: 3 } }
 }
 
 function addLegacyCompactionId(
