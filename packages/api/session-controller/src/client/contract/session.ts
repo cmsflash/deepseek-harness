@@ -137,22 +137,31 @@ export interface ISession {
    */
   loadThrough(seq: SessionSeq): Promise<void>
   /**
-   * Choose how much of each step this session's pages carry. The object layer
-   * owns the fetch strategy; a UI preference reaches it here rather than the
-   * Session reading a preference itself. A change re-opens the window, because
-   * a window mixing detail levels would render the same kind of step
-   * differently depending on when its page was fetched.
+   * Set the preferred detail for future pages without discarding loaded events.
+   * Full detail restores any withheld events in the current interval. An active
+   * full-history consumer takes precedence over this preference.
    * @param detail - whole steps, or boundaries plus digests for elidable ones.
-   * @returns completion of the rebuild a change triggers.
+   * @returns completion of any required full-detail recovery; failures remain in the snapshot.
    */
   setStepDetail(detail: SessionStepDetail): Promise<void>
+  /**
+   * Require full event detail for this Session object's remaining lifetime.
+   * Before opening finishes this arms the opening's recovery; an errored source
+   * is reopened. An open window recovers in place without changing its head or
+   * discarding live assistant frames. Concurrent calls on the same source join
+   * its recovery; failed reads preserve withheld markers for retry.
+   * @returns current recovery completion, or immediately when arming a cold/loading source;
+   * snapshot.loadingStepDetail and stepDetailError report full-detail recovery.
+   */
+  requireFullHistory(): Promise<void>
   /**
    * Load the steps one collapsed page withheld from a single turn and splice
    * them into the window. Concurrent gestures for the same turn join the
    * in-flight request; a turn with nothing withheld returns without a request.
    * `snapshot.expandingTurns` is the busy signal.
    * @param turn - the turn the reader opened.
-   * @returns completion; a failure leaves the window and its digests unchanged.
+   * @returns completion; failure or window replacement applies no stale result.
+   * The current snapshot remains authoritative and a superseded gesture may be retried.
    */
   expandTurn(turn: number): Promise<void>
   /**

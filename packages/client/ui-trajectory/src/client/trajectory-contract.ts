@@ -57,6 +57,8 @@ export interface TrajectoryConversationViewNode extends ConversationViewNode {
   readonly target: 'trajectory'
   readonly anchorSeq: number
   readonly location: ConversationLocation
+  /** Retain a materialized key when later history makes its contribution redundant. */
+  readonly visibility?: 'hidden'
   readonly data: TrajectoryContribution
 }
 

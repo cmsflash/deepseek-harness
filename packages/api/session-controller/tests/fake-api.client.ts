@@ -144,6 +144,7 @@ export class FakeApiClient {
   onHistory: (payload: {
     sessionId: SessionId
     throughSeq?: number
+    fromSeq?: number
     beforeSeq?: number
     maxMessages?: number
     stepDetail?: SessionStepDetail
@@ -354,6 +355,7 @@ export class FakeApiClient {
       ? {
         sessionId,
         throughSeq: request.throughSeq,
+        ...request.fromSeq === undefined ? {} : { fromSeq: request.fromSeq },
         ...request.beforeSeq === undefined ? {} : { beforeSeq: request.beforeSeq },
         ...request.maxMessages === undefined ? {} : { maxMessages: request.maxMessages },
         ...request.stepDetail === undefined ? {} : { stepDetail: request.stepDetail },
@@ -363,6 +365,7 @@ export class FakeApiClient {
         childSessionId: request.address.childSessionId,
         mode: request.address.mode,
         throughSeq: request.throughSeq,
+        ...request.fromSeq === undefined ? {} : { fromSeq: request.fromSeq },
         ...request.beforeSeq === undefined ? {} : { beforeSeq: request.beforeSeq },
         ...request.maxMessages === undefined ? {} : { maxMessages: request.maxMessages },
         ...request.stepDetail === undefined ? {} : { stepDetail: request.stepDetail },
@@ -371,6 +374,7 @@ export class FakeApiClient {
     const result = await this.record(method, payload, response ?? this.onHistory({
       sessionId,
       throughSeq: request.throughSeq,
+      ...request.fromSeq === undefined ? {} : { fromSeq: request.fromSeq },
       ...request.beforeSeq === undefined ? {} : { beforeSeq: request.beforeSeq },
       ...request.maxMessages === undefined ? {} : { maxMessages: request.maxMessages },
       ...request.stepDetail === undefined ? {} : { stepDetail: request.stepDetail },

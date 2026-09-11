@@ -2,6 +2,7 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { SessionSeq, type SessionEvent } from '@deepseek-ai/dsh-session/types'
+import { LlmAttemptId } from '@deepseek-ai/dsh-llm'
 import type { SessionId } from '@deepseek-ai/dsh-api-remotes/client'
 import { RemoteStreamCarrierError } from '@deepseek-ai/dsh-api-gateway/client'
 import { RemoteError } from '@deepseek-ai/dsh-typert-protocol'
@@ -413,6 +414,7 @@ describe('prompt and cancel errors', () => {
         },
         assistantStream: true,
         maxMessages: 50,
+        stepDetail: 'full',
       },
     ])
     expect(api.callsOf('subagent.history')).toEqual([])
@@ -541,6 +543,7 @@ describe('prompt and cancel errors', () => {
         },
         assistantStream: true,
         maxMessages: 50,
+        stepDetail: 'full',
       },
     ])
     expect(api.callsOf('subagent.history')).toEqual([])
@@ -1090,6 +1093,7 @@ describe('collapsed step detail', () => {
 
     const first = session.expandTurn(1)
     const second = session.expandTurn(1)
+    expect(second).toBe(first)
     expect(session.getSnapshot().expandingTurns.has(1)).toBe(true)
     expect(api.callsOf('session.expandSteps')).toHaveLength(1)
     pending.resolve(ok({ records: entries(withheld) }))
@@ -1112,7 +1116,7 @@ describe('collapsed step detail', () => {
     expect(session.getSnapshot().expandingTurns.size).toBe(0)
   })
 
-  it('re-opens an open window when the step detail changes, and only then', async () => {
+  it('promotes detail in place and retains materialized events when the preference is lowered', async () => {
     const turn = twoStepTurn(0, 1)
     const { served, page, digest } = collapsed(turn, 1)
     const { api, session } = makeSession()
@@ -1120,19 +1124,252 @@ describe('collapsed step detail', () => {
       ? { ...page(false), digests: [digest] }
       : historyValue(turn, false)))
     await session.setStepDetail('collapsed')
-    // Cold: nothing to rebuild yet, the detail simply arms the first open.
     expect(api.callsOf('session.follow')).toHaveLength(0)
     await session.open()
-    expect(api.callsOf('session.follow')).toHaveLength(1)
     expect(eventSeqs(session)).toEqual(served.map(event => event.seq))
 
     await session.setStepDetail('collapsed')
-    expect(api.callsOf('session.follow')).toHaveLength(1)
-
+    expect(api.callsOf('session.history')).toHaveLength(0)
     await session.setStepDetail('full')
-    expect(api.callsOf('session.follow')).toHaveLength(2)
+    expect(api.callsOf('session.follow')).toHaveLength(1)
+    expect(api.callsOf('session.history')).toEqual([
+      { sessionId: SID, fromSeq: 0, throughSeq: 10, stepDetail: 'full' },
+    ])
     expect(eventSeqs(session)).toEqual(turn.map(event => event.seq))
     expect(session.getSnapshot().stepDigests.size).toBe(0)
-    expect(session.getSnapshot().stepAccounts.size).toBe(0)
+    expect(session.getSnapshot().stepAccounts.get(1)).toEqual([digest])
+
+    await session.setStepDetail('collapsed')
+    expect(eventSeqs(session)).toEqual(turn.map(event => event.seq))
+    expect(api.callsOf('session.follow')).toHaveLength(1)
+  })
+
+  it('restores all previously paged turns rather than reopening only the tail', async () => {
+    const older = twoStepTurn(0, 1)
+    const newer = twoStepTurn(11, 2)
+    const before = collapsed(older, 1)
+    const tail = collapsed(newer, 2)
+    const { api, session } = makeSession(new FakeApiClient(), { stepDetail: 'collapsed' })
+    api.onHistory = request => Promise.resolve(ok(request.fromSeq !== undefined
+      ? historyValue([...older, ...newer], false)
+      : request.beforeSeq !== undefined
+        ? { ...before.page(false), digests: [before.digest] }
+        : { ...tail.page(true), digests: [tail.digest] }))
+    await session.open()
+    await session.loadOlder()
+    const head = session.eventSource.getSnapshot().entries[0]
+
+    await session.requireFullHistory()
+    expect(eventSeqs(session)).toEqual([...older, ...newer].map(event => event.seq))
+    expect(session.eventSource.getSnapshot().entries[0]).toBe(head)
+    expect(session.getSnapshot()).toMatchObject({
+      hasMore: false, loadingStepDetail: false, stepDetailError: null,
+    })
+    expect(session.getSnapshot().stepDigests.size).toBe(0)
+    expect(api.callsOf('session.follow')).toHaveLength(1)
+    expect(api.callsOf('session.history').at(-1)).toEqual({
+      sessionId: SID, fromSeq: 0, throughSeq: 21, stepDetail: 'full',
+    })
+  })
+
+  it('joins full-detail recovery and keeps its errors retryable without losing history', async () => {
+    const turn = twoStepTurn(0, 1)
+    const { page, digest, served } = collapsed(turn, 1)
+    const { api, session } = makeSession(new FakeApiClient(), { stepDetail: 'collapsed' })
+    const pending = deferred<Awaited<ReturnType<FakeApiClient['onHistory']>>>()
+    api.onHistory = request => request.fromSeq === undefined
+      ? Promise.resolve(ok({ ...page(false), digests: [digest] }))
+      : pending.promise
+    await session.open()
+    const first = session.requireFullHistory()
+    expect(session.requireFullHistory()).toBe(first)
+    expect(session.getSnapshot().loadingStepDetail).toBe(true)
+    pending.resolve(err(new RemoteError('gateway/internal', 'retry this read', {})))
+    await first
+    expect(eventSeqs(session)).toEqual(served.map(event => event.seq))
+    expect(session.getSnapshot()).toMatchObject({
+      openState: 'open', loadingStepDetail: false,
+      stepDetailError: { message: 'retry this read' },
+    })
+    expect(session.getSnapshot().stepDigests.get(1)).toEqual([digest])
+
+    api.onHistory = () => histResponse(turn)
+    await session.requireFullHistory()
+    expect(eventSeqs(session)).toEqual(turn.map(event => event.seq))
+    expect(session.getSnapshot()).toMatchObject({ loadingStepDetail: false, stepDetailError: null })
+    expect(session.getSnapshot().stepDigests.size).toBe(0)
+  })
+
+  it.each(['missing-record', 'unexpected-digest'] as const)('refuses a %s full-range response without clearing withheld markers', async (invalid) => {
+    const turn = twoStepTurn(0, 1)
+    const { page, digest, served } = collapsed(turn, 1)
+    const { api, session } = makeSession(new FakeApiClient(), { stepDetail: 'collapsed' })
+    const invalidPage = invalid === 'missing-record'
+      ? historyValue(turn.slice(1), false)
+      : { ...historyValue(turn, false), digests: [digest] }
+    api.onHistory = request => Promise.resolve(ok(request.fromSeq === undefined
+      ? { ...page(false), digests: [digest] }
+      : invalidPage))
+    await session.open()
+    await session.requireFullHistory()
+    expect(eventSeqs(session)).toEqual(served.map(event => event.seq))
+    expect(session.getSnapshot().stepDigests.get(1)).toEqual([digest])
+    expect(session.getSnapshot().stepDetailError?.message).toBe('session full-detail interval is incomplete')
+  })
+
+  it('repeats recovery for older omissions that arrived during the read', async () => {
+    const older = twoStepTurn(0, 1)
+    const newer = twoStepTurn(11, 2)
+    const before = collapsed(older, 1)
+    const tail = collapsed(newer, 2)
+    const { api, session } = makeSession(new FakeApiClient(), { stepDetail: 'collapsed' })
+    const olderRead = deferred<Awaited<ReturnType<FakeApiClient['onHistory']>>>()
+    const fullRead = deferred<Awaited<ReturnType<FakeApiClient['onHistory']>>>()
+    api.onHistory = (request) => {
+      if (request.fromSeq === 11) return fullRead.promise
+      if (request.fromSeq === 0) return histResponse([...older, ...newer])
+      if (request.beforeSeq !== undefined) return olderRead.promise
+      return Promise.resolve(ok({ ...tail.page(true), digests: [tail.digest] }))
+    }
+    await session.open()
+    const paging = session.loadOlder()
+    const filling = session.requireFullHistory()
+    olderRead.resolve(ok({ ...before.page(false), digests: [before.digest] }))
+    await paging
+    fullRead.resolve(ok(historyValue(newer, true)))
+    await filling
+    expect(eventSeqs(session)).toEqual([...older, ...newer].map(event => event.seq))
+    expect(session.getSnapshot().stepDigests.size).toBe(0)
+    expect(api.callsOf('session.history')).toContainEqual({
+      sessionId: SID, fromSeq: 0, throughSeq: 21, stepDetail: 'full',
+    })
+  })
+
+  it('pins full detail for future pages after a consumer requires it', async () => {
+    const older = twoStepTurn(0, 1)
+    const newer = twoStepTurn(11, 2)
+    const { api, session } = makeSession(new FakeApiClient(), { stepDetail: 'collapsed' })
+    await session.requireFullHistory()
+    await session.setStepDetail('collapsed')
+    api.onHistory = request => histResponse(request.beforeSeq === undefined ? newer : older, request.beforeSeq === undefined)
+    await session.open()
+    await session.loadOlder()
+    expect(api.callsOf('session.follow')).toMatchObject([{ stepDetail: 'full', maxMessages: 50 }])
+    expect(api.callsOf('session.history')).toEqual([
+      { sessionId: SID, beforeSeq: 11, throughSeq: 21, maxMessages: 50, stepDetail: 'full' },
+    ])
+  })
+
+  it.each(['success', 'failure'] as const)('ignores stale recovery %s after a Session resync', async (outcome) => {
+    const old = twoStepTurn(0, 1)
+    const replacement = twoStepTurn(11, 2)
+    const { page, digest } = collapsed(old, 1)
+    const { api, session } = makeSession(new FakeApiClient(), { stepDetail: 'collapsed' })
+    const late = deferred<Awaited<ReturnType<FakeApiClient['onHistory']>>>()
+    api.onHistory = request => request.fromSeq === undefined
+      ? Promise.resolve(ok({ ...page(true), digests: [digest] }))
+      : late.promise
+    await session.open()
+    const filling = session.requireFullHistory()
+    api.onHistory = () => histResponse(replacement, true)
+    await session.resync()
+    late.resolve(outcome === 'success'
+      ? ok(historyValue(old, false))
+      : err(new RemoteError('gateway/internal', 'stale failure', {})))
+    await filling
+    expect(eventSeqs(session)).toEqual(replacement.map(event => event.seq))
+    expect(session.getSnapshot().stepDetailError).toBeNull()
+    expect(session.getSnapshot().loadingStepDetail).toBe(false)
+  })
+
+  it('recovers an opening snapshot when full detail is requested while its read is pending', async () => {
+    const turn = twoStepTurn(0, 1)
+    const { page, digest } = collapsed(turn, 1)
+    const { api, session } = makeSession(new FakeApiClient(), { stepDetail: 'collapsed' })
+    const openingPage = deferred<Awaited<ReturnType<FakeApiClient['onHistory']>>>()
+    api.onHistory = request => request.fromSeq === undefined ? openingPage.promise : histResponse(turn)
+    const opening = session.open()
+    await vi.waitFor(() => { expect(api.callsOf('session.follow')).toHaveLength(1) })
+    await session.requireFullHistory()
+    openingPage.resolve(ok({ ...page(false), digests: [digest] }))
+    await opening
+    expect(eventSeqs(session)).toEqual(turn.map(event => event.seq))
+    expect(session.getSnapshot().stepDigests.size).toBe(0)
+    expect(api.callsOf('session.follow')).toHaveLength(1)
+  })
+
+  it('retries an errored journal when a full-detail consumer requests recovery', async () => {
+    const { api, session } = makeSession(new FakeApiClient(), { stepDetail: 'collapsed' })
+    api.onHistory = () => Promise.resolve(err(new RemoteError('gateway/internal', 'offline', {})))
+    await session.open()
+    expect(session.getSnapshot().openState).toBe('error')
+    const turn = twoStepTurn(0, 1)
+    api.onHistory = () => histResponse(turn)
+    await session.requireFullHistory()
+    expect(session.getSnapshot()).toMatchObject({ openState: 'open', openError: null })
+    expect(eventSeqs(session)).toEqual(turn.map(event => event.seq))
+    expect(api.callsOf('session.follow').at(-1)).toMatchObject({ stepDetail: 'full' })
+  })
+
+  it.each(['success', 'failure'] as const)('ignores a late recovery %s after physical follow replacement', async (outcome) => {
+    const old = twoStepTurn(0, 1)
+    const newer = twoStepTurn(11, 2)
+    const { page, digest } = collapsed(old, 1)
+    const { api, session } = makeSession(new FakeApiClient(), { stepDetail: 'collapsed' })
+    const pending = deferred<Awaited<ReturnType<FakeApiClient['onHistory']>>>()
+    api.onHistory = request => request.fromSeq === undefined
+      ? Promise.resolve(ok({ ...page(true), digests: [digest] }))
+      : pending.promise
+    await session.open()
+    const filling = session.requireFullHistory()
+    api.onHistory = () => histResponse(newer, true)
+    api.endStreams()
+    await vi.waitFor(() => { expect(eventSeqs(session)).toEqual(newer.map(event => event.seq)) })
+    pending.resolve(outcome === 'success' ? ok(historyValue(old, false))
+      : err(new RemoteError('gateway/internal', 'obsolete response', {})))
+    await filling
+    expect(eventSeqs(session)).toEqual(newer.map(event => event.seq))
+    expect(session.getSnapshot().stepDetailError).toBeNull()
+    expect(api.callsOf('session.follow').at(-1)).toMatchObject({ stepDetail: 'full' })
+    await session.dispose()
+  })
+
+  it('preserves the active Assistant prefix and its terminal commit barrier during recovery', async () => {
+    const historical = twoStepTurn(0, 1)
+    const { page, digest } = collapsed(historical, 1)
+    const live = [
+      ev.turnStart(SessionSeq(11), 2), ev.user(SessionSeq(12), 'live'),
+      ev.stepStart(SessionSeq(13), 2, 1), ev.assistant(SessionSeq(14), 2, 'settled', 1),
+    ]
+    const { api, session } = makeSession(new FakeApiClient(), { stepDetail: 'collapsed' })
+    api.onHistory = request => Promise.resolve(ok(request.fromSeq === undefined
+      ? { ...page(false), digests: [digest] }
+      : historyValue([...historical, ...live], false)))
+    await session.open()
+    for (const event of live.slice(0, 3)) await follow(api, event)
+    const attemptId = LlmAttemptId('qa-full-history:1')
+    await api.pushFollow(SID, { type: 'assistant-stream', frame: {
+      type: 'start', attemptId, revision: 1, startedAfterSeq: SessionSeq(13), turn: 2, step: 1,
+    } })
+    await api.pushFollow(SID, { type: 'assistant-stream', frame: {
+      type: 'chunk', attemptId, revision: 2, index: 0, time: 99,
+      chunk: { type: 'text-delta', index: 0, text: 'still streaming' },
+    } })
+    await follow(api, live[3] as SessionEvent)
+    expect(eventSeqs(session)).not.toContain(14)
+    const transient = windowEntries(session).find(entry => entry.type === 'transient')
+    expect(transient).toBeDefined()
+
+    await session.requireFullHistory()
+    expect(windowEntries(session)).toContain(transient)
+    expect(eventSeqs(session)).not.toContain(14)
+    expect(session.getSnapshot().stepDigests.size).toBe(0)
+    await api.pushFollow(SID, { type: 'assistant-stream', frame: {
+      type: 'end', attemptId, revision: 3, index: 1,
+      outcome: { kind: 'committed', eventType: 'assistant/message', seq: 14 },
+    } })
+    expect(eventSeqs(session)).toEqual([...historical, ...live].map(event => event.seq))
+    expect(windowEntries(session).some(entry => entry.type === 'transient')).toBe(false)
+    expect(api.callsOf('session.follow')).toHaveLength(1)
   })
 })

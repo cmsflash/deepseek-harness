@@ -1,7 +1,7 @@
 /** Client range access and type narrowing for aligned Session history records. */
 
 import type {
-  SessionHistoryRecord,
+  SessionHistoryCoverage, SessionHistoryRecord,
 } from '../../types.ts'
 import type { SessionEventLikeEntry } from '../contract/events.ts'
 
@@ -14,6 +14,34 @@ export function historyEntries(
   records: readonly SessionHistoryRecord[],
 ): readonly SessionEventLikeEntry[] {
   return records as unknown as readonly SessionEventLikeEntry[]
+}
+
+/**
+ * Select only interiors covered by the captured history pages. A range read
+ * may also contain a live Assistant settlement whose end frame has not arrived;
+ * that event must stay owned by the Assistant stream rather than enter via splice.
+ * @param records - validated full-detail records.
+ * @param window - immutable window captured before the read.
+ * @returns historical interiors eligible for insertion into that window.
+ */
+export function historyInteriorEntries(
+  records: readonly SessionHistoryRecord[],
+  window: readonly SessionEventLikeEntry[],
+): readonly SessionEventLikeEntry[] {
+  const ranges: SessionHistoryCoverage[] = []
+  for (const entry of window) {
+    if (entry.type !== 'event' || entry.covers === undefined) continue
+    const { from, to } = entry.covers
+    const { seq } = entry.event
+    if (from < seq) ranges.push({ from, to: seq - 1 })
+    if (to > seq) ranges.push({ from: seq + 1, to })
+  }
+  let index = 0
+  return historyEntries(records.filter(({ event }) => {
+    let range = ranges[index]
+    while (range !== undefined && range.to < event.seq) range = ranges[++index]
+    return range !== undefined && range.from <= event.seq
+  }))
 }
 
 /**

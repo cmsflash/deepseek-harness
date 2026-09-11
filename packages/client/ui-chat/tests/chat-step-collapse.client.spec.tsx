@@ -61,6 +61,7 @@ const SESSION = {
   queue: [], pendingSubmissions: [], running: false, openState: 'open', openError: null,
   hasMore: false, loadingOlder: false,
   stepDigests: new Map(), stepAccounts: new Map(), expandingTurns: new Set(),
+  loadingStepDetail: false, stepDetailError: null,
 } as unknown as SessionSnapshot
 
 interface MountOptions {

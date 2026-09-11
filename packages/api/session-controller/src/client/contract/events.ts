@@ -2,6 +2,7 @@
 import { notifySubscribers, type ObservableSnapshot } from '@deepseek-ai/dsh-client-store'
 import type { LlmAttemptId, StreamChunk } from '@deepseek-ai/dsh-llm'
 import type { SessionEvent } from '@deepseek-ai/dsh-session/types'
+import type { SessionHistoryCoverage } from '../../types.ts'
 
 /** Client-only live chunk presentation; `seq` orders the transient row between durable Session seqs. */
 export interface AssistantLiveChunkEvent {
@@ -21,7 +22,12 @@ export type SessionEventLike = SessionEvent | AssistantLiveChunkEvent
 
 /** Client history entry retaining its coarse transport discriminator. */
 export type SessionEventLikeEntry =
-  | { readonly type: 'event'; readonly event: SessionEvent }
+  | {
+    readonly type: 'event'
+    readonly event: SessionEvent
+    /** Original page coverage, retained after expansion; stepDigests reports remaining omissions. */
+    readonly covers?: SessionHistoryCoverage
+  }
   | { readonly type: 'transient'; readonly event: AssistantLiveChunkEvent }
 
 /** Scalar live entry accepted by append-only Client paths. */

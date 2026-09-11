@@ -312,6 +312,7 @@ describe('subagent catalogs', () => {
         },
         assistantStream: true,
         maxMessages: 50,
+        stepDetail: 'full',
       },
     ])
     expect(api.callsOf('subagent.history')).toEqual([])

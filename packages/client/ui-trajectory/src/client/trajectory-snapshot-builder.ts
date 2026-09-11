@@ -186,8 +186,9 @@ export class TrajectorySnapshotBuilder implements ConversationViewBuilder<
   }
 
   private snapshot(): TrajectorySnapshot {
+    const contributions = this.contributions.filter(node => node.visibility !== 'hidden')
     const headersByStep = new Map<string, StepHeaders>()
-    for (const contribution of this.contributions) {
+    for (const contribution of contributions) {
       if (contribution.data.kind !== 'request-header') continue
       const key = headerStepKey(contribution.data.header)
       if (key === undefined) continue
@@ -199,7 +200,7 @@ export class TrajectorySnapshotBuilder implements ConversationViewBuilder<
           : previous?.change === undefined ? {} : { change: previous.change }),
       })
     }
-    const representedPrompts = new Set(this.contributions.flatMap(node =>
+    const representedPrompts = new Set(contributions.flatMap(node =>
       node.data.kind === 'request-header' && node.data.header.change !== undefined ? [node.data.header.change.seq] : []))
     const systemPrompts: NonNullable<TrajectorySnapshot['systemPrompts']>[number][] = []
     const finalized: ConversationNode[] = []
@@ -219,7 +220,7 @@ export class TrajectorySnapshotBuilder implements ConversationViewBuilder<
     let partial: TrajectorySnapshot['partial'] = null
     const runningCalls: TrajectorySnapshot['runningCalls'][number][] = []
 
-    for (const contribution of this.contributions) {
+    for (const contribution of contributions) {
       const data = contribution.data
       if (data.kind === 'system-prompt') {
         if (!representedPrompts.has(data.prompt.seq)) systemPrompts.push(data.prompt)

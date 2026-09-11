@@ -63,6 +63,8 @@ function sessionSnapshot(openState: SessionSnapshot['openState']): SessionSnapsh
     stepDigests: new Map(),
     stepAccounts: new Map(),
     expandingTurns: new Set(),
+    loadingStepDetail: false,
+    stepDetailError: null,
     promptError: null,
     blank: false,
     lastAgentError: null,

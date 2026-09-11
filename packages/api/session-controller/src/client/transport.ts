@@ -19,6 +19,7 @@ import type {
   SessionPage,
   SessionPageRequest,
   SessionProjectionBaseline,
+  SessionStepDetail,
 } from '../types.ts'
 import {
   historyEntries,
@@ -35,7 +36,7 @@ export {
 } from '../types.ts'
 
 /** Pagination fields bound to an already-addressed Session journal. */
-export type ClientSessionPageRequest = Omit<SessionPageRequest, 'address' | 'throughSeq'>
+export type ClientSessionPageRequest = Omit<SessionPageRequest, 'address' | 'throughSeq' | 'fromSeq'>
 
 /** Complete generated `ctx.remote.session` namespace. */
 export type SessionRemote = ClientRemote['session']
@@ -98,6 +99,8 @@ export interface SessionControlStreamOptions {
 
 /** Domain sinks used by one addressed Session event journal. */
 export interface SessionEventStreamOptions {
+  /** Resolve the current consumer requirement for every physical follow and page read. */
+  readonly stepDetail?: () => SessionStepDetail
   /** Apply one complete event-window change. */
   readonly publish: (change: SessionJournalChange) => void
   /** Observe a retryable carrier loss before reconnection. */
@@ -141,6 +144,8 @@ export class SessionEventStream extends RemoteJournalStream<
   ClientSessionPageRequest,
   SessionAssistantStreamFrame
 > {
+  private readonly stepDetail: (() => SessionStepDetail) | undefined
+
   /**
    * @param remote - generated Session namespace and Gateway stream factory.
    * @param address - durable ordinary-Session or direct-subagent address.
@@ -166,6 +171,33 @@ export class SessionEventStream extends RemoteJournalStream<
         : { carrierFailed: options.carrierFailed }),
       failed: options.failed,
     })
+    this.stepDetail = options.stepDetail
+  }
+
+  /**
+   * Read every durable event in the currently held interval, without reopening follow.
+   * @param fromSeq - inclusive head of the caller's loaded window.
+   * @returns complete records through the cursor captured when the request starts.
+   */
+  async readFullRange(fromSeq: number): Promise<readonly SessionHistoryRecord[]> {
+    const throughSeq = this.cursor()
+    const result = await this.remote.session.page(
+      { address: this.address, fromSeq, throughSeq, stepDetail: 'full' },
+      this.signal,
+    )
+    if (!result.ok) throw result.error
+    const { records, digests } = result.value
+    for (const record of records) assertSessionWireEvent(record.event)
+    if (records.length !== throughSeq - fromSeq + 1
+      || records.some((record, index) => record.event.seq !== fromSeq + index || record.covers !== undefined)
+      || (digests !== undefined && digests.length > 0)) {
+      throw new RemoteError('gateway/internal', 'session full-detail interval is incomplete', { fromSeq, throughSeq })
+    }
+    return records
+  }
+
+  private resolveRequest(request: ClientSessionPageRequest): ClientSessionPageRequest {
+    return this.stepDetail === undefined ? request : { ...request, stepDetail: this.stepDetail() }
   }
 
   /**
@@ -194,11 +226,12 @@ export class SessionEventStream extends RemoteJournalStream<
     SessionHistoryRecord, number, SessionJournalPage, SessionAssistantStreamFrame
   >> {
     let assistantRevision: number | undefined
+    const resolved = this.resolveRequest(request)
     for await (const frame of this.remote.session.follow({
       address: this.address,
       assistantStream: true,
-      ...(request.maxMessages === undefined ? {} : { maxMessages: request.maxMessages }),
-      ...(request.stepDetail === undefined ? {} : { stepDetail: request.stepDetail }),
+      ...(resolved.maxMessages === undefined ? {} : { maxMessages: resolved.maxMessages }),
+      ...(resolved.stepDetail === undefined ? {} : { stepDetail: resolved.stepDetail }),
     }, signal)) {
       if (frame.type === 'snapshot') {
         for (const record of frame.records) assertSessionWireEvent(record.event)
@@ -246,7 +279,7 @@ export class SessionEventStream extends RemoteJournalStream<
     signal: AbortSignal,
   ): Promise<SessionJournalPage> {
     const result = await this.remote.session.page(
-      { address: this.address, throughSeq, ...request },
+      { address: this.address, throughSeq, ...this.resolveRequest(request) },
       signal,
     )
     if (!result.ok) throw result.error
