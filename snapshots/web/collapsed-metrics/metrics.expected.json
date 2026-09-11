@@ -1,0 +1,24 @@
+{
+  "live": {
+    "steps": "1 steps",
+    "calls": "1 calls",
+    "added": "+1",
+    "removed": "-0 lines",
+    "files": "1 files"
+  },
+  "reloaded": {
+    "steps": "1 steps",
+    "calls": "1 calls",
+    "added": "+1",
+    "removed": "-0 lines",
+    "files": "1 files"
+  },
+  "expanded": {
+    "steps": "1 steps",
+    "calls": "1 calls",
+    "added": "+1",
+    "removed": "-0 lines",
+    "files": "1 files"
+  },
+  "file": "hello world"
+}

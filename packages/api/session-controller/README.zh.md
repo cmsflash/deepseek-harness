@@ -27,7 +27,9 @@ kind: "package-reference"
 
 历史页与 follow opening 快照为每个持久 Session 事件携带一条 `{ type: 'event', event: SessionWireEvent }` record。Client 把每条已接受 record 保留为一个持久 `SessionEventLikeEntry`；Assistant token 边界保留在 `assistant/message` 或 `assistant/attempt` 的紧凑流内。工具参数、结果内容、失败信息和 `tool/result.data.meta` 原样通过；控制器不解析工具定义、不运行展示转换器，也不附加 UI 数据。
 
-两个端点都接受 `stepDetail`。在 `collapsed` 下，读者不在看的 step——既不是其轮次的最高 step，也不是携带该轮次收尾 assistant 文本的 step，在截止点之前的整份日志上判定——只保留其 `step/start` 与 `step/end` 记录，并获得一条 `StepDigest`（事件数、模型与工具调用数、来自 `tool/result.data.meta.diffs` 的文件与差异行数、墙钟时间与计费 token）；每段被扣住的事件之后的记录携带 `covers`，即它所代表的闭区间 seq 范围，因此一页的记录仍然划分其范围。`expandSteps` 读回一个轮次在窗口头部及之后被扣住的事件。折叠后会变空的页整页下发（[决策](../../../.agents/notes/implemented/architecture/2026-09-01-collapsed-step-digest-paging.zh.md)）。
+两个端点都接受 `stepDetail`。在 `collapsed` 下，读者不在看的 step——既不是其轮次的最高 step，也不是携带该轮次收尾 assistant 文本的 step，在截止点之前的整份日志上判定——只保留其 `step/start` 与 `step/end` 记录，并获得一条 `StepDigest`；每段被扣住的事件之后的记录携带 `covers`，即它所代表的闭区间 seq 范围，因此一页的记录仍然划分其范围。嵌套 PTC 记录继承其根调用的 step。`expandSteps` 读回一个轮次在窗口头部及之后被扣住的事件。折叠后会变空的页整页下发（[决策](../../../.agents/notes/implemented/architecture/2026-09-01-collapsed-step-digest-paging.zh.md)）。
+
+digest 记录的是截止点之前完整 step 的账目，而不是单页的账目：模型调用数、已落定的根级与嵌套工具调用数、去重后的已记录 `filePaths`、增删行数、墙钟时间与计费 token 无论由哪一页携带都相同，只有 `elided` 统计该页扣住的事件数。step 或其轮次关闭后，没有落定结果的根级或嵌套调用起点计为一次中断调用；对已记录结果的 compaction 替换不增加调用数。文件指标通过共享的 [`appliedFileDiffs`](../../core/tools/README.zh.md) 读取已记录的调用头、结果状态与 `tool/result.data.meta`：成功的 `write` 若结果未持久化任何 hunk，则回退到其参数中的整文件映像，因此新建与内容相同的覆盖报告相同的行量。持有同一 step 多个分页片段的 Client 只保留一份账目，仅对其 `elided` 计数求和。
 
 Client journal 在发布 follow 快照、live entry 或历史页之前验证精确的 V3 事件 envelope。它复用浏览器安全的 Session validator，检查必需的 surface marker、精确的 replacement endpoint、更早且唯一的 source seq、内嵌 Assistant 提供方元数据、request header 可选字段的省略规则以及工具错误一致性。无效 record 直接失败，不删除字段或归一化；范围成员与来源存在性仍由 Host 的持久日志检查。
 

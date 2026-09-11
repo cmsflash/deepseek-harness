@@ -739,6 +739,45 @@ The backends that consume this contract are on [persistence.md](persistence.md).
 
 `SessionOpenWorkspacePathRequest` carries an absolute or workspace-resolved `path`; optional `action: "reveal"` selects file-manager navigation instead of default-application opening. `SessionOpenWorkspacePathValue` confirms that the Host accepted the native handoff. A Session-aware Client resolves relative paths against its current Session cwd when known; the controller hands the path to the opener unchanged and reports invalid requests, cancellation, and opener failures through the Session Remote error vocabulary.
 
+## Remote history paging: `StepDigest`
+
+A `StepDigest` is one whole-step account served with a collapsed history page from the Session Controller (`page` and `follow` under `stepDetail: 'collapsed'`). Every figure except `elided` is computed over the step's complete event range through the requested cut, so the same step reports the same `steps`, `calls`, `filePaths`, `added`, `removed`, `elapsedMs`, and tokens from whichever page carries it, and a Client holding several page fragments keeps one account per step and sums only `elided`. `calls` counts settled root results and settled nested PTC dispatches; once the step or its turn is closed, a root or nested start without a settlement counts as an interrupted call, while a still-running call counts nothing. Nested PTC records take the step of their recorded root call. File volume follows the shared [`appliedFileDiffs`](tools.md#settled-tool-call-record) reading, and a compaction replacement that is not an appended result adds no call. `filePaths` retains distinct paths rather than a count so a turn deduplicates a file edited in several steps. The controller's [package reference](../../packages/api/session-controller/README.md) owns paging and expansion behavior.
+
+```ts type-equiv
+/**
+ * What one elided step did, computed over the whole step rather than the
+ * loaded window.
+ *
+ * The client renders its collapsed summary row from these figures instead of
+ * folding the events it no longer has, so the row reports the step's real
+ * cost even before expansion, and stays correct regardless of where the page
+ * boundary fell.
+ */
+interface StepDigest {
+  readonly turn: number
+  readonly step: number
+  /** Step-start seq, or the step's first scoped event when its start is unlogged. */
+  readonly startSeq: number
+  /** Seq of the step's `step/end`, absent for a step whose end is unlogged. */
+  readonly endSeq?: number
+  /** Elided events withheld from this page, the exact count a later expansion returns. */
+  readonly elided: number
+  /** Settled model calls in this step: 1, or 0 when the step logged no assistant message. */
+  readonly steps: number
+  /** Settled tool calls. */
+  readonly calls: number
+  /** Distinct changed paths, retained so a turn can deduplicate files across its steps. */
+  readonly filePaths: readonly string[]
+  readonly added: number
+  readonly removed: number
+  /** `step/start` to final `assistant/message` wall time; 0 when either boundary is unrecorded. */
+  readonly elapsedMs: number
+  /** Billed prompt-side tokens: uncached input plus cache reads and writes. */
+  readonly inputTokens: number
+  readonly outputTokens: number
+}
+```
+
 <!-- BEGIN GENERATED cordis-surface (gen-cordis-catalog.ts) — do not edit between markers -->
 
 <a id="cordis-surface"></a>

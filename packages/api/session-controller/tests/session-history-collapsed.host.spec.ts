@@ -86,7 +86,7 @@ describe('Session history collapsed step detail', () => {
     expect(types(collapsed.value).filter(type => type === 'step/end')).toHaveLength(3)
     expect(collapsed.value.digests?.map(digest => digest.step)).toEqual([1, 2])
     expect(collapsed.value.digests?.[0]).toMatchObject({
-      turn: 1, elided: 3, steps: 1, calls: 1, files: 1, added: 1, removed: 0, inputTokens: 10, outputTokens: 5,
+      turn: 1, elided: 3, steps: 1, calls: 1, filePaths: ['a.ts'], added: 1, removed: 0, inputTokens: 10, outputTokens: 5,
     })
     // Every step/start remains as an expansion address, and the digests point at them.
     const starts = collapsed.value.records

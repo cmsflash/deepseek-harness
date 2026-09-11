@@ -67,8 +67,10 @@ export const CollapsedStepsRow = memo(function CollapsedStepsRow({
         {' / '}
         <span className={css.removed}>{t('collapse.linesRemoved', { removed: metrics.removed })}</span>
       </span>,
-      <span key="files" className={css.metric}>{t('collapse.files', { count: metrics.files })}</span>,
     )
+  }
+  if (metrics.files > 0) {
+    parts.push(<span key="files" className={css.metric}>{t('collapse.files', { count: metrics.files })}</span>)
   }
   const owner: CollapsedMetricOwnerProps = { turn, keys, steps: metrics.steps, calls: metrics.calls }
   return (

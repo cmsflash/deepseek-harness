@@ -88,6 +88,8 @@ ctx.tools.register(defineTool({
 
 工具可以为 Host 本地消费方保留纯函数 `presentCall()` 与 `presentResult()` 方法。内置 Web Client 不消费这些值，而是通过 `tool.call.toolview` 选择 renderer，并从原始调用参数、结果内容、失败状态与持久 metadata 派生 card props。[Client 派生展示决策](../../../.agents/notes/implemented/architecture/2026-08-23-client-derived-tool-presentation.zh.md)负责该 transport 拆分。
 
+`@deepseek-ai/dsh-tools/presentation` 还导出两个读取持久化 `tool/call` 与 `tool/result` 记录的纯函数，供所有汇报文件改动量的 Host 与 Client 消费方共用：`appliedFileDiffs(record: SettledToolCallRecord)` 对失败结果返回空列表，否则返回格式正确的 `meta.diffs` hunk，否则返回成功 `write` 的整文件参数映像；没有可用 metadata 的 `edit` 与所有嵌套 PTC dispatch 都不贡献任何 diff。`fileDiffLineDelta(diff)` 以行多重集差计算增删行数。新建与内容相同的覆盖共用同一整文件映像，因此该行量描述的是显示出来的 diff，而不是实测的文件系统改动。
+
 -----
 
 <a id="understand-the-implementation"></a>
@@ -110,7 +112,7 @@ ctx.tools.register(defineTool({
 | [`src/types.ts`](src/types.ts) | `ToolDefinition`、`ToolExecution`、`ToolExecutionResult`、守卫与决策类型 |
 | [`src/schema.ts`](src/schema.ts) | `defineTool` DSL：`ValueSchemaSpec`、`ParameterSchemaSpec`、`InferValue`、`InferArgs` |
 | [`src/json-schema.ts`](src/json-schema.ts) | 强制执行的原始 JSON Schema 子集与校验 |
-| [`src/presentation.ts`](src/presentation.ts) | 带 `card` 标签的 UI 呈现意图 |
+| [`src/presentation.ts`](src/presentation.ts) | 带 `card` 标签的 UI 呈现意图与纯函数的已应用 diff 读取器 |
 | [`src/ptc.ts`](src/ptc.ts) | PTC mode：SDK 生成、`run_code` 分发桥接层、结算 |
 | [`src/ts-types.ts`](src/ts-types.ts) | TypeScript SDK 类型渲染 |
 | [`src/py-types.ts`](src/py-types.ts) | Python SDK 类型渲染 |

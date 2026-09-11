@@ -48,6 +48,12 @@ describe('CollapsedStepsRow', () => {
     expect(text).not.toContain('个文件')
   })
 
+  it('reports a touched empty file independently of line volume', () => {
+    const { view } = row({ metrics: { steps: 1, calls: 1, files: 1, added: 0, removed: 0, elapsedMs: 0, inputTokens: 0, outputTokens: 0 } })
+    expect(view.container.textContent).toContain('1 个文件')
+    expect(view.container.textContent).not.toContain('+0')
+  })
+
   it('shows only the step count when nothing else happened', () => {
     const { view } = row({ metrics: { steps: 1, calls: 0, files: 0, added: 0, removed: 0, elapsedMs: 0, inputTokens: 0, outputTokens: 0 } })
     expect(view.container.textContent).toBe('1 步')

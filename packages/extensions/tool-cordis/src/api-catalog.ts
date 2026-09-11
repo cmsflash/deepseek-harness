@@ -6344,7 +6344,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'StepDigest',
-    declaration: 'export interface StepDigest {\n    readonly turn: number;\n    readonly step: number;\n    readonly startSeq: number;\n    readonly endSeq?: number;\n    readonly elided: number;\n    readonly steps: number;\n    readonly calls: number;\n    readonly files: number;\n    readonly added: number;\n    readonly removed: number;\n    readonly elapsedMs: number;\n    readonly inputTokens: number;\n    readonly outputTokens: number;\n}',
+    declaration: 'export interface StepDigest {\n    readonly turn: number;\n    readonly step: number;\n    readonly startSeq: number;\n    readonly endSeq?: number;\n    readonly elided: number;\n    readonly steps: number;\n    readonly calls: number;\n    readonly filePaths: readonly string[];\n    readonly added: number;\n    readonly removed: number;\n    readonly elapsedMs: number;\n    readonly inputTokens: number;\n    readonly outputTokens: number;\n}',
   },
   {
     name: 'StorageBackend',

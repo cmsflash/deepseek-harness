@@ -480,6 +480,29 @@ How a tool wants its call shown in a UI (an editor tool-call card, a CLI log lin
 
 `ToolCallKind` (`'read' | 'edit' | 'delete' | 'move' | 'search' | 'execute' | 'fetch' | 'other'`) picks an icon on a generic card. `FileLocation` (`{ path, line? }`), `FileDiff` (`{ path, oldText, newText }`), and `ReadFileLine` (`{ number, text }`, one 1-based numbered line of a read window) are the shared file-card vocabulary. The design is pinned in [the render-intent-union Agent Note](../../.agents/notes/implemented/architecture/2026-07-02-tool-render-intent-union.md); host/client runtimes project this neutral vocabulary into their own views.
 
+<a id="settled-tool-call-record"></a>
+### `SettledToolCallRecord` — the persisted facts behind an applied-diff reading
+
+```ts type-equiv
+/**
+ * The persisted facts of one settled root tool call that decide which file
+ * changes it applied: the call head as logged by `tool/call`, and the result's
+ * outcome and tool-private `meta` as logged by `tool/result`.
+ */
+interface SettledToolCallRecord {
+  /** Tool name from the call head, or null when the head is unavailable. */
+  name: string | null
+  /** JSON text of the call arguments, or null when the head is unavailable. */
+  argumentsRaw: string | null
+  /** Whether the result reported failure, through its block or a recorded error identity. */
+  isError: boolean
+  /** The result's opaque presentation payload, when the tool attached one. */
+  meta: unknown
+}
+```
+
+`appliedFileDiffs(record)` and `fileDiffLineDelta(diff)` are the pure readers every Host and Client consumer of file volume shares. `appliedFileDiffs` returns no diff for a failed outcome; otherwise the well-formed `meta.diffs` hunks; otherwise, for a successful `write` whose result persisted no hunk, one whole-file image built from its `file_path` and `content` arguments. An `edit` without usable metadata contributes no diff, and nested PTC dispatches persist no `meta`, so callers pass only root results. A create and an identical overwrite share the whole-file image; the volume describes the displayed diff, not a measured filesystem change. `fileDiffLineDelta` is a line-multiset difference over the before/after images: matching lines cancel regardless of position, so a moved line reads as unchanged and a modified line as one addition plus one removal.
+
 The full presentation field docs live in [`packages/core/tools/src/presentation.ts`](../../packages/core/tools/src/presentation.ts). The `bash` schema and executor are on [shell.md](shell.md); generic background controls are on [jobs.md](jobs.md).
 
 <!-- BEGIN GENERATED cordis-surface (gen-cordis-catalog.ts) — do not edit between markers -->

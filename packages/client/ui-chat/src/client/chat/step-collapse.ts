@@ -11,8 +11,9 @@
 
 import type { StepDigest } from '@deepseek-ai/dsh-api-remotes/client'
 import type { StepDigestsByTurn } from '@deepseek-ai/dsh-api-session-controller/client'
-import type { ConversationLocation } from '@deepseek-ai/dsh-client-ui-conversation/client'
-import type { ChatConversationViewNode } from '../contract/chat-nodes.ts'
+import type { ConversationLocation, ToolCallBlock } from '@deepseek-ai/dsh-client-ui-conversation/client'
+import { appliedFileDiffs, fileDiffLineDelta } from '@deepseek-ai/dsh-tools/presentation'
+import type { ChatConversationViewNode, ToolChatData } from '../contract/chat-nodes.ts'
 import type { ChatNodeStore } from '../contract/snapshot.ts'
 
 /** A window whose pages carried every step serves no digests. */
@@ -29,7 +30,7 @@ export interface CollapsedStepMetrics {
   steps: number
   /** Settled tool calls across those steps, counting nested subcalls. */
   calls: number
-  /** Distinct file paths their diff cards touched. */
+  /** Distinct file paths their applied diffs touched, across every hidden step. */
   files: number
   added: number
   removed: number
@@ -73,80 +74,40 @@ interface UsageLike {
   cacheWriteTokens?: unknown
 }
 
-interface DiffLike {
-  path?: unknown
-  oldText?: unknown
-  newText?: unknown
-}
-
 interface AssistantLike {
   usage?: unknown
   finalNode?: { timing?: { stepStartTime: number | null; completedTime: number } }
 }
 
-interface ToolLike {
-  kind?: unknown
-  callId?: unknown
-  resultView?: { card?: unknown; diffs?: unknown } | null
-  subCalls?: readonly unknown[]
-}
-
 /**
- * Split one file image into its lines. A single terminating newline ends the
- * last line rather than starting an empty one.
- */
-function lines(text: string): readonly string[] {
-  const body = text.endsWith('\n') ? text.slice(0, -1) : text
-  return body === '' ? [] : body.split('\n')
-}
-
-/**
- * Added and removed line counts for one applied diff card entry.
+ * Fold one settled tool root and its subcalls into the running metrics.
  *
- * Diff cards carry whole before/after images rather than hunks, so this is a
- * line-multiset difference: lines present in both cancel regardless of
- * position, which reads a moved line as unchanged and a modified line as one
- * addition plus one removal.
- * @param oldText - prior content, or null for a created file.
- * @param newText - content after the change.
- * @returns the added and removed line counts.
+ * Applied diffs are read by {@link appliedFileDiffs} from the same persisted
+ * record the diff card reads — call head, outcome, and `meta` — so a failed
+ * call, an `edit` with no usable metadata, and a `write` whose result persisted
+ * no hunk all count the way the rendered card shows them. A running root has
+ * settled nothing and contributes no call; a nested dispatch counts as a call
+ * but persists no `meta`, so it contributes no lines.
  */
-export function diffLineDelta(oldText: string | null, newText: string): { added: number; removed: number } {
-  if (oldText === null) return { added: lines(newText).length, removed: 0 }
-  const remaining = new Map<string, number>()
-  for (const line of lines(oldText)) remaining.set(line, (remaining.get(line) ?? 0) + 1)
-  let added = 0
-  for (const line of lines(newText)) {
-    const available = remaining.get(line) ?? 0
-    if (available > 0) remaining.set(line, available - 1)
-    else added += 1
-  }
-  let removed = 0
-  for (const surplus of remaining.values()) removed += surplus
-  return { added, removed }
-}
-
-/** Fold one settled tool root and its subcalls into the running metrics. */
-function foldTool(tool: ToolLike, metrics: CollapsedStepMetrics, paths: Set<string>): void {
-  metrics.calls += 1
-  const view = tool.resultView
-  // The result view crosses the wire with only `card` schema-checked, so each
-  // entry is validated here rather than trusted.
-  if (view != null && view.card === 'diff' && Array.isArray(view.diffs)) {
-    for (const entry of view.diffs) {
-      if (typeof entry !== 'object' || entry === null) continue
-      const { path, oldText, newText } = entry as DiffLike
-      if (typeof path !== 'string' || typeof newText !== 'string') continue
-      if (oldText !== null && typeof oldText !== 'string') continue
-      const delta = diffLineDelta(oldText ?? null, newText)
-      metrics.added += delta.added
-      metrics.removed += delta.removed
-      paths.add(path)
+function foldTool(tool: ToolCallBlock, metrics: CollapsedStepMetrics, paths: Set<string>): void {
+  if ('kind' in tool) {
+    metrics.calls += 1
+    if (tool.parentCallId === undefined) {
+      const diffs = appliedFileDiffs({
+        name: tool.call?.name ?? null,
+        argumentsRaw: tool.call?.argsRaw ?? null,
+        isError: tool.isError || tool.error !== undefined,
+        meta: tool.meta,
+      })
+      for (const diff of diffs) {
+        const delta = fileDiffLineDelta(diff)
+        metrics.added += delta.added
+        metrics.removed += delta.removed
+        paths.add(diff.path)
+      }
     }
   }
-  for (const child of tool.subCalls ?? []) {
-    if (typeof child === 'object' && child !== null) foldTool(child, metrics, paths)
-  }
+  for (const child of tool.subCalls) foldTool(child, metrics, paths)
 }
 
 /**
@@ -196,9 +157,7 @@ function foldNode(node: ChatConversationViewNode, metrics: CollapsedStepMetrics,
     foldAssistant(node.data as AssistantLike | undefined, metrics)
     return
   }
-  const data = node.data as { root?: unknown } | undefined
-  const root = data?.root
-  if (typeof root === 'object' && root !== null) foldTool(root, metrics, paths)
+  if (node.kind === 'tool-call') foldTool((node.data as ToolChatData).root, metrics, paths)
 }
 
 /**
@@ -283,10 +242,14 @@ export function collapseSettledSteps(
       // metrics and doubles as the control that folds the group back. Its
       // figures come from the turn's own account, which stays whole whether or
       // not the withheld steps have since been loaded.
+      // Accounts carry the paths their steps touched rather than a count, so a
+      // file edited in a withheld step and again in a loaded one counts once.
+      const paths = new Set<string>()
+      for (const digest of accounts.get(turn) ?? []) for (const path of digest.filePaths) paths.add(path)
       marker = {
         keys: [],
         metrics: foldDigests(accounts.get(turn)),
-        paths: new Set(),
+        paths,
       }
       markers.set(turn, marker)
       rows.push({
@@ -321,19 +284,8 @@ export function collapseSettledSteps(
     }
     if (expanded.has(turn)) rows.push({ kind: 'node', key })
   }
-  for (const [turn, marker] of markers) {
-    // Accounted steps report their file count as a total rather than as paths,
-    // so the two sources add without overlapping.
-    marker.metrics.files = marker.paths.size + digestFiles(accounts.get(turn))
-  }
+  for (const marker of markers.values()) marker.metrics.files = marker.paths.size
   return rows
-}
-
-/** Digest-side file total, kept separate from the loaded rows' path set. */
-function digestFiles(digests: readonly StepDigest[] | undefined): number {
-  let files = 0
-  for (const digest of digests ?? []) files += digest.files
-  return files
 }
 
 /**
@@ -341,6 +293,8 @@ function digestFiles(digests: readonly StepDigest[] | undefined): number {
  *
  * The host computed each digest over its whole step, so these figures do not
  * depend on where the page boundary fell; the loaded rows then add to them.
+ * The file count is settled by the caller from the union of every path, so it
+ * stays zero here.
  * @param digests - withheld steps of one turn, or undefined when none.
  * @returns metrics carrying the withheld work.
  */

@@ -481,7 +481,7 @@ export type SessionStepDetail = 'full' | 'collapsed'
 export interface StepDigest {
   readonly turn: number
   readonly step: number
-  /** Seq of the step's `step/start`; the client's expansion address. */
+  /** Step-start seq, or the step's first scoped event when its start is unlogged. */
   readonly startSeq: number
   /** Seq of the step's `step/end`, absent for a step whose end is unlogged. */
   readonly endSeq?: number
@@ -491,8 +491,8 @@ export interface StepDigest {
   readonly steps: number
   /** Settled tool calls. */
   readonly calls: number
-  /** Distinct file paths this step's applied diff cards touched. */
-  readonly files: number
+  /** Distinct changed paths, retained so a turn can deduplicate files across its steps. */
+  readonly filePaths: readonly string[]
   readonly added: number
   readonly removed: number
   /** `step/start` to final `assistant/message` wall time; 0 when either boundary is unrecorded. */

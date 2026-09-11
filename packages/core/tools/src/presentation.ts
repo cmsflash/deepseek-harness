@@ -1,7 +1,9 @@
 /**
  * Tool render-intent vocabulary: the provider-neutral types a tool declares via
  * `ToolDefinition.presentCall`/`ToolDefinition.presentResult` to say how one of its calls
- * renders in a UI (an editor's tool-call card, a CLI log line).
+ * renders in a UI (an editor's tool-call card, a CLI log line), plus the pure
+ * reading of a settled file mutation's applied diffs that every consumer of
+ * the persisted `tool/result` record shares.
  * @module @deepseek-ai/dsh-tools/src/presentation
  */
 
@@ -187,6 +189,118 @@ export interface DiffResultView {
   title?: string
   /** The change to show, in file order — applied contextual hunks, or a whole-file diff when there is no before-image. */
   diffs: FileDiff[]
+}
+
+/**
+ * The persisted facts of one settled root tool call that decide which file
+ * changes it applied: the call head as logged by `tool/call`, and the result's
+ * outcome and tool-private `meta` as logged by `tool/result`.
+ */
+export interface SettledToolCallRecord {
+  /** Tool name from the call head, or null when the head is unavailable. */
+  name: string | null
+  /** JSON text of the call arguments, or null when the head is unavailable. */
+  argumentsRaw: string | null
+  /** Whether the result reported failure, through its block or a recorded error identity. */
+  isError: boolean
+  /** The result's opaque presentation payload, when the tool attached one. */
+  meta: unknown
+}
+
+/** Whether `value` is a well-formed {@link FileDiff}. */
+function isFileDiff(value: unknown): value is FileDiff {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
+  const { path, oldText, newText } = value as Record<string, unknown>
+  return typeof path === 'string'
+    && (oldText === null || typeof oldText === 'string')
+    && typeof newText === 'string'
+}
+
+/**
+ * Read the `diffs` a file-mutation tool persisted on its result `meta`
+ * (`{ diffs: FileDiff[] }`, the payload `write` and `edit` attach).
+ * @returns the hunks, `'empty'` for a valid empty list, or null when absent or malformed.
+ */
+function persistedDiffs(meta: unknown): FileDiff[] | 'empty' | null {
+  if (typeof meta !== 'object' || meta === null || Array.isArray(meta)) return null
+  const { diffs } = meta as Record<string, unknown>
+  if (!Array.isArray(diffs)) return null
+  if (diffs.length === 0) return 'empty'
+  return diffs.every(isFileDiff) ? diffs : null
+}
+
+/**
+ * The whole-file diff a `write` call describes through its own arguments, for
+ * a create or an identical overwrite whose result persisted no applied hunk.
+ * @returns the diff, or null when the head is not a `write` with a path and content.
+ */
+function intendedWriteDiff(record: SettledToolCallRecord): FileDiff | null {
+  if (record.name !== 'write' || record.argumentsRaw === null) return null
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(record.argumentsRaw)
+  } catch {
+    // Only JSON.parse throws here; arguments that never parsed name no file.
+    return null
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return null
+  const { file_path: path, content } = parsed as Record<string, unknown>
+  if (typeof path !== 'string' || path.trim() === '' || typeof content !== 'string') return null
+  return { path, oldText: null, newText: content }
+}
+
+/**
+ * Read a settled root call's persisted diff images, ignoring failed outcomes.
+ * A successful `write` without usable hunks retains the documented whole-file
+ * argument fallback. Creates and identical overwrites share that representation,
+ * so its line volume describes the displayed image, not an inferred filesystem
+ * change. An `edit` without usable metadata contributes no diff. Nested dispatches
+ * carry no persisted `meta`; callers pass only root results here.
+ * @param record - the settled call's persisted head, outcome, and metadata.
+ * @returns the applied diffs in file order; empty when none can be read.
+ */
+export function appliedFileDiffs(record: SettledToolCallRecord): FileDiff[] {
+  if (record.isError) return []
+  const persisted = persistedDiffs(record.meta)
+  if (persisted !== null && persisted !== 'empty') return persisted
+  const intended = intendedWriteDiff(record)
+  return intended === null ? [] : [intended]
+}
+
+/**
+ * Split one file image into its lines. A single terminating newline ends the
+ * last line rather than starting an empty one.
+ */
+function lines(text: string): readonly string[] {
+  if (text === '') return []
+  const body = text.endsWith('\n') ? text.slice(0, -1) : text
+  return body.split('\n')
+}
+
+/**
+ * Added and removed line counts for one {@link FileDiff}.
+ *
+ * A diff carries before/after images rather than a hunk list, so this is a
+ * line-multiset difference: lines present in both cancel regardless of
+ * position, which reads a moved line as unchanged and a modified line as one
+ * addition plus one removal. Context lines an applied hunk repeats on both
+ * sides cancel the same way.
+ * @param diff - one applied file change.
+ * @returns the added and removed line counts.
+ */
+export function fileDiffLineDelta(diff: Pick<FileDiff, 'oldText' | 'newText'>): { added: number; removed: number } {
+  if (diff.oldText === null) return { added: lines(diff.newText).length, removed: 0 }
+  const remaining = new Map<string, number>()
+  for (const line of lines(diff.oldText)) remaining.set(line, (remaining.get(line) ?? 0) + 1)
+  let added = 0
+  for (const line of lines(diff.newText)) {
+    const available = remaining.get(line) ?? 0
+    if (available > 0) remaining.set(line, available - 1)
+    else added += 1
+  }
+  let removed = 0
+  for (const surplus of remaining.values()) removed += surplus
+  return { added, removed }
 }
 
 /** One matched line inside a {@link SearchFileMatches} group: its 1-based line number and text. */

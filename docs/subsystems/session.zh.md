@@ -743,6 +743,45 @@ interface TurnEndReasonMap {
 
 `SessionOpenWorkspacePathRequest` 携带绝对路径或已按 workspace 解析的 `path`。`SessionOpenWorkspacePathValue` 确认 Host 已接受原生交接。Session-aware Client 会在已知当前 Session cwd 时据此解析相对路径；controller 将路径原样交给打开器，并通过 Session Remote 错误词汇表报告无效请求、取消与打开器失败。 可选的 `action: "reveal"` 选择文件管理器导航；省略时使用默认应用打开。
 
+## Remote 历史分页：`StepDigest`
+
+一份 `StepDigest` 是 Session Controller 随折叠历史页（`stepDetail: 'collapsed'` 下的 `page` 与 `follow`）下发的完整步骤账目。除 `elided` 外的每个数字都在该步骤截至请求截止点的完整事件范围上计算，因此同一步骤无论由哪一页携带，都报告相同的 `steps`、`calls`、`filePaths`、`added`、`removed`、`elapsedMs` 与 token；持有多个分页片段的 Client 每个步骤只保留一份账目，仅对 `elided` 求和。`calls` 统计已落定的根级结果与已落定的嵌套 PTC dispatch；步骤或其轮次关闭后，没有落定的根级或嵌套调用起点计为一次中断调用，而仍在运行的调用不计数。嵌套 PTC 记录取其已记录根调用的步骤。文件改动量遵循共享的 [`appliedFileDiffs`](tools.zh.md#settled-tool-call-record) 读取规则；不属于追加结果的 compaction 替换不增加调用数。`filePaths` 保留去重路径而不是计数，使轮次能够对多个步骤中编辑过的同一文件去重。分页与展开行为由 controller 的[包参考](../../packages/api/session-controller/README.zh.md)拥有。
+
+```ts type-equiv
+/**
+ * What one elided step did, computed over the whole step rather than the
+ * loaded window.
+ *
+ * The client renders its collapsed summary row from these figures instead of
+ * folding the events it no longer has, so the row reports the step's real
+ * cost even before expansion, and stays correct regardless of where the page
+ * boundary fell.
+ */
+interface StepDigest {
+  readonly turn: number
+  readonly step: number
+  /** Step-start seq, or the step's first scoped event when its start is unlogged. */
+  readonly startSeq: number
+  /** Seq of the step's `step/end`, absent for a step whose end is unlogged. */
+  readonly endSeq?: number
+  /** Elided events withheld from this page, the exact count a later expansion returns. */
+  readonly elided: number
+  /** Settled model calls in this step: 1, or 0 when the step logged no assistant message. */
+  readonly steps: number
+  /** Settled tool calls. */
+  readonly calls: number
+  /** Distinct changed paths, retained so a turn can deduplicate files across its steps. */
+  readonly filePaths: readonly string[]
+  readonly added: number
+  readonly removed: number
+  /** `step/start` to final `assistant/message` wall time; 0 when either boundary is unrecorded. */
+  readonly elapsedMs: number
+  /** Billed prompt-side tokens: uncached input plus cache reads and writes. */
+  readonly inputTokens: number
+  readonly outputTokens: number
+}
+```
+
 <!-- BEGIN GENERATED cordis-surface (gen-cordis-catalog.ts) — do not edit between markers -->
 
 <a id="cordis-surface"></a>

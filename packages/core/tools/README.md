@@ -88,6 +88,8 @@ The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-a
 
 A tool can retain pure `presentCall()` and `presentResult()` methods for Host-local consumers. The built-in Web Client does not consume those values. It selects a renderer through `tool.call.toolview` and derives card props from raw call arguments, result content, failure state, and persisted metadata. The [Client-derived presentation decision](../../../.agents/notes/implemented/architecture/2026-08-23-client-derived-tool-presentation.md) owns this transport split.
 
+`@deepseek-ai/dsh-tools/presentation` also exports two pure readers over the persisted `tool/call` and `tool/result` records, shared by every Host and Client consumer that reports file volume: `appliedFileDiffs(record: SettledToolCallRecord)` returns a failed outcome's empty list, otherwise the well-formed `meta.diffs` hunks, otherwise a successful `write`'s whole-file argument image; an `edit` without usable metadata and every nested PTC dispatch contribute nothing. `fileDiffLineDelta(diff)` counts added and removed lines as a line-multiset difference. A create and an identical overwrite share the whole-file image, so that volume describes the displayed diff rather than a measured filesystem change.
+
 -----
 
 <a id="understand-the-implementation"></a>
@@ -110,7 +112,7 @@ The registry holds typed `ToolDefinition`s in scoped layers and projects them on
 | [`src/types.ts`](src/types.ts) | `ToolDefinition`, `ToolExecution`, `ToolExecutionResult`, guard and decision types |
 | [`src/schema.ts`](src/schema.ts) | The `defineTool` DSL: `ValueSchemaSpec`, `ParameterSchemaSpec`, `InferValue`, `InferArgs` |
 | [`src/json-schema.ts`](src/json-schema.ts) | The enforced raw JSON Schema subset and validation |
-| [`src/presentation.ts`](src/presentation.ts) | The `card`-tagged UI render intents |
+| [`src/presentation.ts`](src/presentation.ts) | The `card`-tagged UI render intents and the pure applied-diff readers |
 | [`src/ptc.ts`](src/ptc.ts) | PTC mode: SDK generation, `run_code` dispatch bridge, settlement |
 | [`src/ts-types.ts`](src/ts-types.ts) | TypeScript SDK type rendering |
 | [`src/py-types.ts`](src/py-types.ts) | Python SDK type rendering |

@@ -34,6 +34,6 @@ The row is open at one point: `conversation.chat.collapsedMetric` is a list slot
 ## Consequences
 
 - Default output is unchanged: outside `collapsed`, `ChatView` maps the snapshot order exactly as before, so existing web snapshots stay valid.
-- A collapsed group's figures come from Host-computed per-step digests, which describe whole steps and so do not move as the reader pages or expands ([decision](2026-09-01-collapsed-step-digest-paging.md)); only steps no digest covers are folded from loaded nodes.
-- Line counts come from the applied `card:'diff'` result views that write and edit already return, validated per entry because those views cross the wire with only `card` schema-checked. A mutation applied by a tool that emits no diff card contributes no lines.
+- Host-computed digests describe whole steps and remain stable across expansion. Newly paged steps can increase a partial turn's total; only steps without an account are folded from loaded nodes ([decision](2026-09-01-collapsed-step-digest-paging.md)).
+- File figures use the shared pure `appliedFileDiffs` reader in `dsh-tools/presentation`, not renderer state. This keeps Host and Client accounting aligned without a cross-UI implementation dependency. The successful-write fallback describes its whole-file argument image, including identical overwrites; nested dispatches carry no diff metadata. [Chat's package reference](../../../../packages/client/ui-chat/README.md#settled-step-collapse) owns the displayed metric semantics.
 - The row shows no cost of its own. `TokenUsage.costUsd` carries a priced call's dollars ([decision](2026-08-24-token-usage-carries-billed-cost.md)), so the figure is available to a contributor through `conversation.chat.collapsedMetric` rather than being computed here.

@@ -3,8 +3,8 @@
  * steps fold into one marker per turn, and expansion restores them in place.
  */
 import { describe, expect, it } from 'vitest'
-import type { ChatConversationViewNode, ChatNodeStore } from '@deepseek-ai/dsh-client-ui-chat/client'
-import { collapseSettledSteps, diffLineDelta } from '../src/client/chat/step-collapse.ts'
+import type { ChatConversationViewNode, ChatNodeStore, ToolCallBlock } from '@deepseek-ai/dsh-client-ui-chat/client'
+import { collapseSettledSteps } from '../src/client/chat/step-collapse.ts'
 
 const EMPTY: ReadonlySet<number> = new Set()
 
@@ -43,49 +43,41 @@ function store(nodes: readonly ChatConversationViewNode[]): ChatNodeStore {
   }
 }
 
-/** A settled tool root whose result view carries one applied diff. */
-function toolNode(key: string, turn: number, step: number, options: {
-  diffs?: unknown
-  subCalls?: readonly unknown[]
-} = {}): ChatConversationViewNode {
-  return node({
-    key,
-    kind: 'tool-call',
-    turn,
-    step,
-    data: {
-      root: {
-        kind: 'tool-result',
-        callId: key,
-        resultView: options.diffs === undefined ? null : { card: 'diff', diffs: options.diffs },
-        subCalls: options.subCalls ?? [],
-      },
-    },
-  })
+/** One settled root call as the Chat Tool Definition projects it from raw events. */
+function settled(callId: string, options: {
+  name?: string
+  args?: unknown
+  isError?: boolean
+  error?: { name: string; code: string }
+  meta?: unknown
+  subCalls?: readonly ToolCallBlock[]
+  parentCallId?: string
+} = {}): ToolCallBlock {
+  return {
+    kind: 'tool-result',
+    seq: 0,
+    time: 0,
+    callId,
+    ...options.parentCallId === undefined ? {} : { parentCallId: options.parentCallId },
+    call: { name: options.name ?? 'write', argsRaw: JSON.stringify(options.args ?? {}) },
+    callTime: null,
+    content: [],
+    isError: options.isError === true,
+    ...options.error === undefined ? {} : { error: options.error },
+    ...options.meta === undefined ? {} : { meta: options.meta },
+    subCalls: options.subCalls ?? [],
+  }
 }
 
-describe('diffLineDelta', () => {
-  it('counts a created file as all additions', () => {
-    expect(diffLineDelta(null, 'one\ntwo\n')).toEqual({ added: 2, removed: 0 })
-  })
+/** A Tool row whose root is the given block. */
+function toolNode(key: string, turn: number, step: number, root: ToolCallBlock = settled(key)): ChatConversationViewNode {
+  return node({ key, kind: 'tool-call', turn, step, data: { root } })
+}
 
-  it('counts a modified line as one addition and one removal', () => {
-    expect(diffLineDelta('one\ntwo\n', 'one\nTWO\n')).toEqual({ added: 1, removed: 1 })
-  })
-
-  it('treats a reordered line as unchanged', () => {
-    expect(diffLineDelta('one\ntwo\n', 'two\none\n')).toEqual({ added: 0, removed: 0 })
-  })
-
-  it('ignores a terminating newline on either side', () => {
-    expect(diffLineDelta('one', 'one\n')).toEqual({ added: 0, removed: 0 })
-    expect(diffLineDelta('one\n', 'one')).toEqual({ added: 0, removed: 0 })
-  })
-
-  it('counts an empty created file as no lines', () => {
-    expect(diffLineDelta(null, '')).toEqual({ added: 0, removed: 0 })
-  })
-})
+/** An edit whose result persisted one applied hunk. */
+function edited(callId: string, path: string, oldText: string | null, newText: string): ToolCallBlock {
+  return settled(callId, { name: 'edit', args: { file_path: path }, meta: { diffs: [{ path, oldText, newText }] } })
+}
 
 describe('collapseSettledSteps', () => {
   it('keeps a turn whose only step is the last one fully visible', () => {
@@ -159,10 +151,12 @@ describe('collapseSettledSteps', () => {
   it('folds tool calls, nested subcalls, and diff lines into the marker metrics', () => {
     const nodes = [
       node({ key: 's1', turn: 1, step: 1 }),
-      toolNode('t1', 1, 1, {
-        diffs: [{ path: 'a.ts', oldText: 'one\n', newText: 'one\ntwo\n' }],
-        subCalls: [{ kind: 'tool-result', callId: 'child', resultView: null, subCalls: [] }],
-      }),
+      toolNode('t1', 1, 1, settled('t1', {
+        name: 'edit',
+        meta: { diffs: [{ path: 'a.ts', oldText: 'one\n', newText: 'one\ntwo\n' }] },
+        // A nested dispatch settles as a call; it persists no meta, so no lines.
+        subCalls: [settled('child', { parentCallId: 't1', name: 'edit', meta: { diffs: [{ path: 'z.ts', oldText: null, newText: 'q\n' }] } })],
+      })),
       node({ key: 's2', turn: 1, step: 2 }),
     ]
     const rows = collapseSettledSteps(['s1', 't1', 's2'], store(nodes), EMPTY)
@@ -170,13 +164,37 @@ describe('collapseSettledSteps', () => {
       .toEqual({ steps: 1, calls: 2, files: 1, added: 1, removed: 0, elapsedMs: 0, inputTokens: 0, outputTokens: 0 })
   })
 
-  it('ignores a malformed wire diff payload instead of throwing', () => {
-    for (const diffs of [undefined, 'nope', [null], [{ path: 1 }], [{ path: 'a', newText: 2 }]]) {
+  it('reads a settled mutation exactly as the diff card does', () => {
+    const nodes = [
+      // A create persists no hunk: the write's own content is what landed.
+      toolNode('create', 1, 1, settled('create', { args: { file_path: 'new.ts', content: 'one\ntwo\n' }, meta: { diffs: [] } })),
+      // A failed edit applied nothing, whatever its metadata says.
+      toolNode('failed', 1, 1, settled('failed', {
+        name: 'edit', isError: true, error: { name: 'EditError', code: 'not-found' },
+        meta: { diffs: [{ path: 'gone.ts', oldText: 'a\n', newText: 'b\n' }] },
+      })),
+      // An interrupted call carries only an error identity.
+      toolNode('cut', 1, 1, settled('cut', { name: 'write', args: { file_path: 'x.ts', content: 'x' }, error: { name: 'Interrupted', code: 'interrupted' } })),
+      // A tool that persists no diff is a call and nothing more.
+      toolNode('shell', 1, 1, settled('shell', { name: 'bash', args: { command: 'ls' } })),
+      // The same file touched again in the group counts once.
+      toolNode('again', 1, 1, edited('again', 'new.ts', 'two\n', 'TWO\n')),
+      node({ key: 's2', turn: 1, step: 2 }),
+    ]
+    const rows = collapseSettledSteps(['create', 'failed', 'cut', 'shell', 'again', 's2'], store(nodes), EMPTY)
+    expect((rows[0] as { metrics: unknown }).metrics)
+      .toMatchObject({ calls: 5, files: 1, added: 3, removed: 1 })
+  })
+
+  it('counts a still-running root as no call, and ignores malformed metadata', () => {
+    const running: ToolCallBlock = { callId: 'run', name: 'edit', argsRaw: '{}', turn: 1, step: 1, time: 0, subCalls: [] }
+    for (const meta of [undefined, 'nope', { diffs: [null] }, { diffs: [{ path: 1 }] }, { diffs: [{ path: 'a', newText: 2 }] }]) {
       const nodes = [
-        toolNode('t1', 1, 1, { diffs }),
+        toolNode('run', 1, 1, running),
+        toolNode('t1', 1, 1, settled('t1', { name: 'edit', meta })),
         node({ key: 's2', turn: 1, step: 2 }),
       ]
-      const rows = collapseSettledSteps(['t1', 's2'], store(nodes), EMPTY)
+      const rows = collapseSettledSteps(['run', 't1', 's2'], store(nodes), EMPTY)
       expect((rows[0] as { metrics: { calls: number; added: number } }).metrics)
         .toMatchObject({ calls: 1, added: 0, removed: 0, files: 0 })
     }
@@ -184,8 +202,8 @@ describe('collapseSettledSteps', () => {
 
   it('counts one file once across repeated edits inside the collapsed group', () => {
     const nodes = [
-      toolNode('t1', 1, 1, { diffs: [{ path: 'a.ts', oldText: 'one\n', newText: 'two\n' }] }),
-      toolNode('t2', 1, 1, { diffs: [{ path: 'a.ts', oldText: 'two\n', newText: 'three\n' }] }),
+      toolNode('t1', 1, 1, edited('t1', 'a.ts', 'one\n', 'two\n')),
+      toolNode('t2', 1, 1, edited('t2', 'a.ts', 'two\n', 'three\n')),
       node({ key: 's2', turn: 1, step: 2 }),
     ]
     const rows = collapseSettledSteps(['t1', 't2', 's2'], store(nodes), EMPTY)
@@ -297,7 +315,7 @@ function account(turn: number, step: number, over: Partial<{
   calls: number
   inputTokens: number
   outputTokens: number
-  files: number
+  filePaths: readonly string[]
 }> = {}) {
   return {
     turn,
@@ -306,7 +324,7 @@ function account(turn: number, step: number, over: Partial<{
     elided: 1,
     steps: over.steps ?? 1,
     calls: over.calls ?? 2,
-    files: over.files ?? 0,
+    filePaths: over.filePaths ?? [],
     added: 0,
     removed: 0,
     elapsedMs: 100,
@@ -389,5 +407,17 @@ describe('collapseSettledSteps with withheld steps', () => {
 
     expect((closed.find(row => row.kind === 'collapsed') as { withheld: boolean }).withheld).toBe(true)
     expect((opened.find(row => row.kind === 'collapsed') as { withheld: boolean }).withheld).toBe(false)
+  })
+
+  it('counts a file once across a withheld step and a loaded one', () => {
+    const nodes = [
+      toolNode('t2', 1, 2, edited('t2', 'a.ts', 'two\n', 'three\n')),
+      toolNode('t3', 1, 2, edited('t3', 'b.ts', null, 'new\n')),
+      node({ key: 'a3', turn: 1, step: 3 }),
+    ]
+    // Step 1 was withheld and touched a.ts; step 2 is loaded and touches it again.
+    const accounts = new Map([[1, [account(1, 1, { filePaths: ['a.ts'] })]]])
+    const rows = collapseSettledSteps(['t2', 't3', 'a3'], store(nodes), EMPTY, accounts)
+    expect((rows[0] as { metrics: { files: number } }).metrics.files).toBe(2)
   })
 })

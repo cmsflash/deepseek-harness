@@ -947,8 +947,15 @@ function groupDigests(digests: readonly StepDigest[] = []): StepDigestsByTurn {
 function mergeDigests(held: StepDigestsByTurn, added: readonly StepDigest[]): StepDigestsByTurn {
   const merged = new Map(held)
   for (const [turn, digests] of groupDigests(added)) {
-    const existing = merged.get(turn)
-    merged.set(turn, existing === undefined ? digests : [...digests, ...existing])
+    const byStep = new Map((merged.get(turn) ?? []).map(digest => [digest.step, digest]))
+    for (const digest of digests) {
+      const existing = byStep.get(digest.step)
+      byStep.set(digest.step, existing === undefined ? digest : {
+        ...digest,
+        elided: existing.elided + digest.elided,
+      })
+    }
+    merged.set(turn, [...byStep.values()].sort((left, right) => left.startSeq - right.startSeq))
   }
   return merged
 }

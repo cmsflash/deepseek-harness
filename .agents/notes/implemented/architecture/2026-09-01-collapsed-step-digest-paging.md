@@ -18,7 +18,11 @@ Measured over six real session logs in this repository, a turn's non-final steps
 
 **A step is elidable only when the reader is not looking at it.** The turn's highest step is retained, and so is the step carrying the turn's closing assistant text: `turn-tail` picks its closing message, branch anchor, and latency figures from that message, so eliding its step would degrade a settled turn's footer rather than merely hide steps. On the measured session that costs one extra retained step on 2 of 56 turns.
 
-Retention is decided over the whole log through the requested cut rather than over the page, so a turn split across pages keeps the same steps whole on each; deciding per page would let the boundary change which step counts as a turn's last, and adjacent pages would disagree about the same turn. A digest's diff-line figures come from the `meta.diffs` a mutation tool persists on its `tool/result`, the same payload the client's diff card reads.
+Retention is decided over the whole log through the requested cut, so a turn split across pages keeps the same steps whole on each page. PTC records inherit the step of their recorded root call rather than acquiring a coordinate from their log position.
+
+Each digest accounts for its whole step in that scope: steps, calls, line volume, `filePaths`, tokens, time, and boundaries are independent of the page cut. Only `elided` counts this page's omissions. A client holding multiple fragments keeps one account per step and sums only their omission counts. A missing step-start boundary uses the step's first scoped event, not a page-local fallback.
+
+File figures use `appliedFileDiffs` in `dsh-tools/presentation`, shared by the Host and Client folds over recorded call heads, outcomes, and metadata. Distinct paths remain available for deduplication across steps. Compaction replacements do not count as new tool results. A closed step or turn counts an unmatched root or nested start as interrupted, matching the Client's interrupted row; running calls without a result do not count.
 
 **`expandSteps` is bounded by the client's window head** (`fromSeq`). A turn routinely starts before the page that shows it, and its earlier steps belong to pages the client has not loaded; returning them would splice events below the head and leave `baseSeq` describing a range the client no longer holds contiguously.
 
@@ -41,4 +45,4 @@ The `ui-chat.transcriptView` setting's `collapsed` mode now selects a fetch stra
 - A collapsed page's remaining bulk is `request/header` (141 KB per event, no step coordinate, so never elidable): 67% of one measured collapsed page. It is the binding constraint on any further gain and is untouched here.
 - Expanding one turn costs a request sized by that turn: p50 151 KB, p90 528 KB, max 2.15 MB on the measured session.
 - Subagent transcripts addressed through the same Session Controller page with the same detail; the catalog child view renders through the same Chat view.
-- The summary row's figures are no longer window-scoped, which retires the corresponding consequence in [the step-collapse note](2026-08-14-chat-collapses-settled-steps.md).
+- Each step account is independent of page boundaries; a partially loaded turn's total still grows when older pages introduce additional steps ([step-collapse note](2026-08-14-chat-collapses-settled-steps.md)).

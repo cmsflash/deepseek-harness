@@ -480,6 +480,29 @@ type ObjectJsonSchema = JsonSchemaNode & { type: 'object' }
 
 `ToolCallKind`（`'read' | 'edit' | 'delete' | 'move' | 'search' | 'execute' | 'fetch' | 'other'`）用于为通用卡片选择图标。`FileLocation`（`{ path, line? }`）、`FileDiff`（`{ path, oldText, newText }`）与 `ReadFileLine`（`{ number, text }`，读取窗口中一行带 1-based 行号的内容）是共享的文件卡片词汇。该设计由[渲染意图联合类型 Agent Note](../../.agents/notes/implemented/architecture/2026-07-02-tool-render-intent-union.zh.md)固定；host/client 运行时将这套中性词汇投影为各自的视图。
 
+<a id="settled-tool-call-record"></a>
+### `SettledToolCallRecord`——已应用 diff 读取所依据的持久化事实
+
+```ts type-equiv
+/**
+ * The persisted facts of one settled root tool call that decide which file
+ * changes it applied: the call head as logged by `tool/call`, and the result's
+ * outcome and tool-private `meta` as logged by `tool/result`.
+ */
+interface SettledToolCallRecord {
+  /** Tool name from the call head, or null when the head is unavailable. */
+  name: string | null
+  /** JSON text of the call arguments, or null when the head is unavailable. */
+  argumentsRaw: string | null
+  /** Whether the result reported failure, through its block or a recorded error identity. */
+  isError: boolean
+  /** The result's opaque presentation payload, when the tool attached one. */
+  meta: unknown
+}
+```
+
+`appliedFileDiffs(record)` 与 `fileDiffLineDelta(diff)` 是所有汇报文件改动量的 Host 与 Client 消费方共用的纯函数读取器。`appliedFileDiffs` 对失败结果不返回任何 diff；否则返回格式正确的 `meta.diffs` hunk；否则，对于结果未持久化任何 hunk 的成功 `write`，返回一份由其 `file_path` 与 `content` 参数构造的整文件映像。没有可用 metadata 的 `edit` 不贡献 diff；嵌套 PTC dispatch 不持久化 `meta`，因此调用方只传入根级结果。新建与内容相同的覆盖共用同一整文件映像；该行量描述的是显示出来的 diff，而不是实测的文件系统改动。`fileDiffLineDelta` 是变更前后映像之间的行多重集差：相同的行无论位置都相互抵消，因此移动的行视为未改动，修改的行视为一次新增加一次删除。
+
 完整的展示字段文档见 [`packages/core/tools/src/presentation.ts`](../../packages/core/tools/src/presentation.ts)。`bash` schema 与执行器见 [shell.md](shell.zh.md)；通用后台控制见 [jobs.md](jobs.zh.md)。
 
 <!-- BEGIN GENERATED cordis-surface (gen-cordis-catalog.ts) — do not edit between markers -->
