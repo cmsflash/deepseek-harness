@@ -238,6 +238,31 @@ describe('released v0 legacy normalization', () => {
     ]).events[1]).toMatchObject({ data: { reason: { kind: 'future-reason' } } })
   })
 
+  it('promotes released descriptor version 2 to version 3 without other payload changes', () => {
+    const descriptor = (data: Record<string, unknown>) => ({
+      type: 'subagent/descriptor', seq: 0, time: 1, data,
+    })
+    const continuable = {
+      version: 2, mode: 'continuable', provider: 'spawn', label: 'Research pricing',
+      agentProvider: 'litellm', agentModel: 'research-model',
+    }
+    const oneShot = { version: 2, mode: 'one-shot', provider: 'spawn', label: 'Audit' }
+    const scoped = { ...continuable, persona: 'reviewer', toolFilter: { deny: ['bash'] } }
+    for (const data of [continuable, oneShot, scoped]) {
+      expect(migrate([descriptor(data)]).events).toEqual([descriptor({ ...data, version: 3 })])
+    }
+    const current = { ...continuable, version: 3, agentReasoningEffort: 'high' }
+    expect(migrate([descriptor(current)]).events).toEqual([descriptor(current)])
+
+    expect(() => migrate([descriptor({ ...continuable, agentReasoningEffort: 'high' })]))
+      .toThrow(/unexpected member "agentReasoningEffort"/)
+    expect(() => migrate([descriptor({ ...oneShot, agentModel: 'm' })])).toThrow(/unexpected member "agentModel"/)
+    expect(() => migrate([descriptor({ ...continuable, agentModel: undefined, agentProvider: 'litellm' })]))
+      .toThrow(/must be paired/)
+    expect(() => migrate([descriptor({ ...continuable, version: 1 })])).toThrow(SessionFormatUnsupportedMigrationError)
+    expect(() => migrate([descriptor({ ...continuable, version: 4 })])).toThrow(SessionFormatUnsupportedMigrationError)
+  })
+
   it('refuses a legacy replacement whose cited message has no imported identity', () => {
     expect(() => migrate([
       { type: 'turn/start', seq: 0, time: 1, data: { turn: 1 } },
