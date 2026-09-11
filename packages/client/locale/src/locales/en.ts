@@ -35,6 +35,7 @@ export const en = {
   'back': 'Back',
   'brand.localBuild': 'DSH Local Build',
   'workspace.defaultName': 'Default workspace',
+  'sidebar.open': 'Open sidebar',
   'unknown': 'Unknown',
   'none': 'None',
   'truncated': 'Truncated',

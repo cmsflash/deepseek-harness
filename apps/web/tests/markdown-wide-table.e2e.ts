@@ -69,7 +69,7 @@ const TABLE_NAMES = ['fill', 'wide', 'long-cell']
  * for the whole sweep (see beforeAll), so the transcript width follows the
  * viewport identically on overlay- and classic-scrollbar platforms.
  */
-const WIDTHS = [1680, 1100, 640]
+const WIDTHS = [1680, 1100, 640, 390]
 
 /** A sentence long enough that three of them cannot sit unwrapped in the 748px column. */
 const SENTENCE = 'This cell carries one full sentence so the unwrapped table is far wider than the message column.'
@@ -216,8 +216,12 @@ async function awaitTableLayout(target: Page): Promise<void> {
     if (element === null) return false
     const tracks = getComputedStyle(element).gridTemplateColumns.split(' ').map(Number.parseFloat)
     const root = element.querySelector<HTMLElement>('div[data-phase]')
-    // Mirrored from ui-layout's SIDEBAR_COLLAPSED; these tests use the Host compiler face.
-    return tracks[0] === 56 && tracks.at(-1) === 0
+    // Mirrored from ui-layout's SIDEBAR_COLLAPSED and its phone layout, whose
+    // single track holds the conversation; these tests use the Host compiler face.
+    const settledColumns = element.hasAttribute('data-overlay')
+      ? tracks.length === 1
+      : tracks[0] === 56 && tracks.at(-1) === 0
+    return settledColumns
       && element.getAnimations().every(animation =>
         animation.playState === 'finished' || animation.playState === 'idle')
       && root !== null

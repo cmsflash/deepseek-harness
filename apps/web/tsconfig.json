@@ -168,6 +168,7 @@
     "tests/blank-writer-reuse.e2e.ts",
     "tests/blank-preset-reuse.e2e.ts",
     "tests/queue-image.e2e.ts",
+    "tests/mobile-viewport.e2e.ts",
     "tests/skill-invocation-policy.e2e.ts",
     "tests/skill-user-invoke.e2e.ts",
     "tests/permission-policy-context.e2e.ts",

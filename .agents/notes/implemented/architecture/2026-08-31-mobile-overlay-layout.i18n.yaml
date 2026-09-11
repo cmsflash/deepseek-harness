@@ -1,0 +1,22 @@
+# Bilingual-pair consistency record for 2026-08-31-mobile-overlay-layout.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/architecture/2026-08-31-mobile-overlay-layout.md
+/agent-note-mobile-overlay-layout-for-the-web-frame:
+  en: 88a744992c8590db
+  zh: 12a2cd763c1a7560
+/agent-note-mobile-overlay-layout-for-the-web-frame/problem:
+  en: fffdb3be22a923dd
+  zh: 69e9412b02a458e5
+/agent-note-mobile-overlay-layout-for-the-web-frame/decision:
+  en: 392b1ab48cf59bdb
+  zh: fb75cda4dbfe0fae
+/agent-note-mobile-overlay-layout-for-the-web-frame/alternatives-considered:
+  en: 861a97f1c5e1de4b
+  zh: 9265bae753524a9d
+/agent-note-mobile-overlay-layout-for-the-web-frame/testing:
+  en: bfe7647eb58ef8c1
+  zh: 8d616b4b4ca0e50b
+/agent-note-mobile-overlay-layout-for-the-web-frame/consequences:
+  en: 8bb273df0832e699
+  zh: 13380c4c16e8fc5b
