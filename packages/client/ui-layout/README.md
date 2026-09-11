@@ -31,6 +31,8 @@ Global panels occupy the root-scoped `main` keyed slot; `conversation` is the re
 
 Windows Electron's `data-windows-titlebar` marker reserves the caption height above all columns and removes the collapsed sidebar rail. Only the content area's top-left corner has a 16px radius; the other corners and the internal divider remain square. The frame publishes `--dsh-windows-content-radius` and `--dsh-windows-sidebar-width` for ui-sidebar-right's fullscreen corner and sidebar clearance. Ordinary Web documents do not receive the marker; macOS retains its separate layout.
 
+At or below `MOBILE_MAX` (640px) the solver stops producing a column layout: the conversation takes the whole viewport, the right column stays closed, and the sidebar leaves the grid flow for an overlay drawer that floats above the conversation behind a dismiss scrim. The rail has no mobile form, so a closed drawer resolves to zero width and the frame renders its own opener control — the conversation header does not exist in the hero state, so the frame owns the only way back to the session list. `Columns.overlay` marks that layout, and `Columns.sidebar` then reports the drawer width rather than a track width; the drawer is capped by `DRAWER_MAX` and always leaves at least `DRAWER_PEEK` of the conversation reachable. Crossing the breakpoint changes only frame geometry: slot occupants keep their tree positions and React identity, and no width preference is rewritten, so widening restores the previous column layout. Every `selectPanel` call, including the `null` that every Session navigation ends in, dismisses an open drawer so it stops covering the destination; between the two breakpoints the sidebar is a column the user opened deliberately, and navigation leaves it alone.
+
 ### Theme presentation
 
 The presenter consumes resolved theme snapshots and projects them onto the document: `html { color-scheme }` for native UA chrome, `body[data-ds-dark-theme]` from the active color scheme, the theme's alias tokens and `--dsh-content-font-size` as inline variables on body, and one owned `<meta name="theme-color">` whose content follows the computed body background. Disposing the presenter removes its metadata node with its other global writes.
@@ -81,7 +83,9 @@ None; this package neither assembles nor sends a provider request.
 These limits define the current layout behavior. They are current package constraints, not a general window-manager comparison or a task backlog.
 
 - **Panel geometry is transient** — reload restores the sidebar default and the right panel hidden; each dragged width is one frame-wide preference, not a per-Session fact.
-- **Extremely narrow windows** — after the right panel closes, the center may still fall below 400px; the left 56px rail remains.
+- **Extremely narrow windows** — after the right panel closes, the center may still fall below 400px; the left 56px rail remains down to the phone breakpoint.
+- **The right column has no mobile form** — below `MOBILE_MAX` it is always closed, so file previews and other `rightbar` occupants are unreachable on a phone; they need their own mobile surface (a sheet over the conversation) before that gap closes.
+- **The drawer has no swipe gesture** — it opens and closes through the frame's opener, the scrim, and navigation; an edge-swipe would need a gesture owner the frame does not currently have.
 - **Track and panel travel on one shared curve** — the frame's track transition and the occupant's slide read the same duration and easing variables; an occupant that used its own would detach the panel's edge from the conversation's while squeezing.
 - **No scroll anchoring during squeeze reflow** — layout changes may move the reader's viewport.
 

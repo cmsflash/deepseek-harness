@@ -63,6 +63,26 @@ describe('createLayoutStore', () => {
     expect(store.getSnapshot().layoutInfo).toMatchObject({ sidebar: 400, narrowExpanded: false })
   })
 
+  it('collapseNarrowSidebar closes only the phone drawer, never a narrow column', () => {
+    const { store, actions } = createLayoutStore().create()
+    // Narrow but not mobile: the sidebar is a column the user opened beside
+    // the conversation, so navigating must leave it alone.
+    actions.setViewportWidth(980)
+    actions.toggleSidebar()
+    actions.collapseNarrowSidebar()
+    expect(store.getSnapshot().layoutInfo.narrowExpanded).toBe(true)
+    // Mobile: the same override is a drawer over the destination. The
+    // override survives the 980→390 resize because neither side crosses 1024.
+    actions.setViewportWidth(390)
+    expect(store.getSnapshot().layoutInfo.narrowExpanded).toBe(true)
+    actions.collapseNarrowSidebar()
+    expect(store.getSnapshot().layoutInfo.narrowExpanded).toBe(false)
+    // Wide: the preference is not an override, so there is nothing to dismiss.
+    actions.setViewportWidth(1920)
+    actions.collapseNarrowSidebar()
+    expect(store.getSnapshot().layoutInfo.sidebar).toBe(280)
+  })
+
   it('clears the manual override only when crossing 1024px', () => {
     const { store, actions } = createLayoutStore().create()
     actions.setViewportWidth(980)
