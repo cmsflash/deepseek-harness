@@ -1,0 +1,19 @@
+# Bilingual-pair consistency record for 2026-09-11-collapsed-rightbar-frame-overflow.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/bug-fix/2026-09-11-collapsed-rightbar-frame-overflow.md
+/agent-note-collapsed-right-panel-outside-the-frame-s-overflow:
+  en: 96435c5a764a5a55
+  zh: 800fdda18b605537
+/agent-note-collapsed-right-panel-outside-the-frame-s-overflow/problem:
+  en: 9f42cd6996af1030
+  zh: 8c36c701945e7b55
+/agent-note-collapsed-right-panel-outside-the-frame-s-overflow/decision:
+  en: ad185ad19b4f8c9a
+  zh: adfcae90fc991e96
+/agent-note-collapsed-right-panel-outside-the-frame-s-overflow/alternatives-considered:
+  en: 4d8e4ed3fccf8b85
+  zh: 5ae9e5a4bf3380ca
+/agent-note-collapsed-right-panel-outside-the-frame-s-overflow/consequences:
+  en: a7f7084b3c9912d6
+  zh: db9e65368ccb8896
