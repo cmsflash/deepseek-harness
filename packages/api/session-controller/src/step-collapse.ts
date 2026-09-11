@@ -13,7 +13,8 @@
  * @module
  */
 
-import type { SessionEvent } from '@deepseek-ai/dsh-session'
+import { isAppendSurfaceEvent, type SessionEvent } from '@deepseek-ai/dsh-session'
+import { appliedFileDiffs, fileDiffLineDelta } from '@deepseek-ai/dsh-tools/presentation'
 import type { StepDigest } from './types.ts'
 
 /** Step coordinate carried by every event logged inside a step window. */
@@ -22,18 +23,12 @@ interface StepCoordinate {
   readonly step: number
 }
 
-/**
- * Read an event's own turn/step coordinate.
- *
- * The coordinate is read from the payload rather than from log position: an
- * event without both fields (a user message, a turn boundary, a request
- * header) belongs to no step and is never elided.
- * @param event - the event to place.
- * @returns its coordinate, or undefined when it carries none.
- */
-function coordinateOf(event: SessionEvent): StepCoordinate | undefined {
-  const data = event.data as { turn?: unknown; step?: unknown }
-  const { turn, step } = data
+/** PTC events inherit their root call's step; unrelated events remain unassigned. */
+function coordinateOf(event: SessionEvent, heads: ReadonlyMap<string, CallHead>): StepCoordinate | undefined {
+  if (event.type === 'tool/ptc-dispatch-start' || event.type === 'tool/ptc-dispatch') {
+    return heads.get(event.data.rootCallId)?.at
+  }
+  const { turn, step } = event.data as { turn?: unknown; step?: unknown }
   if (!Number.isSafeInteger(turn) || (turn as number) < 0) return undefined
   if (!Number.isSafeInteger(step) || (step as number) < 0) return undefined
   return { turn: turn as number, step: step as number }
@@ -69,11 +64,11 @@ interface RetainedSteps {
  * @param events - the complete event range under consideration, ascending by seq.
  * @returns per-turn retained steps.
  */
-function retainedSteps(events: readonly SessionEvent[]): Map<number, RetainedSteps> {
+function retainedSteps(events: readonly SessionEvent[], heads: ReadonlyMap<string, CallHead>): Map<number, RetainedSteps> {
   const last = new Map<number, number>()
   const closing = new Map<number, number>()
   for (const event of events) {
-    const at = coordinateOf(event)
+    const at = coordinateOf(event, heads)
     if (at === undefined) continue
     const seen = last.get(at.turn)
     if (seen === undefined || at.step > seen) last.set(at.turn, at.step)
@@ -109,9 +104,10 @@ function isElidableStep(at: StepCoordinate, retained: ReadonlyMap<number, Retain
 function elidableAt(
   event: SessionEvent,
   retained: ReadonlyMap<number, RetainedSteps>,
+  heads: ReadonlyMap<string, CallHead>,
 ): StepCoordinate | undefined {
   if (STEP_BOUNDARIES.has(event.type)) return undefined
-  const at = coordinateOf(event)
+  const at = coordinateOf(event, heads)
   if (at === undefined || !isElidableStep(at, retained)) return undefined
   return at
 }
@@ -123,50 +119,36 @@ interface UsageLike {
   cacheWriteTokens?: unknown
 }
 
-interface DiffLike {
-  path?: unknown
-  oldText?: unknown
-  newText?: unknown
-}
-
 /** Non-negative finite reading of a provider-reported figure. */
 function count(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0
 }
 
-/**
- * Split one file image into its lines. A single terminating newline ends the
- * last line rather than starting an empty one.
- */
-function lines(text: string): readonly string[] {
-  const body = text.endsWith('\n') ? text.slice(0, -1) : text
-  return body === '' ? [] : body.split('\n')
+/** Call head of one root `tool/call`, kept until its `tool/result` settles it. */
+interface CallHead {
+  readonly name: string
+  readonly argumentsRaw: string
+  readonly at: StepCoordinate
 }
 
 /**
- * Added and removed line counts for one applied diff entry.
- *
- * Applied diffs carry whole before/after images rather than hunks, so this is a
- * line-multiset difference: lines present in both cancel regardless of
- * position, which reads a moved line as unchanged and a modified line as one
- * addition plus one removal.
- * @param oldText - prior content, or null for a created file.
- * @param newText - content after the change.
- * @returns the added and removed line counts.
+ * Index every root call head by call id so a result can be read together with
+ * the arguments it settled. A `write` whose result persisted no hunk applies
+ * the content its head carries, and only the head says which tool ran.
+ * @param events - the complete event range under consideration.
+ * @returns call heads by call id.
  */
-export function diffLineDelta(oldText: string | null, newText: string): { added: number; removed: number } {
-  if (oldText === null) return { added: lines(newText).length, removed: 0 }
-  const remaining = new Map<string, number>()
-  for (const line of lines(oldText)) remaining.set(line, (remaining.get(line) ?? 0) + 1)
-  let added = 0
-  for (const line of lines(newText)) {
-    const available = remaining.get(line) ?? 0
-    if (available > 0) remaining.set(line, available - 1)
-    else added += 1
+function callHeads(events: readonly SessionEvent[]): Map<string, CallHead> {
+  const heads = new Map<string, CallHead>()
+  for (const event of events) {
+    if (event.type !== 'tool/call') continue
+    heads.set(String(event.data.callId), {
+      name: event.data.name,
+      argumentsRaw: event.data.arguments,
+      at: { turn: event.data.turn, step: event.data.step },
+    })
   }
-  let removed = 0
-  for (const surplus of remaining.values()) removed += surplus
-  return { added, removed }
+  return heads
 }
 
 /** Mutable accumulator behind one published digest. */
@@ -175,14 +157,18 @@ interface DigestDraft {
   step: number
   startSeq: number
   endSeq: number | undefined
+  /** Events of this step withheld from the page being encoded. */
   elided: number
   steps: number
-  calls: number
+  readonly startedCalls: Set<string>
+  readonly settledCalls: Set<string>
+  closed: boolean
   added: number
   removed: number
   elapsedMs: number
   inputTokens: number
   outputTokens: number
+  /** Distinct paths the step's applied diffs touched, in first-touch order. */
   readonly paths: Set<string>
   /** `step/start` time, pending the final assistant message that closes the interval. */
   startTime: number | undefined
@@ -196,7 +182,9 @@ function draftFor(at: StepCoordinate, startSeq: number): DigestDraft {
     endSeq: undefined,
     elided: 0,
     steps: 0,
-    calls: 0,
+    startedCalls: new Set(),
+    settledCalls: new Set(),
+    closed: false,
     added: 0,
     removed: 0,
     elapsedMs: 0,
@@ -208,15 +196,13 @@ function draftFor(at: StepCoordinate, startSeq: number): DigestDraft {
 }
 
 /**
- * Accumulate one elided event into its step's digest.
+ * Accumulate one interior event into its step's account.
  *
- * A tool result's applied diffs ride its persisted `meta.diffs`, the same
- * payload the client's diff card reads, so the figures match what the expanded
- * rows would show. An entry that fails validation contributes its call without
- * line volume rather than being dropped.
+ * File volume follows the shared persisted-diff/whole-file-write rule.
+ * Root results and settled PTC dispatches both count as calls; PTC events
+ * carry no file-mutation metadata and therefore add no line volume.
  */
-function foldElided(draft: DigestDraft, event: SessionEvent): void {
-  draft.elided += 1
+function foldInterior(draft: DigestDraft, event: SessionEvent, heads: ReadonlyMap<string, CallHead>): void {
   if (event.type === 'assistant/message') {
     draft.steps += 1
     const { usage } = event.data as { usage?: unknown }
@@ -231,22 +217,80 @@ function foldElided(draft: DigestDraft, event: SessionEvent): void {
     }
     return
   }
-  if (event.type !== 'tool/result') return
-  draft.calls += 1
-  const { meta } = event.data as { meta?: unknown }
-  if (typeof meta !== 'object' || meta === null || Array.isArray(meta)) return
-  const { diffs } = meta as { diffs?: unknown }
-  if (!Array.isArray(diffs)) return
-  for (const item of diffs) {
-    if (typeof item !== 'object' || item === null) continue
-    const { path, oldText, newText } = item as DiffLike
-    if (typeof path !== 'string' || typeof newText !== 'string') continue
-    if (oldText !== null && typeof oldText !== 'string') continue
-    const delta = diffLineDelta(oldText ?? null, newText)
+  if (event.type === 'tool/call') {
+    draft.startedCalls.add(`root:${event.data.callId}`)
+    return
+  }
+  if (event.type === 'tool/ptc-dispatch-start') {
+    draft.startedCalls.add(`nested:${event.data.subCallId}`)
+    return
+  }
+  if (event.type === 'tool/ptc-dispatch') {
+    draft.settledCalls.add(`nested:${event.data.subCallId}`)
+    return
+  }
+  if (event.type !== 'tool/result' || !isAppendSurfaceEvent(event)) return
+  const { message, error, meta } = event.data
+  draft.settledCalls.add(`root:${message.source.callId}`)
+  const head = heads.get(String(message.source.callId))
+  const diffs = appliedFileDiffs({
+    name: head?.name ?? null,
+    argumentsRaw: head?.argumentsRaw ?? null,
+    isError: message.content[0].isError === true || error !== undefined,
+    meta,
+  })
+  for (const diff of diffs) {
+    const delta = fileDiffLineDelta(diff)
     draft.added += delta.added
     draft.removed += delta.removed
-    draft.paths.add(path)
+    draft.paths.add(diff.path)
   }
+}
+
+/**
+ * Account every elidable step over the whole scope: boundaries and interior
+ * figures of each step, independent of any page cut.
+ * @param scope - the complete range retention is decided over.
+ * @param retained - per-turn steps that stay whole.
+ * @returns whole-step accounts keyed by `turn:step`.
+ */
+function accountSteps(
+  scope: readonly SessionEvent[],
+  retained: ReadonlyMap<number, RetainedSteps>,
+  heads: ReadonlyMap<string, CallHead>,
+): Map<string, DigestDraft> {
+  const accounts = new Map<string, DigestDraft>()
+  const closedTurns = new Set<number>()
+  const accountFor = (at: StepCoordinate, firstSeq: number): DigestDraft => {
+    const key = `${String(at.turn)}:${String(at.step)}`
+    let draft = accounts.get(key)
+    if (draft === undefined) {
+      draft = draftFor(at, firstSeq)
+      accounts.set(key, draft)
+    }
+    return draft
+  }
+  for (const event of scope) {
+    if (event.type === 'turn/end') closedTurns.add(event.data.turn)
+    const boundary = STEP_BOUNDARIES.has(event.type) ? coordinateOf(event, heads) : undefined
+    if (boundary !== undefined && isElidableStep(boundary, retained)) {
+      const draft = accountFor(boundary, event.seq)
+      if (event.type === 'step/start') {
+        draft.startSeq = event.seq
+        draft.startTime = event.time
+      } else {
+        draft.endSeq = event.seq
+        draft.closed = true
+      }
+      continue
+    }
+    const at = elidableAt(event, retained, heads)
+    if (at !== undefined) foldInterior(accountFor(at, event.seq), event, heads)
+  }
+  for (const draft of accounts.values()) {
+    if (closedTurns.has(draft.turn)) draft.closed = true
+  }
+  return accounts
 }
 
 function publish(draft: DigestDraft): StepDigest {
@@ -257,8 +301,10 @@ function publish(draft: DigestDraft): StepDigest {
     ...draft.endSeq === undefined ? {} : { endSeq: draft.endSeq },
     elided: draft.elided,
     steps: draft.steps,
-    calls: draft.calls,
-    files: draft.paths.size,
+    calls: draft.closed
+      ? new Set([...draft.startedCalls, ...draft.settledCalls]).size
+      : draft.settledCalls.size,
+    filePaths: [...draft.paths],
     added: draft.added,
     removed: draft.removed,
     elapsedMs: draft.elapsedMs,
@@ -280,7 +326,12 @@ export interface CollapsedPage {
  * Retention is decided over `scope` rather than over the page, so a turn split
  * across pages keeps the same steps whole on each: deciding per page would let
  * the page boundary change which step counts as a turn's last, and the two
- * pages would then disagree about the same turn.
+ * pages would then disagree about the same turn. A digest's figures are
+ * likewise accounted over the whole step in `scope`, so a step cut by a page
+ * boundary reports the same steps, calls, lines, paths, tokens, and wall time
+ * from either page; only `elided` — the events this page withheld, which is
+ * what expansion returns — is page-specific, and a client holding both pages
+ * sums those counts under one account per step.
  * @param page - the events this page would serve under `full`, ascending by seq.
  * @param scope - the complete range the retention decision is made over.
  * @returns surviving events and the digests for the elided steps.
@@ -289,41 +340,26 @@ export function collapseSteps(
   page: readonly SessionEvent[],
   scope: readonly SessionEvent[],
 ): CollapsedPage {
-  const retained = retainedSteps(scope)
-  const drafts = new Map<string, DigestDraft>()
+  const heads = callHeads(scope)
+  const retained = retainedSteps(scope, heads)
+  const accounts = accountSteps(scope, retained, heads)
   const events: SessionEvent[] = []
-  // A step whose own `step/start` fell on an earlier page still needs a digest,
-  // so a draft is created by whichever of the two arrives first and the other
-  // fills in what it knows.
-  const draftFrom = (at: StepCoordinate, seq: number): DigestDraft => {
-    const key = `${String(at.turn)}:${String(at.step)}`
-    let draft = drafts.get(key)
-    if (draft === undefined) {
-      draft = draftFor(at, seq)
-      drafts.set(key, draft)
-    }
-    return draft
-  }
   for (const event of page) {
-    const boundary = STEP_BOUNDARIES.has(event.type) ? coordinateOf(event) : undefined
-    if (boundary !== undefined && isElidableStep(boundary, retained)) {
-      const draft = draftFrom(boundary, event.seq)
-      if (event.type === 'step/start') {
-        draft.startSeq = event.seq
-        draft.startTime = event.time
-      } else draft.endSeq = event.seq
-    }
-    const at = elidableAt(event, retained)
+    const at = elidableAt(event, retained, heads)
     if (at === undefined) {
       events.push(event)
       continue
     }
-    foldElided(draftFrom(at, event.seq), event)
+    const key = `${String(at.turn)}:${String(at.step)}`
+    const account = accounts.get(key)
+    /* v8 ignore next -- every page event is in scope, so accountSteps has drafted its step. */
+    if (account === undefined) continue
+    account.elided += 1
   }
   const digests: StepDigest[] = []
-  for (const draft of drafts.values()) {
-    if (draft.elided === 0) continue
-    digests.push(publish(draft))
+  for (const account of accounts.values()) {
+    if (account.elided === 0) continue
+    digests.push(publish(account))
   }
   digests.sort((left, right) => left.startSeq - right.startSeq)
   return { events, digests }
@@ -351,7 +387,8 @@ export function elidedEventsOfTurn(
   turn: number,
   fromSeq?: number,
 ): SessionEvent[] {
-  const retained = retainedSteps(events)
+  const heads = callHeads(events)
+  const retained = retainedSteps(events, heads)
   return events.filter(event => (fromSeq === undefined || event.seq >= fromSeq)
-    && elidableAt(event, retained)?.turn === turn)
+    && elidableAt(event, retained, heads)?.turn === turn)
 }

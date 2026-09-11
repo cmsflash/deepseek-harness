@@ -173,7 +173,7 @@ describe('ChatView step collapse', () => {
   it('folds a turn whose earlier steps the page withheld, and fetches them on opening', () => {
     // Only the last step reached the window; the digest stands for step 1.
     const digest: StepDigest = {
-      turn: 1, step: 1, startSeq: 3, endSeq: 9, elided: 5, steps: 1, calls: 2, files: 1,
+      turn: 1, step: 1, startSeq: 3, endSeq: 9, elided: 5, steps: 1, calls: 2, filePaths: ['a.ts'],
       added: 4, removed: 1, elapsedMs: 1200, inputTokens: 30, outputTokens: 10,
     }
     const digests = new Map([[1, [digest]]])
@@ -192,7 +192,7 @@ describe('ChatView step collapse', () => {
 
   it('keeps the row after expansion loads the withheld steps into the window', () => {
     const digest: StepDigest = {
-      turn: 1, step: 1, startSeq: 3, elided: 5, steps: 1, calls: 1, files: 0,
+      turn: 1, step: 1, startSeq: 3, elided: 5, steps: 1, calls: 1, filePaths: [],
       added: 0, removed: 0, elapsedMs: 0, inputTokens: 0, outputTokens: 0,
     }
     const accounts = new Map([[1, [digest]]])
@@ -208,7 +208,7 @@ describe('ChatView step collapse', () => {
 
   it('announces an in-flight expansion on the row', () => {
     const digest: StepDigest = {
-      turn: 1, step: 1, startSeq: 3, elided: 5, steps: 1, calls: 1, files: 0,
+      turn: 1, step: 1, startSeq: 3, elided: 5, steps: 1, calls: 1, filePaths: [],
       added: 0, removed: 0, elapsedMs: 0, inputTokens: 0, outputTokens: 0,
     }
     const digests = new Map([[1, [digest]]])

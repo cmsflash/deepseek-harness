@@ -11,12 +11,38 @@
 
 import { describe, expect, it } from 'vitest'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
-import { collapseSteps, diffLineDelta, elidedEventsOfTurn } from '../src/step-collapse.ts'
+import { collapseSteps, elidedEventsOfTurn } from '../src/step-collapse.ts'
 
 let seq = 0
 
 function event(type: string, data: unknown, time = 1000): SessionEvent {
-  return { type, seq: seq++, time, data } as unknown as SessionEvent
+  return {
+    type, seq: seq++, time, data,
+    ...['user/message', 'assistant/message', 'tool/result', 'system/message'].includes(type) ? { surfaceOp: 'append' } : {},
+  } as unknown as SessionEvent
+}
+
+/** One settled root call as the log records it: the head, then the result. */
+function toolPair(turn: number, step: number, callId: string, options: {
+  name?: string
+  args?: unknown
+  isError?: boolean
+  error?: { name: string; code: string }
+  meta?: unknown
+} = {}): SessionEvent[] {
+  return [
+    event('tool/call', { turn, step, callId, name: options.name ?? 'write', arguments: JSON.stringify(options.args ?? {}) }),
+    event('tool/result', {
+      turn,
+      step,
+      message: {
+        source: { kind: 'tool', callId },
+        content: [{ type: 'tool-result', toolCallId: callId, content: [], isError: options.isError === true }],
+      },
+      ...options.error === undefined ? {} : { error: options.error },
+      ...options.meta === undefined ? {} : { meta: options.meta },
+    }),
+  ]
 }
 
 /** One complete step: boundaries around an assistant message and a tool pair. */
@@ -31,12 +57,7 @@ function step(turn: number, index: number, options: {
     event('step/start', { turn, step: index }, options.startTime ?? 1000),
   ]
   if (options.tool === true) {
-    events.push(event('tool/call', { turn, step: index, callId: `c${String(turn)}-${String(index)}`, name: 'write', arguments: '{}' }))
-    events.push(event('tool/result', {
-      turn,
-      step: index,
-      message: { source: { kind: 'tool', callId: `c${String(turn)}-${String(index)}` }, content: [] },
-    }))
+    events.push(...toolPair(turn, index, `c${String(turn)}-${String(index)}`))
   }
   events.push(event('assistant/message', {
     turn,
@@ -63,6 +84,77 @@ function types(result: readonly SessionEvent[]): string[] {
 }
 
 describe('collapseSteps', () => {
+  it('does not recount compaction replacements of an already recorded tool result', () => {
+    seq = 0
+    const log = [
+      event('turn/start', { turn: 1 }),
+      event('step/start', { turn: 1, step: 1 }),
+      event('assistant/message', { turn: 1, step: 1, message: { content: [] } }),
+      ...toolPair(1, 1, 'write-once', { args: { file_path: 'a.ts', content: 'new\n' }, meta: { diffs: [] } }),
+      event('step/end', { turn: 1, step: 1 }),
+      ...step(1, 2, { text: 'done' }),
+      event('turn/end', { turn: 1, reason: { kind: 'completed' } }),
+    ]
+    const original = log.find(item => item.type === 'tool/result') as SessionEvent<'tool/result'>
+    const replacement = {
+      ...event('tool/result', original.data),
+      surfaceOp: { op: 'replace' as const, startSeq: original.seq, endSeq: original.seq },
+      sourceEventSeqs: [original.seq],
+    } as SessionEvent
+    log.push(replacement)
+    expect(collapseSteps(log, log).digests).toMatchObject([
+      { calls: 1, filePaths: ['a.ts'], added: 1, removed: 0 },
+    ])
+  })
+
+  it('counts interrupted root and nested starts whose step or turn closed without outcomes', () => {
+    for (const closeStep of [true, false]) {
+      seq = 0
+      const log = [
+        event('turn/start', { turn: 1 }),
+        event('step/start', { turn: 1, step: 1 }),
+        event('assistant/message', { turn: 1, step: 1, message: { content: [] } }),
+        event('tool/call', { turn: 1, step: 1, callId: 'interrupted', name: 'run_code', arguments: '{}' }),
+        event('tool/ptc-dispatch-start', { rootCallId: 'interrupted', parentCallId: 'interrupted', subCallId: 'unsettled-child', name: 'write', arguments: { file_path: 'not-written.txt', content: 'do not count' } }),
+        ...closeStep ? [event('step/end', { turn: 1, step: 1 })] : [],
+        ...step(1, 2, { text: 'interrupted' }),
+        event('turn/end', { turn: 1, reason: { kind: 'interrupted' } }),
+      ]
+      expect(collapseSteps(log, log).digests).toMatchObject([
+        { calls: 2, filePaths: [], added: 0, removed: 0 },
+      ])
+    }
+  })
+
+  it('accounts and elides settled PTC subcalls through their root step', () => {
+    seq = 0
+    const log = [
+      event('turn/start', { turn: 1 }),
+      event('step/start', { turn: 1, step: 1 }),
+      event('assistant/message', { turn: 1, step: 1, message: { content: [] } }),
+      event('tool/call', { turn: 1, step: 1, callId: 'root', name: 'run_code', arguments: '{}' }),
+      event('tool/ptc-dispatch-start', { rootCallId: 'root', parentCallId: 'root', subCallId: 'a', name: 'run_code', arguments: { code: 'await tools.read({file_path: "b.txt"})' } }),
+      event('tool/ptc-dispatch-start', { rootCallId: 'root', parentCallId: 'a', subCallId: 'b', name: 'read', arguments: { file_path: 'b.txt' } }),
+      event('tool/ptc-dispatch', { rootCallId: 'root', parentCallId: 'a', subCallId: 'b', name: 'read', arguments: { file_path: 'b.txt' }, content: [], isError: true }),
+      event('tool/ptc-dispatch', { rootCallId: 'root', parentCallId: 'root', subCallId: 'a', name: 'run_code', arguments: { code: 'await tools.read({file_path: "b.txt"})' }, content: [], isError: false }),
+      event('tool/result', { turn: 1, step: 1, message: { source: { callId: 'root' }, content: [{ type: 'tool-result', isError: false }] } }),
+      event('step/end', { turn: 1, step: 1 }),
+      event('step/start', { turn: 1, step: 2 }),
+      event('assistant/message', { turn: 1, step: 2, message: { content: [{ type: 'text', text: 'done' }] } }),
+      event('step/end', { turn: 1, step: 2 }),
+      event('turn/end', { turn: 1, reason: { kind: 'completed' } }),
+    ]
+    const collapsed = collapseSteps(log, log)
+    expect(collapsed.digests).toMatchObject([{ steps: 1, calls: 3, filePaths: [], added: 0, removed: 0 }])
+    expect(collapsed.events.some(item => item.type.startsWith('tool/ptc-'))).toBe(false)
+    const withheld = elidedEventsOfTurn(log, 1)
+    expect(withheld.filter(item => item.type.startsWith('tool/ptc-'))).toHaveLength(4)
+    expect(withheld).toEqual(log.filter(item => !collapsed.events.includes(item)))
+
+    const unrelated = event('tool/ptc-dispatch', { rootCallId: 'not-loaded', subCallId: 'orphan', name: 'read', arguments: {}, content: [], isError: false })
+    expect(collapseSteps([unrelated], [...log, unrelated]).events).toEqual([unrelated])
+  })
+
   it('keeps the turn\'s last step whole and reduces earlier ones to their boundaries', () => {
     seq = 0
     const log = turn(1, [step(1, 1, { tool: true }), step(1, 2, { tool: true }), step(1, 3, { text: 'done', tool: true })])
@@ -76,6 +168,33 @@ describe('collapseSteps', () => {
     expect(types(served).filter(type => type === 'step/end')).toHaveLength(3)
     expect(digests.map(digest => digest.step)).toEqual([1, 2])
     expect(digests.every(digest => digest.elided === 3)).toBe(true)
+  })
+
+  it('reads an assistant message with no content as carrying no closing text', () => {
+    seq = 0
+    const log = turn(1, [
+      step(1, 1, { tool: true }),
+      [
+        event('step/start', { turn: 1, step: 2 }),
+        event('assistant/message', { turn: 1, step: 2, message: {} }),
+        event('step/end', { turn: 1, step: 2 }),
+      ],
+      step(1, 3, { text: 'done' }),
+    ])
+    expect(collapseSteps(log, log).digests.map(digest => digest.step)).toEqual([1, 2])
+  })
+
+  it('never elides an event whose turn the scope never opened', () => {
+    seq = 0
+    // A coordinate-bearing event from a turn with no other events in scope has
+    // no retention decision, so it is served rather than withheld.
+    const stray = event('tool/result', {
+      turn: 9, step: 1, message: { source: { kind: 'tool', callId: 'x' }, content: [{ isError: false }] },
+    })
+    const log = [...turn(1, [step(1, 1, { text: 'done' })])]
+    const retainedScope = [...log]
+    const { events: served } = collapseSteps([stray], retainedScope)
+    expect(served).toEqual([stray])
   })
 
   it('never elides an event that carries no step coordinate', () => {
@@ -157,24 +276,111 @@ describe('collapseSteps', () => {
     const log = turn(1, [
       [
         event('step/start', { turn: 1, step: 1 }),
-        event('tool/call', { turn: 1, step: 1, callId: 'c1', name: 'write', arguments: '{}' }),
-        event('tool/result', {
-          turn: 1,
-          step: 1,
-          message: { source: { kind: 'tool', callId: 'c1' }, content: [] },
-          meta: { diffs: [{ path: 'a.ts', oldText: 'x\n', newText: 'x\ny\n' }, { path: 7 }] },
-        }),
+        ...toolPair(1, 1, 'c1', { name: 'edit', meta: { diffs: [{ path: 'a.ts', oldText: 'x\n', newText: 'x\ny\n' }] } }),
+        ...toolPair(1, 1, 'c2', { name: 'edit', meta: { diffs: [{ path: 'b.ts', oldText: 'p\nq\n', newText: 'p\n' }] } }),
         event('step/end', { turn: 1, step: 1 }),
       ],
       step(1, 2, { text: 'done' }),
     ])
     const { digests } = collapseSteps(log, log)
 
-    // The malformed second entry contributes nothing; the call still counts.
-    expect(digests[0]?.calls).toBe(1)
-    expect(digests[0]?.added).toBe(1)
-    expect(digests[0]?.removed).toBe(0)
-    expect(digests[0]?.files).toBe(1)
+    expect(digests[0]).toMatchObject({ calls: 2, added: 1, removed: 1, filePaths: ['a.ts', 'b.ts'] })
+  })
+
+  it('reads a settled mutation exactly as the diff card does', () => {
+    seq = 0
+    const log = turn(1, [
+      [
+        event('step/start', { turn: 1, step: 1 }),
+        // A create persists no hunk: the write's own content is what landed.
+        ...toolPair(1, 1, 'create', { args: { file_path: 'new.ts', content: 'one\ntwo\n' }, meta: { diffs: [] } }),
+        // A failed edit applied nothing, whatever its metadata says.
+        ...toolPair(1, 1, 'failed', {
+          name: 'edit', isError: true, error: { name: 'EditError', code: 'not-found' },
+          meta: { diffs: [{ path: 'gone.ts', oldText: 'a\n', newText: 'b\n' }] },
+        }),
+        // An edit whose metadata is malformed counts as a call without lines.
+        ...toolPair(1, 1, 'odd', { name: 'edit', meta: { diffs: [{ path: 7 }] } }),
+        // A tool that persists no diff is a call and nothing more.
+        ...toolPair(1, 1, 'shell', { name: 'bash', args: { command: 'ls' } }),
+        // The same file touched again in the step counts once.
+        ...toolPair(1, 1, 'again', { name: 'edit', meta: { diffs: [{ path: 'new.ts', oldText: 'two\n', newText: 'TWO\n' }] } }),
+        event('step/end', { turn: 1, step: 1 }),
+      ],
+      step(1, 2, { text: 'done' }),
+    ])
+    const { digests } = collapseSteps(log, log)
+
+    expect(digests[0]).toMatchObject({ calls: 5, added: 3, removed: 1, filePaths: ['new.ts'] })
+  })
+
+  it('reads a result whose call head lies outside the scope as a call without a head', () => {
+    seq = 0
+    const log = turn(1, [
+      [
+        event('step/start', { turn: 1, step: 1 }),
+        ...toolPair(1, 1, 'orphan', { args: { file_path: 'a.ts', content: 'x\n' }, meta: { diffs: [] } }),
+        event('step/end', { turn: 1, step: 1 }),
+      ],
+      step(1, 2, { text: 'done' }),
+    ])
+    // Cut the scope so the head is gone but its result remains.
+    const scope = log.filter(item => item.type !== 'tool/call')
+    const { digests } = collapseSteps(scope, scope)
+
+    // Without the head no tool name is known, so the write fallback cannot apply.
+    expect(digests[0]).toMatchObject({ calls: 1, added: 0, filePaths: [] })
+  })
+
+  it('omits endSeq while the step\'s end is still unlogged', () => {
+    seq = 0
+    const open = [
+      event('turn/start', { turn: 1 }),
+      event('step/start', { turn: 1, step: 1 }),
+      ...toolPair(1, 1, 'c1'),
+      event('assistant/message', { turn: 1, step: 1, message: { content: [] } }),
+      event('step/end', { turn: 1, step: 1 }),
+      event('step/start', { turn: 1, step: 2 }),
+      ...toolPair(1, 2, 'c2'),
+      event('step/start', { turn: 1, step: 3 }),
+    ]
+    const { digests } = collapseSteps(open, open)
+
+    expect(digests.map(digest => digest.step)).toEqual([1, 2])
+    expect(digests[0]?.endSeq).toBeDefined()
+    expect(digests[1]?.endSeq).toBeUndefined()
+  })
+
+  it('reports whole-step figures from any page cut, with elided counting only that page', () => {
+    seq = 0
+    const log = turn(1, [
+      [
+        event('step/start', { turn: 1, step: 1 }, 5000),
+        ...toolPair(1, 1, 'first', { name: 'edit', meta: { diffs: [{ path: 'a.ts', oldText: null, newText: 'x\n' }] } }),
+        ...toolPair(1, 1, 'second', { name: 'edit', meta: { diffs: [{ path: 'b.ts', oldText: null, newText: 'y\n' }] } }),
+        event('assistant/message', { turn: 1, step: 1, message: { content: [] }, usage: { inputTokens: 40, outputTokens: 4 } }, 5900),
+        event('step/end', { turn: 1, step: 1 }),
+      ],
+      step(1, 2, { text: 'done' }),
+    ])
+    // Cut the step between its two tool pairs.
+    const cutAt = log.findIndex(item => item.type === 'tool/call' && (item.data as { callId: string }).callId === 'second')
+    const older = log.slice(0, cutAt)
+    const newer = log.slice(cutAt)
+    const [fromOlder] = collapseSteps(older, log).digests
+    const [fromNewer] = collapseSteps(newer, log).digests
+
+    const account = { turn: 1, step: 1, startSeq: log[2]?.seq, calls: 2, steps: 1, added: 2, removed: 0, filePaths: ['a.ts', 'b.ts'], inputTokens: 40, outputTokens: 4, elapsedMs: 900 }
+    expect(fromOlder).toMatchObject(account)
+    expect(fromNewer).toMatchObject(account)
+    // The two pages withheld disjoint halves of the same interior.
+    expect(fromOlder?.elided).toBe(2)
+    expect(fromNewer?.elided).toBe(3)
+    expect((fromOlder?.elided ?? 0) + (fromNewer?.elided ?? 0)).toBe(collapseSteps(log, log).digests[0]?.elided)
+    // Both address the same step by the same boundaries, whichever page holds them.
+    const end = log.find(item => item.type === 'step/end' && (item.data as { step: number }).step === 1)?.seq
+    expect(fromOlder?.endSeq).toBe(end)
+    expect(fromNewer?.endSeq).toBe(end)
   })
 
   it('serves the whole page unchanged when a turn has only one step', () => {
@@ -196,14 +402,26 @@ describe('collapseSteps', () => {
     expect(digests.map(digest => digest.step)).toEqual([1, 2])
   })
 
-  it('addresses a step whose start fell on an earlier page by its first elided event', () => {
+  it('addresses a step by its start even when that start fell on an earlier page', () => {
     seq = 0
     const log = turn(1, [step(1, 1, { tool: true }), step(1, 2, { text: 'done' })])
     const interior = log.filter(item => item.type === 'tool/result')
     const { digests } = collapseSteps(interior, log)
 
     expect(digests).toHaveLength(1)
-    expect(digests[0]?.startSeq).toBe(interior[0]?.seq)
+    expect(digests[0]?.startSeq).toBe(log.find(item => item.type === 'step/start')?.seq)
+  })
+
+  it('uses the first scoped step event rather than a page-local fallback when the start is missing', () => {
+    seq = 0
+    const log = turn(1, [step(1, 1, { tool: true }), step(1, 2, { text: 'done' })])
+    // A scope cut inside step 1: neither the page nor the scope holds its start.
+    const scope = log.filter(item => item.type !== 'step/start' || (item.data as { step: number }).step !== 1)
+    const interior = scope.filter(item => item.type === 'tool/result')
+    const { digests } = collapseSteps(interior, scope)
+
+    expect(digests[0]?.startSeq).toBe(scope.find(item => item.type === 'tool/call')?.seq)
+    expect(collapseSteps(scope, scope).digests[0]?.startSeq).toBe(digests[0]?.startSeq)
   })
 })
 
@@ -271,24 +489,5 @@ describe('elidedEventsOfTurn', () => {
     seq = 0
     const log = turn(1, [step(1, 1, { text: 'done' })])
     expect(elidedEventsOfTurn(log, 99)).toEqual([])
-  })
-})
-
-describe('diffLineDelta', () => {
-  it('counts a created file as all additions', () => {
-    expect(diffLineDelta(null, 'a\nb\n')).toEqual({ added: 2, removed: 0 })
-  })
-
-  it('cancels lines present in both images regardless of position', () => {
-    expect(diffLineDelta('a\nb\n', 'b\na\n')).toEqual({ added: 0, removed: 0 })
-  })
-
-  it('reads a modified line as one addition and one removal', () => {
-    expect(diffLineDelta('a\n', 'b\n')).toEqual({ added: 1, removed: 1 })
-  })
-
-  it('ends the last line on a single terminating newline', () => {
-    expect(diffLineDelta(null, 'a')).toEqual({ added: 1, removed: 0 })
-    expect(diffLineDelta(null, '')).toEqual({ added: 0, removed: 0 })
   })
 })

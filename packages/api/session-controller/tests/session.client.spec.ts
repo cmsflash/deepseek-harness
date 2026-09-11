@@ -1003,7 +1003,7 @@ describe('collapsed step detail', () => {
       withheld: events.filter(event => interior.has(event.seq)),
       digest: {
         turn, step: 1, startSeq: startSeq + 2, endSeq: startSeq + 6, elided: 3, steps: 1, calls: 1,
-        files: 0, added: 0, removed: 0, elapsedMs: 0, inputTokens: 0, outputTokens: 0,
+        filePaths: [], added: 0, removed: 0, elapsedMs: 0, inputTokens: 0, outputTokens: 0,
       },
     }
   }
@@ -1052,6 +1052,31 @@ describe('collapsed step detail', () => {
     // A turn with nothing withheld never round-trips.
     await session.expandTurn(7)
     expect(api.callsOf('session.expandSteps')).toHaveLength(0)
+  })
+
+  it('keeps one whole-step account when adjacent pages split that step', async () => {
+    const turn = twoStepTurn(0, 1)
+    const { digest, withheld } = collapsed(turn, 1)
+    const earlier = turn.slice(0, 5)
+    const later = turn.slice(5)
+    const { api, session } = makeSession(new FakeApiClient(), { stepDetail: 'collapsed' })
+    api.onHistory = request => Promise.resolve(ok(request.beforeSeq === undefined
+      ? {
+        records: collapsedRecords(later, later.filter(event => event.seq !== 5)),
+        hasMore: true, digests: [{ ...digest, elided: 1 }],
+      }
+      : {
+        records: collapsedRecords(earlier, earlier.filter(event => event.seq < 3)),
+        hasMore: false, digests: [{ ...digest, elided: 2 }],
+      }))
+    api.onExpandSteps = () => Promise.resolve(ok({ records: entries(withheld) }))
+    await session.open()
+    await session.loadOlder()
+    expect(session.getSnapshot().stepDigests.get(1)).toEqual([digest])
+    expect(session.getSnapshot().stepAccounts.get(1)).toEqual([digest])
+    await session.expandTurn(1)
+    expect(eventSeqs(session)).toEqual(turn.map(event => event.seq))
+    expect(session.getSnapshot().stepAccounts.get(1)).toEqual([digest])
   })
 
   it('joins a repeated expansion onto the in-flight request and reports it as busy', async () => {

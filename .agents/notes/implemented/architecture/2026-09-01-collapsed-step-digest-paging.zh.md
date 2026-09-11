@@ -18,7 +18,11 @@ Status: implemented
 
 **只有阅读者不在看的 step 才可省略。** 该 turn 的最高 step 被保留，携带该 turn 收尾 assistant 文本的 step 同样被保留：`turn-tail` 从那条消息中取出收尾消息、分支锚点和延迟数字，因此省略它所在的 step 会削弱一个已结束 turn 的页脚，而不只是隐藏 step。在被测会话上，这在 56 个 turn 中的 2 个上多保留了一个 step。
 
-保留与否在截止点之前的整份日志上决定，而不是在单页上决定，因此被拆到多页的 turn 在每一页上都保留相同的完整 step；按页决定会让页边界改变哪个 step 算作某个 turn 的最后一个，相邻的两页于是会对同一个 turn 给出不一致的答案。digest 的差异行数来自修改类工具持久化在其 `tool/result` 上的 `meta.diffs`，与客户端 diff 卡片读取的是同一份载荷。
+保留规则根据请求截止点之前的整份日志判定，因此跨分页的 turn 在各页保留相同的完整 step。PTC 记录继承其已记录根调用的 step，而不是根据日志位置猜测坐标。
+
+每份 digest 记录该范围内完整 step 的账目：步骤数、调用数、行量、`filePaths`、token、时间和边界均不依赖分页切分。只有 `elided` 统计本页省略的事件。客户端收到多个片段时，每个 step 只保留一份账目，仅合并省略计数。步骤起始边界缺失时使用其在整个范围内的首个事件，而不是页内回退值。
+
+Host 与 Client 的文件指标都通过 `dsh-tools/presentation` 中的 `appliedFileDiffs` 读取已记录调用头、结果状态及元数据。保留去重路径，便于跨步骤去重。Compaction 的替换记录不作为新的工具结果计数。已关闭的 step 或 turn 将没有结果的根级或嵌套调用起点计为中断，与 Client 的中断行一致；仍在运行且没有结果的调用不计数。
 
 **`expandSteps` 以客户端的窗口头部为界**（`fromSeq`）。一个 turn 常常在展示它的那一页之前就已开始，它更早的 step 属于客户端尚未加载的页；返回它们会把事件拼接到头部以下，使 `baseSeq` 描述一个客户端已不再连续持有的范围。
 
@@ -41,4 +45,4 @@ Status: implemented
 - 折叠页剩下的体量是 `request/header`（每个事件 141 KB，没有 step 坐标，因此永不可省略）：占一份被测折叠页的 67%。它是任何进一步收益的约束瓶颈，本次未作改动。
 - 展开一个 turn 的代价是一次按该 turn 大小计的请求：在被测会话上 p50 为 151 KB，p90 为 528 KB，最大 2.15 MB。
 - subagent 的 transcript 经同一个 Session Controller 以同样的细节分页；catalog 子视图经同一个 Chat 视图渲染。
-- 摘要行的数字不再以窗口为范围，这使 [step 折叠记录](2026-08-14-chat-collapses-settled-steps.zh.md)中对应的那条后果作废。
+- 每份 step 账目不依赖分页边界；但更早分页引入额外步骤时，尚未加载完整的轮次总量仍会增长（[step 折叠记录](2026-08-14-chat-collapses-settled-steps.zh.md)）。

@@ -34,6 +34,6 @@ Status: implemented
 ## 影响
 
 - 默认输出不变：不在 `collapsed` 模式时，`ChatView` 与此前完全一样地映射快照顺序，因此既有 web 快照依然有效。
-- 折叠分组的数字来自 Host 计算的逐 step digest，它们描述完整的 step，因此不会随读者翻页或展开而变化（[决策](2026-09-01-collapsed-step-digest-paging.zh.md)）；只有没有 digest 覆盖的 step 才从已加载节点折叠得出。
-- 行数来自 write 与 edit 本就返回的已应用 `card:'diff'` 结果视图，并逐条校验，因为这些视图跨进程传输且只有 `card` 经过 schema 校验。由不发出 diff 卡片的工具所做的改动不计入行数。
+- Host 计算的 digest 描述完整 step，在展开前后保持稳定。新分页加入的步骤可能增加尚未加载完整的轮次总量；只有没有账目的步骤才从已加载节点折叠得出（[决策](2026-09-01-collapsed-step-digest-paging.zh.md)）。
+- 文件指标使用 `dsh-tools/presentation` 中共享的纯 `appliedFileDiffs` 读取器，而不是 renderer 状态，因此 Host 与 Client 的记账保持一致，也不需要跨 UI 实现依赖。成功 write 的回退描述其参数中的整文件映像，包括相同内容的覆盖；嵌套 dispatch 不携带 diff 元数据。[Chat 包参考](../../../../packages/client/ui-chat/README.zh.md#settled-step-collapse)拥有显示指标的语义。
 - 该行本身不展示成本。`TokenUsage.costUsd` 承载已计价调用的美元金额（[决策](2026-08-24-token-usage-carries-billed-cost.zh.md)），因此该指标可由贡献者经 `conversation.chat.collapsedMetric` 提供，而不在此处计算。
