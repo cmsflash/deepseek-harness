@@ -178,6 +178,14 @@ export class FixtureSession implements SessionFace {
     return Promise.resolve()
   }
 
+  /** @inheritdoc */
+  requireFullHistory(): Promise<void> {
+    if (this.getSnapshot().stepDigests.size > 0) {
+      throw new Error(`test session "${this.sessionId}": requireFullHistory is not stubbed for withheld events`)
+    }
+    return Promise.resolve()
+  }
+
   /**
    * Fail-loud stub; supply `expandTurn` on the fixture's session face to exercise it.
    * @returns never — always throws.

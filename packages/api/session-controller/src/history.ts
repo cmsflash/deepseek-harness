@@ -74,8 +74,8 @@ export class SessionHistoryController {
   }
 
   /**
-   * Read one message-aligned history page without activating an Agent.
-   * @param request - durable address and backwards-page cursor.
+   * Read a message-aligned page or exact event interval without activating an Agent.
+   * @param request - durable address, log cut, and page budget or interval head.
    * @param signal - caller cancellation for persistence reads.
    * @returns a contiguous event page.
    */
@@ -101,6 +101,12 @@ export class SessionHistoryController {
     /* v8 ignore next -- Session and persistence validation guarantee a dense zero-based event prefix. */
     if (throughSeq >= 0 && sourceLog[throughSeq]?.seq !== throughSeq) {
       throw new RemoteError('gateway/internal', `session log does not contain through seq ${String(throughSeq)}`, {})
+    }
+    if (request.fromSeq !== undefined) {
+      return {
+        records: pageRecords(sourceLog.slice(request.fromSeq, throughSeq + 1)),
+        hasMore: request.fromSeq > 0,
+      }
     }
     const page = paginate(
       sourceLog,
@@ -336,6 +342,17 @@ function validatePageRequest(request: SessionPageRequest): void {
     || request.throughSeq < -1
     || Object.is(request.throughSeq, -0)) {
     throw new RemoteError('gateway/bad-request', 'throughSeq must be an integer greater than or equal to -1', {})
+  }
+  if (request.fromSeq !== undefined) {
+    if (!Number.isSafeInteger(request.fromSeq)
+      || request.fromSeq < 0
+      || Object.is(request.fromSeq, -0)
+      || request.fromSeq > request.throughSeq + 1) {
+      throw new RemoteError('gateway/bad-request', 'fromSeq must be a non-negative safe integer at or before throughSeq + 1', {})
+    }
+    if (request.beforeSeq !== undefined || request.maxMessages !== undefined || request.stepDetail === 'collapsed') {
+      throw new RemoteError('gateway/bad-request', 'an exact history interval cannot use a message budget, beforeSeq, or collapsed detail', {})
+    }
   }
   if (request.beforeSeq !== undefined
     && (!Number.isSafeInteger(request.beforeSeq)

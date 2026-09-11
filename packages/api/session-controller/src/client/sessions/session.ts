@@ -1,4 +1,4 @@
-// Sessions remain resident after creation so their open Remote sources keep running off-screen.
+/** Reference-owned Session history, commands, and observable state. */
 
 import type { Context } from '@deepseek-ai/cordis'
 import type { InboxState } from '@deepseek-ai/dsh-agent/types'
@@ -9,12 +9,13 @@ import type { MessageId } from '@deepseek-ai/dsh-llm/brand'
 import { SessionLogOffset, SessionSeq, type SessionId } from '@deepseek-ai/dsh-session/types'
 import { SessionEventStream } from '../transport.ts'
 import type { ClientSessionPageRequest, SessionJournalChange } from '../transport.ts'
-import { historyPageFirstSeq } from './history-records.ts'
+import { historyInteriorEntries, historyPageFirstSeq } from './history-records.ts'
 import type {
   PromptContentPart,
   QueueAction,
   SessionAddress,
   SessionAssistantStreamBaseline,
+  SessionHistoryRecord,
   SessionProjectionBaseline,
   SessionRequestId,
   SessionStepDetail,
@@ -137,8 +138,12 @@ export class Session implements SessionFace {
   }>()
   /** Owns the addressed page/follow lifecycle while this Session is open. */
   private events: SessionEventStream | undefined
-  /** Step detail requested from every page; a change re-opens the window. */
   private stepDetail: SessionStepDetail = 'full'
+  private fullHistoryRequired = false
+  /** Physical follow replacement invalidates reads even when the Session stream object survives. */
+  private windowGeneration = 0
+  private detailLoad: { readonly source: SessionEventStream; readonly promise: Promise<void> } | undefined
+  private stepDetailError: RemoteFailure | null = null
   /**
    * Elided-step digests of the loaded window, by turn: the window's account of
    * what it does NOT hold. A turn drops out once {@link expandTurn} loads it.
@@ -150,8 +155,7 @@ export class Session implements SessionFace {
    * change what it cost; the collapsed row keeps its figures after expansion.
    */
   private accounts: StepDigestsByTurn = new Map()
-  /** Turns whose expansion request is in flight; a repeat gesture joins it. */
-  private readonly expanding = new Set<number>()
+  private readonly expanding = new Map<number, Promise<void>>()
 
   /**
    * Per-session projection value store (push model; see the session-projection
@@ -415,51 +419,108 @@ export class Session implements SessionFace {
     return promise
   }
 
-  /**
-   * Choose how much of each step this Session's pages carry (see ISession).
-   * @param detail - whole steps, or boundaries plus digests for elidable ones.
-   * @returns completion of the rebuild a change triggers.
-   */
-  async setStepDetail(detail: SessionStepDetail): Promise<void> {
-    if (this.stepDetail === detail) return
+  /** @inheritdoc */
+  setStepDetail(detail: SessionStepDetail): Promise<void> {
     this.stepDetail = detail
-    if (this.openState === 'cold') return
-    await this.resync()
+    return this.completeHistoryIfRequired()
   }
 
-  /**
-   * Load the steps one collapsed page elided from a single turn (see ISession).
-   * @param turn - the turn the reader opened.
-   * @returns completion; a failure leaves the window and its digests unchanged.
-   */
-  async expandTurn(turn: number): Promise<void> {
-    if (this.openState !== 'open' || this.expanding.has(turn) || !this.digests.has(turn)) return
+  /** @inheritdoc */
+  requireFullHistory(): Promise<void> {
+    this.fullHistoryRequired = true
+    return this.openState === 'error' ? this.open() : this.completeHistoryIfRequired()
+  }
+
+  /** @inheritdoc */
+  expandTurn(turn: number): Promise<void> {
+    const pending = this.expanding.get(turn)
+    if (pending !== undefined) return pending
+    if (this.openState !== 'open' || !this.digests.has(turn) || this.events === undefined) return Promise.resolve()
     const events = this.events
-    if (events === undefined) return
-    const generation = this.openGeneration
-    this.expanding.add(turn)
-    this.notifier.markDirty()
-    try {
-      // baseSeq bounds the read-back to the window this Session holds. A turn
-      // routinely starts before the page showing it, and its earlier steps
-      // arrive with their own older page; without the bound they would splice
-      // in below the head and leave baseSeq describing a range with a hole.
-      const records = await events.expandSteps(turn, this.baseSeq)
-      if (generation !== this.openGeneration || this.events !== events) return
-      // Only the withheld marker clears: the account stays so the row keeps
-      // reporting what those steps cost.
-      const digests = new Map(this.digests)
-      digests.delete(turn)
-      this.digests = digests
-      this.eventSource.splice(records as unknown as readonly SessionEventLikeEntry[])
-    } catch (error) {
-      if (!isRemoteFailure(error)) {
-        console.error('[session-controller] expandTurn failed:', error)
-      }
-    } finally {
-      this.expanding.delete(turn)
+    const generation = this.windowGeneration
+    const promise = this.expandTurnWindow(turn, events, generation).finally(() => {
+      if (this.expanding.get(turn) === promise) this.expanding.delete(turn)
       this.notifier.markDirty()
+    })
+    this.expanding.set(turn, promise)
+    this.notifier.markDirty()
+    return promise
+  }
+
+  private async expandTurnWindow(turn: number, events: SessionEventStream, generation: number): Promise<void> {
+    while (this.events === events && generation === this.windowGeneration) {
+      const requested = this.digests.get(turn)
+      if (requested === undefined) return
+      const window = this.eventSource.getSnapshot().entries
+      let records: readonly SessionHistoryRecord[]
+      try {
+        records = await events.expandSteps(turn, this.baseSeq)
+      } catch (error) {
+        if (!isRemoteFailure(error)) console.error('[session-controller] expandTurn failed:', error)
+        return
+      }
+      if (this.events !== events || generation !== this.windowGeneration) return
+      this.restoreStepHistory(records, window, new Map([[turn, requested]]))
     }
+  }
+
+  private effectiveStepDetail(): SessionStepDetail {
+    return this.fullHistoryRequired ? 'full' : this.stepDetail
+  }
+
+  private completeHistoryIfRequired(): Promise<void> {
+    const source = this.events
+    if (source !== undefined && this.detailLoad?.source === source) return this.detailLoad.promise
+    if (this.effectiveStepDetail() !== 'full' || this.openState !== 'open'
+      || source === undefined || this.digests.size === 0) return Promise.resolve()
+    this.stepDetailError = null
+    const promise = this.completeHistoryWindow(source).finally(() => {
+      if (this.detailLoad?.promise !== promise) return
+      this.detailLoad = undefined
+      this.notifier.markDirty()
+      // A pending older page may publish between the read loop and its settlement.
+      if (this.stepDetailError === null) void this.completeHistoryIfRequired()
+    })
+    this.detailLoad = { source, promise }
+    this.notifier.markDirty()
+    return promise
+  }
+
+  private async completeHistoryWindow(events: SessionEventStream): Promise<void> {
+    while (this.events === events && this.openState === 'open'
+      && this.effectiveStepDetail() === 'full' && this.digests.size > 0) {
+      const generation = this.windowGeneration
+      const requested = this.digests
+      const window = this.eventSource.getSnapshot().entries
+      let records: readonly SessionHistoryRecord[]
+      try {
+        records = await events.readFullRange(this.baseSeq)
+      } catch (error) {
+        if (this.events !== events || generation !== this.windowGeneration) continue
+        if (!isRemoteFailure(error)) console.error('[session-controller] full history failed:', error)
+        this.stepDetailError = isRemoteFailure(error)
+          ? error
+          : new RemoteError('gateway/internal', error instanceof Error ? error.message : String(error), {})
+        return
+      }
+      if (this.events !== events || generation !== this.windowGeneration) continue
+      this.restoreStepHistory(records, window, requested)
+    }
+  }
+
+  private restoreStepHistory(
+    records: readonly SessionHistoryRecord[],
+    window: readonly SessionEventLikeEntry[],
+    requested: StepDigestsByTurn,
+  ): void {
+    const digests = new Map(this.digests)
+    for (const [turn, captured] of requested) {
+      // A concurrently prepended page may add omissions to this same turn.
+      if (digests.get(turn) === captured) digests.delete(turn)
+    }
+    this.digests = digests
+    this.eventSource.splice(historyInteriorEntries(records, window))
+    this.notifier.markDirty()
   }
 
   /** Page up: pull one earlier page with the window's first seq as beforeSeq and prepend. */
@@ -666,6 +727,7 @@ export class Session implements SessionFace {
     this.openError = null
     this.notifier.markDirty()
     const events = new SessionEventStream(this.remote, this.sessionAddress(), {
+      stepDetail: () => this.effectiveStepDetail(),
       publish: (change) => {
         if (generation !== this.openGeneration || this.events !== events) return
         this.acceptEventChange(change)
@@ -679,6 +741,7 @@ export class Session implements SessionFace {
       await events.open(this.pageRequest(undefined, this.pageMessages()))
       if (generation !== this.openGeneration || this.events !== events) return
       this.openState = 'open'
+      await this.completeHistoryIfRequired()
     } catch (error) {
       if (generation !== this.openGeneration || this.events !== events) return
       if (!isRemoteFailure(error)) throw error
@@ -730,6 +793,9 @@ export class Session implements SessionFace {
     // A durable gap-repair page has no assistant baseline. Clearing transient
     // attempts makes a held notification reopen follow once for an atomic
     // page/baseline pair instead of applying it to an unrelated repair cut.
+    this.windowGeneration++
+    this.expanding.clear()
+    this.stepDetailError = null
     const visible = this.assistantStream.replace(entries, assistantStream)
     this.baseSeq = SessionLogOffset(coveredHead ?? entries[0]?.event.seq ?? 0)
     this.hasMore = hasMore
@@ -740,6 +806,7 @@ export class Session implements SessionFace {
     this.eventSource.replace(visible, hasMore)
     for (const entry of visible) this.observeSubmissionEvent(entry.event)
     this.notifier.markDirty()
+    void this.completeHistoryIfRequired()
   }
 
   private publishAssistantEntry(result: ClientAssistantStreamResult): void {
@@ -779,16 +846,17 @@ export class Session implements SessionFace {
     const head = entries.length === 0 ? undefined : coveredHead ?? entries[0]?.event.seq
     this.baseSeq = head === undefined ? this.baseSeq : SessionLogOffset(head)
     this.hasMore = hasMore
-    if (digests !== undefined && digests.length > 0) {
+    if (entries.length > 0 && digests !== undefined && digests.length > 0) {
       this.digests = mergeDigests(this.digests, digests)
       this.accounts = mergeDigests(this.accounts, digests)
     }
     this.eventSource.prepend(entries, hasMore)
+    void this.completeHistoryIfRequired()
   }
 
   /** Messages per page under the current step detail. */
   private pageMessages(): number {
-    return this.stepDetail === 'collapsed' ? COLLAPSED_PAGE_MESSAGES : PAGE_MESSAGES
+    return this.effectiveStepDetail() === 'collapsed' ? COLLAPSED_PAGE_MESSAGES : PAGE_MESSAGES
   }
 
   /** One addressed page request carrying the current step detail. */
@@ -796,7 +864,7 @@ export class Session implements SessionFace {
     return {
       ...(beforeSeq === undefined ? {} : { beforeSeq }),
       maxMessages,
-      ...(this.stepDetail === 'full' ? {} : { stepDetail: this.stepDetail }),
+      stepDetail: this.effectiveStepDetail(),
     }
   }
 
@@ -912,7 +980,9 @@ export class Session implements SessionFace {
       loadingOlder: this.loadingOlder,
       stepDigests: this.digests,
       stepAccounts: this.accounts,
-      expandingTurns: new Set(this.expanding),
+      expandingTurns: new Set(this.expanding.keys()),
+      loadingStepDetail: this.events !== undefined && this.detailLoad?.source === this.events,
+      stepDetailError: this.stepDetailError,
       promptError: this.promptError,
       blank: this.blankBit,
       lastAgentError: this.lastAgentError,

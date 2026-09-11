@@ -928,6 +928,45 @@ describe('TrajectoryTable', () => {
     expect(recovered.style.getPropertyValue('--request-boundary-offset')).toBe('16px')
   })
 
+  it('names a header-only ordinary request as an assistant request, never as compaction', () => {
+    const turns: readonly TrajectoryTurnModel[] = [
+      {
+        turn: 1,
+        groups: [{
+          title: 'Step 1',
+          cells: [{
+            index: 1,
+            kind: 'message',
+            text: '',
+            requestOnly: true,
+            timeSeconds: null,
+          }],
+        }],
+      },
+      {
+        turn: null,
+        groups: [{
+          title: 'Compaction 7',
+          cells: [{
+            index: 2,
+            kind: 'compacted',
+            text: 'Context compacted',
+            timeSeconds: 1,
+          }],
+        }],
+      },
+    ]
+    render(<TrajectoryTable turns={turns} {...FOLD_PROPS} />)
+
+    const headerOnly = screen.getByRole('row', { name: 'Request 1, ASSISTANT, no content' })
+    expect(headerOnly.getAttribute('data-request-only')).toBe('true')
+    expect(headerOnly.getAttribute('aria-label')).not.toMatch(/compaction/i)
+    expect(screen.getByRole('button', { name: 'Request #1' })).toBeTruthy()
+    expect(screen.getByRole('row', { name: 'Request 2, COMPACTED, Context compacted' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Request #2 · Compaction' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Request #1 · Compaction' })).toBeNull()
+  })
+
   it('localizes a sanitized AUTH request failure from its stable code', () => {
     const turns: readonly TrajectoryTurnModel[] = [{
       turn: 1,

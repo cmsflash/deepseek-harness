@@ -1039,6 +1039,57 @@ describe('web e2e: shipped right Sidebar', () => {
       expect(await column.locator('[data-sidebar-right-open]').count()).toBe(1)
     })
 
+    it('keeps a collapsed panel out of the frame\'s overflow, so focusing the composer cannot scroll the columns away', async () => {
+      // Regression: the collapsed panel stays mounted at its normal width,
+      // translated past the frame's right edge, inside a zero-width column
+      // that did not clip. That made the frame's scrollable overflow one
+      // panel wider than the frame, and the first composer focus scrolled
+      // the frame sideways by that width — sidebar and conversation left the
+      // viewport while the frame's own box stayed put.
+      onTestFailed(() => saveFailureShot(page, 'web-e2e-sidebar-right-collapsed-overflow'))
+      const frame = page.locator('[class*="frame"]').first()
+      const column = page.locator('[data-rightbar-col]')
+      const panel = column.locator('[data-sidebar-right-panel]')
+      expect(await frame.getAttribute('data-rightbar-collapsed')).toBe('true')
+      // Vacuity guard: the hidden panel is mounted, wide, and past the edge.
+      // Its layout box is read directly: Playwright's boundingBox() reports a
+      // visibility-hidden element as absent.
+      const frameBox = await frame.boundingBox()
+      if (frameBox === null) throw new Error('frame is not rendered')
+      const panelBox = await panel.evaluate(node => node.getBoundingClientRect().toJSON() as { x: number; width: number })
+      expect(panelBox.width).toBeGreaterThan(300)
+      expect(Math.round(panelBox.x)).toBeGreaterThanOrEqual(Math.round(frameBox.x + frameBox.width))
+      expect(await width(column)).toBe(0)
+
+      const overflow = () => frame.evaluate(node => ({
+        scrollable: node.scrollWidth - node.clientWidth,
+        scrollLeft: node.scrollLeft,
+      }))
+      expect(await overflow()).toEqual({ scrollable: 0, scrollLeft: 0 })
+
+      const sidebar = page.locator('[class*="sidebarCol"]').first()
+      const conversation = page.locator('[class*="centerCol"]').first()
+      const sidebarBefore = await sidebar.boundingBox()
+      const conversationBefore = await conversation.boundingBox()
+      const composer = page.locator('[data-composer-input][contenteditable="true"]').first()
+      await composer.click()
+      await expect.poll(async () => await composer.evaluate(node => node === document.activeElement)).toBe(true)
+      expect(await overflow()).toEqual({ scrollable: 0, scrollLeft: 0 })
+      expect(await sidebar.boundingBox()).toEqual(sidebarBefore)
+      expect(await conversation.boundingBox()).toEqual(conversationBefore)
+
+      // Not a scroll container at all: a scroll walk from any descendant has
+      // nowhere to take the frame.
+      expect(await frame.evaluate((node) => {
+        node.scrollLeft = 400
+        return node.scrollLeft
+      })).toBe(0)
+      expect(await sidebar.boundingBox()).toEqual(sidebarBefore)
+
+      expect(tripwire.pageErrors).toEqual([])
+      expect(tripwire.warnings).toEqual([])
+    })
+
     it('opens a context menu on right-click that the strip cannot clip', async () => {
       onTestFailed(() => saveFailureShot(page, 'web-e2e-sidebar-right-menu'))
       const column = page.locator('[data-rightbar-col]')

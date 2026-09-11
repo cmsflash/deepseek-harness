@@ -67,7 +67,7 @@ Assistant 回复结算后，已完成轮次的计时对话框不显示 TTFT 和�
 
 一个轮次是一回用户往返，其中每个步骤是一次模型调用，因此长轮次的阅读成本在于中间步骤而非答案。在「折叠步骤」模式下，每个轮次只保留其最高步骤渲染——流式输出时即当前活跃的那一步——并把更早的 `assistant-step` 与 `tool-call` 行折叠进一个 `CollapsedStepsRow`，汇报这些步骤耗费的时长、步骤数、工具调用数、token、增删行数与文件数。已落定的根级工具调用和嵌套 dispatch 结果各计一次调用。Host 与 Client 的文件指标共享 `dsh-tools/presentation` 中的 `appliedFileDiffs`：失败结果不贡献 diff；可用元数据提供 hunk；成功的 `write` 若没有 hunk，则使用已记录参数中的整文件映像。这一回退也表示相同内容的覆盖，因此其行量不是实测的文件系统净改动。嵌套 dispatch 不记录 diff 元数据。已记录路径跨步骤去重；触及的空文件即使行量为零，也会显示文件计数。其他任何种类的行——提示消息、上下文注入、turn tail——无论日志把它们放在哪里都不折叠。打开该行会通过同一个 keyed node seat 就地恢复隐藏的行，因此展开后的分组与未折叠的 transcript 渲染完全一致；展示状态按轮次全有或全无、由读者掌控且不持久化。该行只有一个开放点：`conversation.chat.collapsedMetric` 是会话作用域的 list 槽位，其条目渲染在该行自行计算的每个指标之后，因此贡献者无需针对该行以后可能新增的指标预留 `order` 区间；owner 传入折叠分组所属的轮次、它隐藏的 node key，以及已折叠的步骤数和调用数，因此贡献者能够识别已物化的隐藏节点。只有 digest 的步骤，在其事件加载前没有 node key。若改为读取整个轮次，就会把仍然可见的最后一步计入其中，而该行上没有任何其他指标包含它。展示控件与指标是兄弟节点，因此贡献的指标可以携带交互内容而不会嵌套在按钮内部。
 
-该模式还决定历史的拉取方式。它生效时，插件把 sessions 领域的步骤细节设为 `collapsed`：分页请求只携带边界加上每个可省略步骤的一条 `StepDigest`，并扣留其内部直到 `expandTurn` 通过 `session.expandSteps` 读回该轮次，因此同样的消息预算下一页能跨越多得多的轮次。每份 digest 记录一个完整步骤的账目，因此其数字既不取决于分页边界落在何处，也不会在读者展开时改变；被拆到两页的步骤只保留一份账目，只有当更早分页带来窗口尚未见过的步骤时，尚未加载完整的轮次总量才会增长。步骤已全部加载的轮次展开时不发出任何请求，而摘要行会宣告正在进行的读回（[决策](../../../.agents/notes/implemented/architecture/2026-09-01-collapsed-step-digest-paging.zh.md)）。
+该模式也选择历史读取偏好：`collapsed` 分页携带边界和每个可省略步骤的一条 `StepDigest`，直到展开时取回内部事件。每份账目描述完整步骤，并在展开后保留；但当更早分页加入更多步骤时，尚未加载完整的轮次总量仍会增长。偏好改变时，已经加载的事件仍保留在内存。Trajectory 等完整详情消费者会在该 Session 对象中优先于此偏好，并恢复其已加载区间；Chat 仍可折叠显示。事件已全部存在的轮次展开时不再请求数据，摘要行会报告正在进行的展开（[摘要分页](../../../.agents/notes/implemented/architecture/2026-09-01-collapsed-step-digest-paging.zh.md)、[完整详情恢复](../../../.agents/notes/implemented/bug-fix/2026-09-10-consumer-required-full-history.zh.md)）。
 
 -----
 
@@ -93,7 +93,7 @@ Chat 会在历史前插与 renderer 重新挂载时恢复语义锚点。没有�
 
 - **transcript 只反映已加载的 Session 窗口**——只有会话控制器加载前一页事件后，更早的 transcript node 才会出现。轮次导航比窗口更宽：轨道把已加载的轮次与宿主 `turnOutline` 投影合并，每个已开始的轮次都有固定间距刻度（相隔 10px；阶梯高于外框时在框内滚动并以渐变淡出标示可滚方向），激活未加载刻度会先把历史分页拉到该轮次的 `turn/start` seq 再落到它的行上。没有该投影时（未挂载 `dsh-session-turn-outline` 的装配），轨道回退到仅显示已加载轮次。
 - **导航预览按卡片尺寸截断**——提示词一行（50 字符）、回复至多三行（120 字符），已加载与未加载 Turn 一致；未加载 Turn 的回复要等该轮落定后才随大纲到达，进行中的轮次在此之前只预览提示词（或仅轮次号）。
-- **折叠步骤的指标自身不展示费用**——`TokenUsage.costUsd` 承载已计价调用的美元金额，因此费用指标是 `conversation.chat.collapsedMetric` 的贡献项，而非内置项。`StepDigest` 不携带费用，因此要为被扣住的步骤计价的贡献者必须先展开该轮次。
+- **折叠步骤的指标自身不展示费用**——`TokenUsage.costUsd` 承载已计价调用的美元金额，因此费用指标是 `conversation.chat.collapsedMetric` 的贡献项，而非内置项。`StepDigest` 不携带费用；需要被省略用量的贡献者必须先请求完整详情，再计算那些步骤的费用。
 
 
 <a id="dev-note"></a>

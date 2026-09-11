@@ -509,6 +509,12 @@ export interface SessionPageRequest {
   readonly throughSeq: number
   readonly beforeSeq?: number
   readonly maxMessages?: number
+  /**
+   * Read the exact inclusive interval through `throughSeq` at full detail.
+   * Mutually exclusive with `beforeSeq`, `maxMessages`, and collapsed detail;
+   * `throughSeq + 1` returns an empty interval.
+   */
+  readonly fromSeq?: number
   /** Step detail served; omitted means `full`. */
   readonly stepDetail?: SessionStepDetail
 }

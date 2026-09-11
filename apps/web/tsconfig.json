@@ -42,6 +42,7 @@
     "tests/navigation-panes.e2e.ts",
     "tests/chat-scroll-fixture.ts",
     "tests/trajectory-virtualization.e2e.ts",
+    "tests/trajectory-full-detail.e2e.ts",
     "tests/collapsed-metrics.e2e.ts",
     "tests/lifecycle-chrome.e2e.ts",
     "tests/details-session-lifecycle.e2e.ts",

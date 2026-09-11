@@ -5,6 +5,7 @@ import type {
   AssistantBlock, AssistantMessageNode, ConvViewProps, MessageImageLoader, RenderMessageImages,
   ToolCallBlock,
 } from '@deepseek-ai/dsh-client-ui-conversation/client'
+import { Button } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { InjectFace, PropsLocale, PropsRenderSlots } from '@deepseek-ai/dsh-client-ui-slots'
 import type { SnapshotStore } from '@deepseek-ai/dsh-client-store'
 import type { JsonTreeProps } from '@deepseek-ai/dsh-client-ui-primitives'
@@ -81,6 +82,8 @@ export interface TrajectoryViewInjected {
     duration: SnapshotStore<boolean>
   }
   loadOlder: () => Promise<boolean>
+  /** Retry full-detail recovery; `snapshot.stepDetailError` reports its failure. */
+  requireFullHistory: () => Promise<void>
   loadImage: MessageImageLoader
   setActualDuration: (actualDuration: boolean) => void
 }
@@ -130,8 +133,8 @@ function addUsage(
 }
 
 export function TrajectoryView({
-  useSession, useTrajectory, useDuration, loadOlder, loadImage, setActualDuration,
-  viewRequest, completeViewRequest, renderSlot, t, jsonStringWrapping,
+  useSession, useTrajectory, useDuration, loadOlder, requireFullHistory, loadImage,
+  setActualDuration, viewRequest, completeViewRequest, renderSlot, t, jsonStringWrapping,
 }: ConvViewProps
   & PropsRenderSlots<'conversation.trajectory.images'>
   & InjectFace<TrajectoryViewInjected>
@@ -188,6 +191,9 @@ export function TrajectoryView({
   }, [completeInspection, historyStartIndex])
   const historyLoading = useSession(snapshot => snapshot.openState === 'loading')
   const olderHistoryLoading = useSession(snapshot => snapshot.loadingOlder)
+  const stepDetailIncomplete = useSession(snapshot => snapshot.stepDigests.size > 0)
+  const stepDetailError = useSession(snapshot => snapshot.stepDetailError ?? snapshot.openError)
+  const retryStepDetail = useCallback(() => { void requireFullHistory() }, [requireFullHistory])
   const sessionHasOlderHistory = useSession(snapshot => snapshot.hasMore)
   const hasResidentOlderHistory = historyStartIndex > 0
   const hasOlderHistory = hasResidentOlderHistory
@@ -528,50 +534,79 @@ export function TrajectoryView({
         onSearchQueryChange={setSearchQuery}
         t={t}
       />
-      <TrajectoryTimeline
-        t={t}
-        turns={timelineTurns}
-        mode={timelineMode}
-        range={timelineRange}
-        hasEarlierRecords={hasOlderHistory}
-        onLoadEarlier={loadEarlierHistory}
-        selectedIndex={selectedTimelineIndex}
-        searchMatchIndexes={searchMatchIndexes}
-        onRangeChange={handleTimelineRangeChange}
-        onRecordSelect={handleTimelineRecordSelect}
-        onRecordFocus={handleTimelineRecordFocus}
-      />
-      <div className={css.ledger}>
-        <TrajectoryTable
-          t={t}
-          stringWrapping={jsonStringWrapping === undefined ? undefined : {
-            ...jsonStringWrapping,
-            label: t('record.wrapLines'),
-          }}
-          renderImages={renderImages}
-          requestNumbers={requestNumbers}
-          turns={timelineTurns}
-          streamingCells={streamingCells}
-          timelineFocusIndexes={timelineFocusIndexes}
-          searchMatchIndexes={searchMatchIndexes}
-          onSelectedIndexChange={setSelectedTimelineIndex}
-          onRecordSelect={handleRecordSelect}
-          recordSelection={timelineRecordSelection}
-          recordFocus={timelineRecordFocus}
-          historyLoading={historyLoading}
-          olderHistoryLoading={olderHistoryLoading}
-          historyStartSeq={historyBaseSeq}
-          hasOlderRecords={hasOlderHistory}
-          onLoadOlder={loadEarlierHistory}
-          onClearSelection={() => { setTimelineSelection(null) }}
-          collapsedTurns={collapsedTurns}
-          onToggleTurn={toggleTurn}
-          collapsedAssistants={collapsedAssistants}
-          onToggleAssistant={toggleAssistant}
-          inspectCallId={inspectCallId}
-          onInspectApplied={completeViewRequest}
-        />
-      </div>
+      {stepDetailIncomplete
+        ? (
+          <div className={css.stepDetail} role="status" aria-live="polite">
+            {stepDetailError === null
+              ? (
+                <span className={css.stepDetailLoading}>
+                  <span className={css.stepDetailSpinner} aria-hidden="true" />
+                  {t('history.loadingStepDetail')}
+                </span>
+              )
+              : (
+                <>
+                  <span className={css.stepDetailError}>
+                    {t('history.stepDetailError', {
+                      message: stepDetailError.message,
+                      code: stepDetailError.code,
+                    })}
+                  </span>
+                  <Button variant="outline" size="sm" onClick={retryStepDetail}>
+                    {t('history.retryStepDetail')}
+                  </Button>
+                </>
+              )}
+          </div>
+        )
+        : (
+          <>
+            <TrajectoryTimeline
+              t={t}
+              turns={timelineTurns}
+              mode={timelineMode}
+              range={timelineRange}
+              hasEarlierRecords={hasOlderHistory}
+              onLoadEarlier={loadEarlierHistory}
+              selectedIndex={selectedTimelineIndex}
+              searchMatchIndexes={searchMatchIndexes}
+              onRangeChange={handleTimelineRangeChange}
+              onRecordSelect={handleTimelineRecordSelect}
+              onRecordFocus={handleTimelineRecordFocus}
+            />
+            <div className={css.ledger}>
+              <TrajectoryTable
+                t={t}
+                stringWrapping={jsonStringWrapping === undefined ? undefined : {
+                  ...jsonStringWrapping,
+                  label: t('record.wrapLines'),
+                }}
+                renderImages={renderImages}
+                requestNumbers={requestNumbers}
+                turns={timelineTurns}
+                streamingCells={streamingCells}
+                timelineFocusIndexes={timelineFocusIndexes}
+                searchMatchIndexes={searchMatchIndexes}
+                onSelectedIndexChange={setSelectedTimelineIndex}
+                onRecordSelect={handleRecordSelect}
+                recordSelection={timelineRecordSelection}
+                recordFocus={timelineRecordFocus}
+                historyLoading={historyLoading}
+                olderHistoryLoading={olderHistoryLoading}
+                historyStartSeq={historyBaseSeq}
+                hasOlderRecords={hasOlderHistory}
+                onLoadOlder={loadEarlierHistory}
+                onClearSelection={() => { setTimelineSelection(null) }}
+                collapsedTurns={collapsedTurns}
+                onToggleTurn={toggleTurn}
+                collapsedAssistants={collapsedAssistants}
+                onToggleAssistant={toggleAssistant}
+                inspectCallId={inspectCallId}
+                onInspectApplied={completeViewRequest}
+              />
+            </div>
+          </>
+        )}
     </div>
   )
 }

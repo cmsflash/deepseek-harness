@@ -3,7 +3,9 @@
   display: grid;
   grid-template-rows: 100%;
   height: 100%;
-  overflow: hidden;
+  /* `clip`, not `hidden`: the frame must never be programmatically scrollable
+     (.agents/notes/implemented/bug-fix/2026-09-11-collapsed-rightbar-frame-overflow.md). */
+  overflow: clip;
   background: var(--dsw-alias-bg-base);
   /* Collapse/expand animates the tracks on the deepsuite sider curve
      (--ds-ease-in-out / --ds-transition-duration-slow, ui-theme base.css). */
@@ -196,16 +198,23 @@
 }
 
 /*
- * The right column never clips: its occupant anchors a fixed-width panel to the
- * column's right edge (the frame's edge, which never moves) and lets the track
- * decide whether the centre makes room. With no track the panel hangs over the
- * centre from a zero-width column, and while the track animates the panel stays
- * where it is. The occupant draws its own left border.
+ * The right column does not clip while it has a track: its occupant anchors a
+ * fixed-width panel to the column's right edge (the frame's edge, which never
+ * moves) and lets the track decide whether the centre makes room. While the
+ * track opens the panel hangs over the centre from the still-narrow column.
+ * The occupant draws its own left border.
  */
 .rightbarCol {
   position: relative;
   min-width: 0;
   overflow: visible;
+}
+
+/* Closed, the occupant's hidden panel stays mounted past the frame's right
+   edge; the zero-width column clips it out of the frame's scrollable overflow.
+   A fullscreen panel is position: fixed and unaffected. */
+.frame[data-rightbar-collapsed] .rightbarCol {
+  overflow: clip;
 }
 
 .overlayLayer {

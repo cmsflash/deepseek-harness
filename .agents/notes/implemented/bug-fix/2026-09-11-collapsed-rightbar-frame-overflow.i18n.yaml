@@ -1,0 +1,6 @@
+# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
+# side as of the last confirmed-consistent state. Both languages carry equal authority;
+# after editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/bug-fix/2026-09-11-collapsed-rightbar-frame-overflow.md
+2026-09-11-collapsed-rightbar-frame-overflow.md: fcf4bf1e87f201d0f72d3d77b3a45ac32fd95591
+2026-09-11-collapsed-rightbar-frame-overflow.zh.md: a36b1662eab6cb9f1b9daaebd1e9743cde727b75

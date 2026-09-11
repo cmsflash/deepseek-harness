@@ -382,10 +382,10 @@ export class SessionController extends TypertRemoteService {
   }
 
   /**
-   * Read one cold-safe, message-aligned Session history page.
-   * @param request - durable address, backward cursor, and page budget.
+   * Read cold-safe Session history by message budget or exact full-detail interval.
+   * @param request - durable address and cut, with a page budget or inclusive fromSeq.
    * @param signal - cancellation for persistence reads.
-   * @returns one chronological page.
+   * @returns chronological records for the requested page or complete interval.
    */
   @Remote('page')
   page(request: SessionPageRequest, signal: AbortSignal): Promise<SessionPage> {

@@ -30,7 +30,7 @@ Host 与 Client 的文件指标都通过 `dsh-tools/presentation` 中的 `applie
 
 摘要行的锚点在任何行发出之前、在整个渲染顺序上解析，并且依据节点**种类**（该 turn 的第一条 assistant 行或 tool 行）。以第一条携带 step 坐标的行作锚点会把标记放到发起消息之上，因为引擎按日志位置分配 step Location，于是那条消息和任何上下文注入也都携带一个；而在遍历行的过程中解析锚点，则会让展开操作移动该行。
 
-`ui-chat.transcriptView` 设置的 `collapsed` 模式现在选择的是一种取数策略，而不只是一种呈现方式：Chat 插件把实时偏好跟进到 `sessions.setStepDetail`，后者重新打开每个已加载的窗口，因为混合细节级别的窗口会依取数时间不同而把同类 step 渲染得不一样。默认值仍为 `compact`；`collapsed` 及其分页仍由读者选择。
+`ui-chat.transcriptView` 默认使用 `compact`；读者自行选择 `collapsed` 分页。消费者要求完整详情时的处理和原位恢复遵循[完整历史读取决策](../bug-fix/2026-09-10-consumer-required-full-history.zh.md)，该决策替代偏好变更触发窗口重开的做法。
 
 ## 考虑过的替代方案
 

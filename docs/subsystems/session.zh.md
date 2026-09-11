@@ -743,9 +743,30 @@ interface TurnEndReasonMap {
 
 `SessionOpenWorkspacePathRequest` 携带绝对路径或已按 workspace 解析的 `path`。`SessionOpenWorkspacePathValue` 确认 Host 已接受原生交接。Session-aware Client 会在已知当前 Session cwd 时据此解析相对路径；controller 将路径原样交给打开器，并通过 Session Remote 错误词汇表报告无效请求、取消与打开器失败。 可选的 `action: "reveal"` 选择文件管理器导航；省略时使用默认应用打开。
 
-## Remote 历史分页：`StepDigest`
+## Remote 历史分页：`SessionPageRequest` 与 `StepDigest`
 
-一份 `StepDigest` 是 Session Controller 随折叠历史页（`stepDetail: 'collapsed'` 下的 `page` 与 `follow`）下发的完整步骤账目。除 `elided` 外的每个数字都在该步骤截至请求截止点的完整事件范围上计算，因此同一步骤无论由哪一页携带，都报告相同的 `steps`、`calls`、`filePaths`、`added`、`removed`、`elapsedMs` 与 token；持有多个分页片段的 Client 每个步骤只保留一份账目，仅对 `elided` 求和。`calls` 统计已落定的根级结果与已落定的嵌套 PTC dispatch；步骤或其轮次关闭后，没有落定的根级或嵌套调用起点计为一次中断调用，而仍在运行的调用不计数。嵌套 PTC 记录取其已记录根调用的步骤。文件改动量遵循共享的 [`appliedFileDiffs`](tools.zh.md#settled-tool-call-record) 读取规则；不属于追加结果的 compaction 替换不增加调用数。`filePaths` 保留去重路径而不是计数，使轮次能够对多个步骤中编辑过的同一文件去重。分页与展开行为由 controller 的[包参考](../../packages/api/session-controller/README.zh.md)拥有。
+`page` Remote 在不激活 Agent 的情况下读取历史。不带 `fromSeq` 时，它下发一页按消息对齐的向后分页；带 `fromSeq` 时，它按完整详情下发精确的闭区间 `[fromSeq, throughSeq]`。当 `fromSeq` 不是位于 `throughSeq + 1` 及之前的非负安全整数，或与 `beforeSeq`、`maxMessages`、`stepDetail: 'collapsed'` 同时出现时，Host 以 `gateway/bad-request` 拒绝请求，而不是截短数据。Client 的完整详情恢复用这一区间回填已加载窗口，因此分页与恢复行为由 controller 的[包参考](../../packages/api/session-controller/README.zh.md)拥有。
+
+```ts type-equiv
+/** One message-aligned backwards-history request. */
+interface SessionPageRequest {
+  readonly address: SessionAddress
+  /** Inclusive log cut obtained from the corresponding follow opening frame. */
+  readonly throughSeq: number
+  readonly beforeSeq?: number
+  readonly maxMessages?: number
+  /**
+   * Read the exact inclusive interval through `throughSeq` at full detail.
+   * Mutually exclusive with `beforeSeq`, `maxMessages`, and collapsed detail;
+   * `throughSeq + 1` returns an empty interval.
+   */
+  readonly fromSeq?: number
+  /** Step detail served; omitted means `full`. */
+  readonly stepDetail?: SessionStepDetail
+}
+```
+
+一份 `StepDigest` 是一个完整步骤的账目：除 `elided` 外的每个数字都在该步骤截至请求截止点的完整事件范围上计算，因此同一步骤无论由哪一页携带，都报告相同的 `steps`、`calls`、`filePaths`、`added`、`removed`、`elapsedMs` 与 token；持有多个分页片段的 Client 每个步骤只保留一份账目，仅对 `elided` 求和。`calls` 统计已落定的根级结果与已落定的嵌套 PTC dispatch；步骤或其轮次关闭后，没有落定的根级或嵌套调用起点计为一次中断调用，而仍在运行的调用不计数。嵌套 PTC 记录取其已记录根调用的步骤。文件改动量遵循共享的 [`appliedFileDiffs`](tools.zh.md#settled-tool-call-record) 读取规则；不属于追加结果的 compaction 替换不增加调用数。`filePaths` 保留去重路径而不是计数，使轮次能够对多个步骤中编辑过的同一文件去重。
 
 ```ts type-equiv
 /**
@@ -781,6 +802,8 @@ interface StepDigest {
   readonly outputTokens: number
 }
 ```
+
+在 Client 侧，`SessionFace`（`ISession & ObservableSnapshot<SessionSnapshot>`）是 UI 绑定收到的 Session 对象。`requireFullHistory()` 在该对象的剩余生命周期内固定完整详情，并优先于 `setStepDetail`；只解析数据源而不订阅的消费者不会触发读取。恢复通过上述区间形式读取已加载区间，只把窗口中已捕获 `covers` 范围所代表的历史内部事件拼接回去，忽略窗口在此期间已被替换的回复，并让并发调用方共享同一次进行中的操作。`SessionSnapshot.loadingStepDetail` 独立于 `loadingOlder` 报告这次恢复；`stepDetailError` 保存失败读取的 `RemoteFailure`，同时被扣住的标记仍留在 `stepDigests` 中，因此再次调用 `requireFullHistory()` 即可重试。`stepAccounts` 在展开后仍保留每份已下发的 digest；`stepDigests` 只包含仍在扣住事件的轮次。
 
 <!-- BEGIN GENERATED cordis-surface (gen-cordis-catalog.ts) — do not edit between markers -->
 
@@ -913,10 +936,10 @@ workspaceDesktop(): { name: string; available: boolean; fileManager: 'finder' | 
 @Remote('cancel') cancel(request: SessionCancelRequest): SessionCancelValue
 
 /**
- * Read one cold-safe, message-aligned Session history page.
- * @param request - durable address, backward cursor, and page budget.
+ * Read cold-safe Session history by message budget or exact full-detail interval.
+ * @param request - durable address and cut, with a page budget or inclusive fromSeq.
  * @param signal - cancellation for persistence reads.
- * @returns one chronological page.
+ * @returns chronological records for the requested page or complete interval.
  */
 @Remote('page') page(request: SessionPageRequest, signal: AbortSignal): Promise<SessionPage>
 

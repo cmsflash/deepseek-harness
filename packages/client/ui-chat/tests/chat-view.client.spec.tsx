@@ -79,6 +79,8 @@ function sessionSnapshot(overrides: Partial<TestSessionSnapshot> = {}): TestSess
     stepDigests: new Map(),
     stepAccounts: new Map(),
     expandingTurns: new Set(),
+    loadingStepDetail: false,
+    stepDetailError: null,
     promptError: null,
     blank: false,
     subagent: null,

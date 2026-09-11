@@ -8,6 +8,7 @@
 import { describe, expect, onTestFinished, vi } from 'vitest'
 import { SessionSeq, type SessionEvent } from '@deepseek-ai/dsh-session/types'
 import { AttachmentId } from '@deepseek-ai/dsh-attachment'
+import { LlmAttemptId } from '@deepseek-ai/dsh-llm'
 import type { SessionId } from '@deepseek-ai/dsh-api-remotes/client'
 import { RemoteStreamCarrierError } from '@deepseek-ai/dsh-api-gateway/client'
 import { RemoteError, type RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
@@ -19,7 +20,7 @@ import type { SessionExpandStepsValue, SessionFollowRequest, SessionPage, Sessio
 import { collapsedRecords, entries, ev, historyValue, plainTurn } from './event-script.client.ts'
 import { sessionBench } from './remote/bench.client.ts'
 import {
-  FOLLOW, PAGE, err, followScript, followSnapshot, frame, history, pageRule, pushEvent,
+  FOLLOW, PAGE, err, followScript, followSnapshot, frame, history, pageRule, pushAssistantStream, pushEvent,
 } from './remote/session.client.ts'
 
 /** A Session talks through the Gateway client; its dependency cone is the Typert registry and the Connection. */
@@ -393,7 +394,7 @@ describe('prompt and cancel errors', () => {
     expect(steered).toEqual({ ok: true, value: { accepted: true } })
     expect(cancelled).toEqual({ ok: true, value: { accepted: true } })
     expect(mock.log.requests(FOLLOW)).toEqual([
-      { address: { kind: 'subagent', ...CHILD }, assistantStream: true, maxMessages: 50 },
+      { address: { kind: 'subagent', ...CHILD }, assistantStream: true, maxMessages: 50, stepDetail: 'full' },
     ])
     expect(mock.log.requests(PAGE)).toEqual([])
     // The prompt mode crosses the wire as the request's delivery.
@@ -489,7 +490,7 @@ describe('prompt and cancel errors', () => {
     expect(mock.log.requests('subagents/prompt')).toMatchObject([CHILD])
     expect(mock.log.calls('subagents/interruptByParent').map(call => call.args)).toEqual([[SID, PARENT, 'continuable']])
     expect(mock.log.requests(FOLLOW)).toEqual([
-      { address: { kind: 'subagent', ...CHILD, mode: 'one-shot' }, assistantStream: true, maxMessages: 50 },
+      { address: { kind: 'subagent', ...CHILD, mode: 'one-shot' }, assistantStream: true, maxMessages: 50, stepDetail: 'full' },
     ])
     expect(mock.log.requests(PAGE)).toEqual([])
     expect(mock.log.requests('session/cancel')).toEqual([])
@@ -1029,6 +1030,7 @@ describe('collapsed step detail', () => {
 
     const first = session.expandTurn(1)
     const second = session.expandTurn(1)
+    expect(second).toBe(first)
     expect(session.getSnapshot().expandingTurns.has(1)).toBe(true)
     await vi.waitFor(() => { expect(mock.log.requests('session/expandSteps')).toHaveLength(1) })
     pending.resolve(ok({ records: entries(withheld) }))
@@ -1051,26 +1053,260 @@ describe('collapsed step detail', () => {
     expect(session.getSnapshot().expandingTurns.size).toBe(0)
   })
 
-  it('re-opens an open window when the step detail changes, and only then', async ({ mock, start }) => {
+  it('promotes detail in place and retains materialized events when the preference is lowered', async ({ mock, start }) => {
     const turn = twoStepTurn(0, 1)
     const { served, page, digest } = collapsed(turn, 1)
     const session = await sessionBench(mock, start, SID)
     mock.stream(FOLLOW, followScript(request => ok(request.stepDetail === 'collapsed'
       ? { ...page(false), digests: [digest] }
       : historyValue(turn, false))))
+    mock.remote.session.page.mockImplementation(pageRule(history(turn)))
     await session.setStepDetail('collapsed')
     expect(mock.log.requests(FOLLOW)).toHaveLength(0)
     await session.open()
-    expect(mock.log.requests(FOLLOW)).toHaveLength(1)
     expect(eventSeqs(session)).toEqual(served.map(event => event.seq))
 
     await session.setStepDetail('collapsed')
-    expect(mock.log.requests(FOLLOW)).toHaveLength(1)
-
+    expect(mock.log.requests(PAGE)).toHaveLength(0)
     await session.setStepDetail('full')
-    expect(mock.log.requests(FOLLOW)).toHaveLength(2)
+    expect(mock.log.requests(FOLLOW)).toHaveLength(1)
+    expect(mock.log.requests(PAGE)).toEqual([
+      { address: ADDRESS, fromSeq: 0, throughSeq: 10, stepDetail: 'full' },
+    ])
     expect(eventSeqs(session)).toEqual(turn.map(event => event.seq))
     expect(session.getSnapshot().stepDigests.size).toBe(0)
-    expect(session.getSnapshot().stepAccounts.size).toBe(0)
+    expect(session.getSnapshot().stepAccounts.get(1)).toEqual([digest])
+
+    await session.setStepDetail('collapsed')
+    expect(eventSeqs(session)).toEqual(turn.map(event => event.seq))
+    expect(mock.log.requests(FOLLOW)).toHaveLength(1)
+  })
+
+  it('restores all previously paged turns rather than reopening only the tail', async ({ mock, start }) => {
+    const older = twoStepTurn(0, 1)
+    const newer = twoStepTurn(11, 2)
+    const before = collapsed(older, 1)
+    const tail = collapsed(newer, 2)
+    const session = await sessionBench(mock, start, SID, { stepDetail: 'collapsed' })
+    mock.stream(FOLLOW, followScript(ok({ ...tail.page(true), digests: [tail.digest] })))
+    mock.remote.session.page.mockImplementation(pageRule(request => request.fromSeq === undefined
+      ? ok({ ...before.page(false), digests: [before.digest] })
+      : history([...older, ...newer], false)))
+    await session.open()
+    await session.loadOlder()
+    const head = session.eventSource.getSnapshot().entries[0]
+
+    await session.requireFullHistory()
+    expect(eventSeqs(session)).toEqual([...older, ...newer].map(event => event.seq))
+    expect(session.eventSource.getSnapshot().entries[0]).toBe(head)
+    expect(session.getSnapshot()).toMatchObject({
+      hasMore: false, loadingStepDetail: false, stepDetailError: null,
+    })
+    expect(session.getSnapshot().stepDigests.size).toBe(0)
+    expect(mock.log.requests(FOLLOW)).toHaveLength(1)
+    expect(mock.log.requests(PAGE).at(-1)).toEqual({
+      address: ADDRESS, fromSeq: 0, throughSeq: 21, stepDetail: 'full',
+    })
+  })
+
+  it('joins full-detail recovery and keeps its errors retryable without losing history', async ({ mock, start }) => {
+    const turn = twoStepTurn(0, 1)
+    const { page, digest, served } = collapsed(turn, 1)
+    const session = await sessionBench(mock, start, SID, { stepDetail: 'collapsed' })
+    mock.stream(FOLLOW, followScript(ok({ ...page(false), digests: [digest] })))
+    const pending = Promise.withResolvers<RemoteResult<SessionPage>>()
+    mock.remote.session.page.mockImplementation(pageRule(() => pending.promise))
+    await session.open()
+    const first = session.requireFullHistory()
+    expect(session.requireFullHistory()).toBe(first)
+    expect(session.getSnapshot().loadingStepDetail).toBe(true)
+    pending.resolve(err(new RemoteError('gateway/internal', 'retry this read', {})))
+    await first
+    expect(eventSeqs(session)).toEqual(served.map(event => event.seq))
+    expect(session.getSnapshot()).toMatchObject({
+      openState: 'open', loadingStepDetail: false,
+      stepDetailError: { message: 'retry this read' },
+    })
+    expect(session.getSnapshot().stepDigests.get(1)).toEqual([digest])
+
+    mock.remote.session.page.mockImplementation(pageRule(history(turn)))
+    await session.requireFullHistory()
+    expect(eventSeqs(session)).toEqual(turn.map(event => event.seq))
+    expect(session.getSnapshot()).toMatchObject({ loadingStepDetail: false, stepDetailError: null })
+    expect(session.getSnapshot().stepDigests.size).toBe(0)
+  })
+
+  it.for(['missing-record', 'unexpected-digest'] as const)('refuses a %s full-range response without clearing withheld markers', async (invalid, { mock, start }) => {
+    const turn = twoStepTurn(0, 1)
+    const { page, digest, served } = collapsed(turn, 1)
+    const session = await sessionBench(mock, start, SID, { stepDetail: 'collapsed' })
+    mock.stream(FOLLOW, followScript(ok({ ...page(false), digests: [digest] })))
+    const invalidPage = invalid === 'missing-record'
+      ? historyValue(turn.slice(1), false)
+      : { ...historyValue(turn, false), digests: [digest] }
+    mock.remote.session.page.mockImplementation(pageRule(ok(invalidPage)))
+    await session.open()
+    await session.requireFullHistory()
+    expect(eventSeqs(session)).toEqual(served.map(event => event.seq))
+    expect(session.getSnapshot().stepDigests.get(1)).toEqual([digest])
+    expect(session.getSnapshot().stepDetailError?.message).toBe('session full-detail interval is incomplete')
+  })
+
+  it('repeats recovery for older omissions that arrived during the read', async ({ mock, start }) => {
+    const older = twoStepTurn(0, 1)
+    const newer = twoStepTurn(11, 2)
+    const before = collapsed(older, 1)
+    const tail = collapsed(newer, 2)
+    const session = await sessionBench(mock, start, SID, { stepDetail: 'collapsed' })
+    const olderRead = Promise.withResolvers<RemoteResult<SessionPage>>()
+    const fullRead = Promise.withResolvers<RemoteResult<SessionPage>>()
+    mock.stream(FOLLOW, followScript(ok({ ...tail.page(true), digests: [tail.digest] })))
+    mock.remote.session.page.mockImplementation(pageRule((request) => {
+      if (request.fromSeq === 11) return fullRead.promise
+      if (request.fromSeq === 0) return history([...older, ...newer])
+      return olderRead.promise
+    }))
+    await session.open()
+    const paging = session.loadOlder()
+    const filling = session.requireFullHistory()
+    olderRead.resolve(ok({ ...before.page(false), digests: [before.digest] }))
+    await paging
+    fullRead.resolve(history(newer, true))
+    await filling
+    expect(eventSeqs(session)).toEqual([...older, ...newer].map(event => event.seq))
+    expect(session.getSnapshot().stepDigests.size).toBe(0)
+    expect(mock.log.requests(PAGE)).toContainEqual({
+      address: ADDRESS, fromSeq: 0, throughSeq: 21, stepDetail: 'full',
+    })
+  })
+
+  it('pins full detail for future pages after a consumer requires it', async ({ mock, start }) => {
+    const older = twoStepTurn(0, 1)
+    const newer = twoStepTurn(11, 2)
+    const session = await sessionBench(mock, start, SID, { stepDetail: 'collapsed' })
+    await session.requireFullHistory()
+    await session.setStepDetail('collapsed')
+    mock.stream(FOLLOW, followScript(history(newer, true)))
+    mock.remote.session.page.mockImplementation(pageRule(history(older)))
+    await session.open()
+    await session.loadOlder()
+    expect(mock.log.requests(FOLLOW)).toMatchObject([{ stepDetail: 'full', maxMessages: 50 }])
+    expect(mock.log.requests(PAGE)).toEqual([
+      { address: ADDRESS, beforeSeq: 11, throughSeq: 21, maxMessages: 50, stepDetail: 'full' },
+    ])
+  })
+
+  it.for(['success', 'failure'] as const)('ignores stale recovery %s after a Session resync', async (outcome, { mock, start }) => {
+    const old = twoStepTurn(0, 1)
+    const replacement = twoStepTurn(11, 2)
+    const { page, digest } = collapsed(old, 1)
+    const session = await sessionBench(mock, start, SID, { stepDetail: 'collapsed' })
+    const late = Promise.withResolvers<RemoteResult<SessionPage>>()
+    mock.stream(FOLLOW, followScript(ok({ ...page(true), digests: [digest] })))
+    mock.remote.session.page.mockImplementation(pageRule(late.promise))
+    await session.open()
+    const filling = session.requireFullHistory()
+    await vi.waitFor(() => { expect(mock.log.requests(PAGE)).toHaveLength(1) })
+    mock.stream(FOLLOW, followScript(history(replacement, true)))
+    await session.resync()
+    late.resolve(outcome === 'success'
+      ? history(old)
+      : err(new RemoteError('gateway/internal', 'stale failure', {})))
+    await filling
+    expect(eventSeqs(session)).toEqual(replacement.map(event => event.seq))
+    expect(session.getSnapshot().stepDetailError).toBeNull()
+    expect(session.getSnapshot().loadingStepDetail).toBe(false)
+  })
+
+  it('recovers an opening snapshot when full detail is requested while its read is pending', async ({ mock, start }) => {
+    const turn = twoStepTurn(0, 1)
+    const { page, digest } = collapsed(turn, 1)
+    const session = await sessionBench(mock, start, SID, { stepDetail: 'collapsed' })
+    const openingPage = Promise.withResolvers<RemoteResult<SessionPage>>()
+    mock.stream(FOLLOW, followScript(() => openingPage.promise))
+    mock.remote.session.page.mockImplementation(pageRule(history(turn)))
+    const opening = session.open()
+    await vi.waitFor(() => { expect(mock.log.requests(FOLLOW)).toHaveLength(1) })
+    const filling = session.requireFullHistory()
+    openingPage.resolve(ok({ ...page(false), digests: [digest] }))
+    await opening
+    await filling
+    expect(eventSeqs(session)).toEqual(turn.map(event => event.seq))
+    expect(session.getSnapshot().stepDigests.size).toBe(0)
+    expect(mock.log.requests(FOLLOW)).toHaveLength(1)
+  })
+
+  it('retries an errored journal when a full-detail consumer requests recovery', async ({ mock, start }) => {
+    const session = await sessionBench(mock, start, SID, { stepDetail: 'collapsed' })
+    mock.stream(FOLLOW, followScript(err(new RemoteError('gateway/internal', 'offline', {}))))
+    await session.open()
+    expect(session.getSnapshot().openState).toBe('error')
+    const turn = twoStepTurn(0, 1)
+    mock.stream(FOLLOW, followScript(history(turn)))
+    await session.requireFullHistory()
+    expect(session.getSnapshot()).toMatchObject({ openState: 'open', openError: null })
+    expect(eventSeqs(session)).toEqual(turn.map(event => event.seq))
+    expect(mock.log.requests(FOLLOW).at(-1)).toMatchObject({ stepDetail: 'full' })
+  })
+
+  it.for(['success', 'failure'] as const)('ignores a late recovery %s after physical follow replacement', async (outcome, { mock, start }) => {
+    const old = twoStepTurn(0, 1)
+    const newer = twoStepTurn(11, 2)
+    const { page, digest } = collapsed(old, 1)
+    const session = await sessionBench(mock, start, SID, { stepDetail: 'collapsed' })
+    const pending = Promise.withResolvers<RemoteResult<SessionPage>>()
+    mock.stream(FOLLOW, followScript(ok({ ...page(true), digests: [digest] })))
+    mock.remote.session.page.mockImplementation(pageRule(pending.promise))
+    await session.open()
+    const filling = session.requireFullHistory()
+    await vi.waitFor(() => { expect(mock.log.requests(PAGE)).toHaveLength(1) })
+    mock.stream(FOLLOW, followScript(history(newer, true)))
+    mock.streams.end(FOLLOW)
+    await vi.waitFor(() => { expect(eventSeqs(session)).toEqual(newer.map(event => event.seq)) })
+    pending.resolve(outcome === 'success'
+      ? history(old)
+      : err(new RemoteError('gateway/internal', 'obsolete response', {})))
+    await filling
+    expect(eventSeqs(session)).toEqual(newer.map(event => event.seq))
+    expect(session.getSnapshot().stepDetailError).toBeNull()
+    expect(mock.log.requests(FOLLOW).at(-1)).toMatchObject({ stepDetail: 'full' })
+  })
+
+  it('preserves the active Assistant prefix and its terminal commit barrier during recovery', async ({ mock, start }) => {
+    const historical = twoStepTurn(0, 1)
+    const { page, digest } = collapsed(historical, 1)
+    const live = [
+      ev.turnStart(SessionSeq(11), 2), ev.user(SessionSeq(12), 'live'),
+      ev.stepStart(SessionSeq(13), 2, 1), ev.assistant(SessionSeq(14), 2, 'settled', 1),
+    ]
+    const session = await sessionBench(mock, start, SID, { stepDetail: 'collapsed' })
+    mock.stream(FOLLOW, followScript(ok({ ...page(false), digests: [digest] })))
+    mock.remote.session.page.mockImplementation(pageRule(history([...historical, ...live])))
+    await session.open()
+    for (const event of live.slice(0, 3)) await pushEvent(mock, event)
+    const attemptId = LlmAttemptId('qa-full-history:1')
+    await pushAssistantStream(mock, {
+      type: 'start', attemptId, revision: 1, startedAfterSeq: SessionSeq(13), turn: 2, step: 1,
+    })
+    await pushAssistantStream(mock, {
+      type: 'chunk', attemptId, revision: 2, index: 0, time: 99,
+      chunk: { type: 'text-delta', index: 0, text: 'still streaming' },
+    })
+    await pushEvent(mock, live[3] as SessionEvent)
+    expect(eventSeqs(session)).not.toContain(14)
+    const transient = windowEntries(session).find(entry => entry.type === 'transient')
+    expect(transient).toBeDefined()
+
+    await session.requireFullHistory()
+    expect(windowEntries(session)).toContain(transient)
+    expect(eventSeqs(session)).not.toContain(14)
+    expect(session.getSnapshot().stepDigests.size).toBe(0)
+    await pushAssistantStream(mock, {
+      type: 'end', attemptId, revision: 3, index: 1,
+      outcome: { kind: 'committed', eventType: 'assistant/message', seq: 14 },
+    })
+    expect(eventSeqs(session)).toEqual([...historical, ...live].map(event => event.seq))
+    expect(windowEntries(session).some(entry => entry.type === 'transient')).toBe(false)
+    expect(mock.log.requests(FOLLOW)).toHaveLength(1)
   })
 })

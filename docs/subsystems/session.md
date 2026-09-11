@@ -739,9 +739,30 @@ The backends that consume this contract are on [persistence.md](persistence.md).
 
 `SessionOpenWorkspacePathRequest` carries an absolute or workspace-resolved `path`; optional `action: "reveal"` selects file-manager navigation instead of default-application opening. `SessionOpenWorkspacePathValue` confirms that the Host accepted the native handoff. A Session-aware Client resolves relative paths against its current Session cwd when known; the controller hands the path to the opener unchanged and reports invalid requests, cancellation, and opener failures through the Session Remote error vocabulary.
 
-## Remote history paging: `StepDigest`
+## Remote history paging: `SessionPageRequest` and `StepDigest`
 
-A `StepDigest` is one whole-step account served with a collapsed history page from the Session Controller (`page` and `follow` under `stepDetail: 'collapsed'`). Every figure except `elided` is computed over the step's complete event range through the requested cut, so the same step reports the same `steps`, `calls`, `filePaths`, `added`, `removed`, `elapsedMs`, and tokens from whichever page carries it, and a Client holding several page fragments keeps one account per step and sums only `elided`. `calls` counts settled root results and settled nested PTC dispatches; once the step or its turn is closed, a root or nested start without a settlement counts as an interrupted call, while a still-running call counts nothing. Nested PTC records take the step of their recorded root call. File volume follows the shared [`appliedFileDiffs`](tools.md#settled-tool-call-record) reading, and a compaction replacement that is not an appended result adds no call. `filePaths` retains distinct paths rather than a count so a turn deduplicates a file edited in several steps. The controller's [package reference](../../packages/api/session-controller/README.md) owns paging and expansion behavior.
+The `page` Remote reads history without activating an Agent. Without `fromSeq` it serves one message-aligned backwards page; with `fromSeq` it serves the exact inclusive interval `[fromSeq, throughSeq]` at full detail, and the Host rejects the request as `gateway/bad-request` rather than truncating when `fromSeq` is not a safe non-negative integer at or before `throughSeq + 1`, or when `beforeSeq`, `maxMessages`, or `stepDetail: 'collapsed'` accompanies it. The Client's full-detail recovery uses this interval to refill a loaded window, so the controller's [package reference](../../packages/api/session-controller/README.md) owns the paging and recovery behavior.
+
+```ts type-equiv
+/** One message-aligned backwards-history request. */
+interface SessionPageRequest {
+  readonly address: SessionAddress
+  /** Inclusive log cut obtained from the corresponding follow opening frame. */
+  readonly throughSeq: number
+  readonly beforeSeq?: number
+  readonly maxMessages?: number
+  /**
+   * Read the exact inclusive interval through `throughSeq` at full detail.
+   * Mutually exclusive with `beforeSeq`, `maxMessages`, and collapsed detail;
+   * `throughSeq + 1` returns an empty interval.
+   */
+  readonly fromSeq?: number
+  /** Step detail served; omitted means `full`. */
+  readonly stepDetail?: SessionStepDetail
+}
+```
+
+A `StepDigest` is one whole-step account: every figure except `elided` is computed over the step's complete event range through the requested cut, so the same step reports the same `steps`, `calls`, `filePaths`, `added`, `removed`, `elapsedMs`, and tokens from whichever page carries it, and a Client holding several page fragments keeps one account per step and sums only `elided`. `calls` counts settled root results and settled nested PTC dispatches; once the step or its turn is closed, a root or nested start without a settlement counts as an interrupted call, while a still-running call counts nothing. Nested PTC records take the step of their recorded root call. File volume follows the shared [`appliedFileDiffs`](tools.md#settled-tool-call-record) reading, and a compaction replacement that is not an appended result adds no call. `filePaths` retains distinct paths rather than a count so a turn deduplicates a file edited in several steps.
 
 ```ts type-equiv
 /**
@@ -777,6 +798,8 @@ interface StepDigest {
   readonly outputTokens: number
 }
 ```
+
+On the Client, `SessionFace` (`ISession & ObservableSnapshot<SessionSnapshot>`) is the Session object a UI binding receives. `requireFullHistory()` pins full detail for that object's remaining lifetime and takes precedence over `setStepDetail`; a consumer that resolves the source without subscribing demands no read. Recovery reads the loaded interval through the interval form above, splices back only the historical interiors the window's captured `covers` ranges stand for, ignores a reply whose window was replaced meanwhile, and shares one in-flight operation between concurrent callers. `SessionSnapshot.loadingStepDetail` reports that recovery independently of `loadingOlder`; `stepDetailError` holds a failed read's `RemoteFailure` while the withheld markers stay in `stepDigests`, so calling `requireFullHistory()` again retries. `stepAccounts` keeps every served digest after expansion; `stepDigests` holds only turns still withholding events.
 
 <!-- BEGIN GENERATED cordis-surface (gen-cordis-catalog.ts) — do not edit between markers -->
 
@@ -909,10 +932,10 @@ workspaceDesktop(): { name: string; available: boolean; fileManager: 'finder' | 
 @Remote('cancel') cancel(request: SessionCancelRequest): SessionCancelValue
 
 /**
- * Read one cold-safe, message-aligned Session history page.
- * @param request - durable address, backward cursor, and page budget.
+ * Read cold-safe Session history by message budget or exact full-detail interval.
+ * @param request - durable address and cut, with a page budget or inclusive fromSeq.
  * @param signal - cancellation for persistence reads.
- * @returns one chronological page.
+ * @returns chronological records for the requested page or complete interval.
  */
 @Remote('page') page(request: SessionPageRequest, signal: AbortSignal): Promise<SessionPage>
 

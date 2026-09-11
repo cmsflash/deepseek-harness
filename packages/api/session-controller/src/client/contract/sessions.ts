@@ -109,12 +109,12 @@ export interface ISessions {
   refreshSubagents(parentSessionId: SessionId): Promise<void>
 
   /**
-   * Choose how much of each step every Session's history pages carry.
-   * Deployment-wide rather than per Session: it follows one reading
-   * preference, and a Session opened later pages the same way as one already
-   * open. A change re-opens the windows that are already loaded.
+   * Set the reading preference for existing and subsequently opened Sessions.
+   * A Session's full-history consumer requirement takes precedence. Full detail
+   * recovers omitted events in place; lowering detail affects future pages and
+   * never discards an already loaded interval.
    * @param detail - whole steps, or boundaries plus digests for elidable ones.
-   * @returns completion of the rebuilds a change triggers.
+   * @returns completion of required recoveries; each Session reports its own failure.
    */
   setStepDetail(detail: SessionStepDetail): Promise<void>
   /**

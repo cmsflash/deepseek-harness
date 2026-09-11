@@ -2691,6 +2691,9 @@ export function TrajectoryTable({
                     : t(requestInfo?.purpose === 'compaction'
                       ? 'request.labelCompaction'
                       : 'request.label', { request })
+                  const rowRequestPrefix = request === undefined
+                    ? ''
+                    : t('request.rowPrefix', { request })
                   const requestSelected = requestInfo !== undefined
                 && selectedRequest?.identity === requestIdentity(requestInfo)
                   const sectionActive = record.turn === null
@@ -2707,13 +2710,13 @@ export function TrajectoryTable({
                             : 'request.collapsedAssistant'),
                           summary: record.collapsedSummary,
                         })
-                        : isRequestOnly
-                          ? t('request.rowAriaCompaction', { request: request ?? '' })
-                          : t('request.rowAria', {
-                            request: request === undefined ? '' : t('request.rowPrefix', { request }),
-                            kind: t(KIND_LABEL_KEY[record.cell.kind]),
-                            content: listDisplayText || t('request.noContent'),
-                          })}
+                        : t('request.rowAria', {
+                          request: rowRequestPrefix,
+                          kind: t(KIND_LABEL_KEY[record.cell.kind]),
+                          content: isRequestOnly
+                            ? t('request.noContent')
+                            : listDisplayText || t('request.noContent'),
+                        })}
                       aria-selected={!isCollapsedSummary && !isRequestOnly && selectedIndex === record.cell.index}
                       data-kind={record.cell.kind}
                       data-trajectory-row-key={trajectoryVirtualRecordKey(record)}

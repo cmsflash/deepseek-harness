@@ -106,6 +106,10 @@ export interface SessionSnapshot {
   readonly stepAccounts: StepDigestsByTurn
   /** Turns whose withheld steps are being loaded. */
   readonly expandingTurns: ReadonlySet<number>
+  /** Full-detail recovery of the loaded interval, independent of older-page loading. */
+  readonly loadingStepDetail: boolean
+  /** Failed full-detail recovery leaves withheld markers intact so the caller can retry. */
+  readonly stepDetailError: RemoteFailure | null
   readonly promptError: PromptError | null
   readonly blank: boolean
   readonly lastAgentError: string | null

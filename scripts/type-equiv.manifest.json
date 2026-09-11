@@ -562,6 +562,11 @@
     },
     {
       "doc": "docs/subsystems/session.md",
+      "symbol": "SessionPageRequest",
+      "source": "packages/api/session-controller/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/session.md",
       "symbol": "StepDigest",
       "source": "packages/api/session-controller/src/types.ts"
     },

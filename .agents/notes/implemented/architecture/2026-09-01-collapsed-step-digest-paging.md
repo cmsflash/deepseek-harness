@@ -30,7 +30,7 @@ File figures use `appliedFileDiffs` in `dsh-tools/presentation`, shared by the H
 
 The summary row's anchor is resolved over the whole render order before any row is emitted, and on node **kind** (the turn's first assistant or tool row). Anchoring on the first row carrying a step coordinate puts the marker above the prompting message, because the engine assigns a step Location by log position, so that message and any context injection carry one too; resolving the anchor during the row walk lets expansion move the row.
 
-The `ui-chat.transcriptView` setting's `collapsed` mode now selects a fetch strategy, not only a presentation: the Chat plugin follows the live preference into `sessions.setStepDetail`, which re-opens every loaded window because a window mixing detail levels would render the same kind of step differently by fetch time. The default stays `compact`; `collapsed` and its paging remain the reader's choice.
+The `ui-chat.transcriptView` preference defaults to `compact`; readers opt into `collapsed` paging. Consumer-required full detail and in-place recovery follow the [full-history reader decision](../bug-fix/2026-09-10-consumer-required-full-history.md), which supersedes preference-triggered window reopening.
 
 ## Alternatives considered
 

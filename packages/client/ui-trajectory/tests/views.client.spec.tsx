@@ -128,6 +128,8 @@ function sessionSnapshot(nodes: LegacyConversationSlice['nodes']): SessionSnapsh
     stepDigests: new Map(),
     stepAccounts: new Map(),
     expandingTurns: new Set(),
+    loadingStepDetail: false,
+    stepDetailError: null,
     promptError: null,
     blank: nodes.length === 0,
     lastAgentError: null,
@@ -149,16 +151,17 @@ function conversationSnapshot(
 
 function standaloneHistory(
   snapshot: TrajectorySnapshot,
+  session = createSnapshotStore(sessionSnapshot(snapshot.eventNodes)),
 ): Pick<
   ComponentProps<typeof TrajectoryView>,
-  'useSession' | 'useTrajectory' | 'loadOlder'
+  'useSession' | 'useTrajectory' | 'loadOlder' | 'requireFullHistory'
 > {
-  const session = createSnapshotStore(sessionSnapshot(snapshot.eventNodes))
   const trajectory = createSnapshotStore(snapshot)
   return {
     useSession: bindSnapshotSelector(session),
     useTrajectory: bindSnapshotSelector(trajectory),
     loadOlder: () => Promise.resolve(false),
+    requireFullHistory: () => Promise.resolve(),
   }
 }
 
@@ -205,7 +208,8 @@ const useProjection: UseProjection = emptyProjection
 
 type StandaloneBaseProps = Omit<
   ComponentProps<typeof TrajectoryView>,
-  'useSession' | 'useTrajectory' | 'useDuration' | 'loadOlder' | 'setActualDuration'
+  'useSession' | 'useTrajectory' | 'useDuration' | 'loadOlder' | 'requireFullHistory'
+  | 'setActualDuration'
 >
 
 /** Standalone view props: the session-scope standard kit the outlet would bake. */
@@ -261,10 +265,11 @@ async function bench(snapshot = historySnapshot(NODES)) {
   const ctx = runtime.ctx
   const slots = runtime.slots
   const loadOlder = vi.fn(() => Promise.resolve())
+  const requireFullHistory = vi.fn(() => Promise.resolve())
   await runtime.sessions.add({
     id: SID,
     snapshot: { blank: false },
-    session: { loadOlder },
+    session: { loadOlder, requireFullHistory },
   })
   const reference = runtime.sessions.retain(SID)
   await reference.ready
@@ -300,7 +305,7 @@ async function bench(snapshot = historySnapshot(NODES)) {
   const sourceDescriptor = provide.mock.calls[0]?.[0]
   if (sourceDescriptor === undefined) throw new Error('ui-trajectory did not provide its standard source')
   return {
-    runtime, ctx, slots, feature, loadOlder, trajectoryStore, conversationStore,
+    runtime, ctx, slots, feature, loadOlder, requireFullHistory, trajectoryStore, conversationStore,
     events, views, sourceDescriptor, reference,
   }
 }
@@ -379,6 +384,7 @@ function mount(fixture: Awaited<ReturnType<typeof bench>>) {
         const trajectory = injected as TrajectoryViewInjected
         return {
           loadOlder: trajectory.loadOlder,
+          requireFullHistory: trajectory.requireFullHistory,
           setActualDuration: trajectory.setActualDuration,
           useDuration: bindSnapshotSelector(trajectory.hooks.duration),
           t: tZh,
@@ -461,6 +467,40 @@ describe('plugin registration', () => {
     }
     optionalTrajectory.set(undefined)
     expect(source.getSnapshot()).toBe(EMPTY_TRAJECTORY_SNAPSHOT)
+  })
+
+  it('demands full history from the Session on every source subscription, not on resolution', async () => {
+    const b = await bench()
+    using reference = b.runtime.sessions.retain(SID)
+    await reference.ready
+    const source = b.runtime.ctx.uiSession.adapter.bindingSource(reference).getSnapshot().hooks.trajectory as
+      ObservableSnapshot<TrajectorySnapshot>
+    expect(b.requireFullHistory).not.toHaveBeenCalled()
+
+    const listener = vi.fn()
+    const unsubscribe = source.subscribe(listener)
+    expect(b.requireFullHistory).toHaveBeenCalledOnce()
+    b.trajectoryStore.set(historySnapshot([...NODES]))
+    expect(listener).toHaveBeenCalledOnce()
+    unsubscribe()
+    b.trajectoryStore.set(historySnapshot([...NODES]))
+    expect(listener).toHaveBeenCalledOnce()
+
+    source.subscribe(vi.fn())()
+    expect(b.requireFullHistory).toHaveBeenCalledTimes(2)
+  })
+
+  it('injects the Session full-history demand as the Retry callback', async () => {
+    const b = await bench()
+    const entry = b.slots.entries('conversation.view')
+      .find(candidate => candidate.options.id === 'trajectory')
+    const injectEntry = entry!.inject as unknown as (
+      sessionId: SessionId,
+    ) => TrajectoryViewInjected
+    const injected = injectEntry(SID)
+
+    await injected.requireFullHistory()
+    expect(b.requireFullHistory).toHaveBeenCalledOnce()
   })
 
   it('shares one browser-wide duration preference across session injections', async () => {
@@ -1519,6 +1559,55 @@ describe('TrajectoryView state', () => {
     )).toBeTruthy()
   })
 
+  it('withholds the ledger while steps are missing, offers Retry on failure, and reveals it once complete', () => {
+    const digest = {
+      turn: 1, step: 1, startSeq: 2, elided: 4, steps: 1, calls: 1, filePaths: [],
+      added: 0, removed: 0, elapsedMs: 0, inputTokens: 0, outputTokens: 0,
+    }
+    const withheld = new Map([[1, [digest]]])
+    const loading: SessionSnapshot = {
+      ...sessionSnapshot(NODES),
+      stepDigests: withheld,
+      stepAccounts: withheld,
+      loadingStepDetail: true,
+    }
+    const session = createSnapshotStore(loading)
+    const requireFullHistory = vi.fn(() => Promise.resolve())
+    render(
+      <TrajectoryView
+        {...standaloneProps([])}
+        {...standaloneHistory(historySnapshot(NODES), session)}
+        {...standaloneDuration()}
+        requireFullHistory={requireFullHistory}
+      />,
+    )
+    expect(screen.getByRole('toolbar', { name: '轨迹工具栏' })).toBeTruthy()
+    expect(screen.getByRole('status').textContent).toBe('正在加载完整步骤详情…')
+    expect(screen.queryByRole('table')).toBeNull()
+    expect(screen.queryByRole('region', { name: '轨迹时间线' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '重试' })).toBeNull()
+
+    act(() => {
+      session.set({
+        ...loading,
+        loadingStepDetail: false,
+        stepDetailError: { code: 'gateway/internal', message: 'boom' } as never,
+      })
+    })
+    expect(screen.getByRole('status').textContent)
+      .toContain('完整步骤详情加载失败：boom（gateway/internal）')
+    expect(screen.queryByRole('table')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: '重试' }))
+    expect(requireFullHistory).toHaveBeenCalledOnce()
+
+    act(() => {
+      session.set({ ...loading, loadingStepDetail: false, stepDigests: new Map() })
+    })
+    expect(screen.queryByRole('status', { name: /步骤详情/ })).toBeNull()
+    expect(screen.getByRole('region', { name: '轨迹时间线' })).toBeTruthy()
+    expect(screen.getByRole('table')).toBeTruthy()
+    expect(screen.getAllByRole('row', { name: /助手/ })).toHaveLength(2)
+  })
 })
 
 describe('node half', () => {

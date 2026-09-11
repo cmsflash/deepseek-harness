@@ -60,7 +60,7 @@ async function readFrame(page: Page): Promise<FrameGeometry> {
       documentScrollWidth: document.documentElement.scrollWidth,
       viewportWidth: document.documentElement.clientWidth,
       drawerWidth: Math.round(drawer.getBoundingClientRect().width),
-      scrimPresent: frame.querySelector('[role="presentation"]') !== null,
+      scrimPresent: frame.querySelector(':scope > [role="presentation"][class*="scrim"]') !== null,
       openerPresent: frame.querySelector('[class*="drawerOpener"]') !== null,
     }
   })
@@ -81,7 +81,7 @@ describe('web e2e: the phone viewport renders one full-width column', () => {
     page = await newEnglishPage(browser)
     await page.setViewportSize({ width: 1280, height: 900 })
     tripwire = watchConsole(page)
-    await page.goto(scaffold.baseUrl, { waitUntil: 'load' })
+    await page.goto(scaffold.authenticatedUrl, { waitUntil: 'load' })
     await page.waitForSelector('[class*="frame"]', { timeout: 30_000 })
     await connectFreshWorkspace(page, scaffold.workspaceCwd)
   }, 120_000)
@@ -119,7 +119,7 @@ describe('web e2e: the phone viewport renders one full-width column', () => {
     // the scrim's center, so the tap lands on the peek strip beside it —
     // the part of the scrim a user can actually reach.
     const peekX = open.drawerWidth + (PHONE.width - open.drawerWidth) / 2
-    await page.locator('[role="presentation"]').click({
+    await page.locator('[class*="frame"] > [role="presentation"][class*="scrim"]').click({
       position: { x: peekX, y: PHONE.height / 2 },
     })
     await expect.poll(async () => (await readFrame(page)).openerPresent, { timeout: 10_000 }).toBe(true)

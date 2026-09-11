@@ -831,6 +831,45 @@ describe('Trajectory conversation Definitions', () => {
     expect(snapshot(value).requests.at(-1)).toMatchObject({ promptChange: { seq: 12, kind: 'system' } })
   })
 
+  it('hides a redundant sparse system header without withdrawing its materialized key', () => {
+    const history = [
+      at(1, 'turn/start', { turn: 1 }),
+      at(2, 'step/start', { turn: 1, step: 1 }),
+      at(3, 'system/message', { turn: 1, step: 1, message: systemMessage('A') }, { surfaceOp: 'append' }),
+      at(4, 'request/header', { reason: 'initial', header: { config: { provider: 'test', model: 'test' }, tools: [] } }),
+      at(5, 'assistant/message', { turn: 1, step: 1, message: {
+        ...assistantMessage('calling', ''),
+        content: [{ type: 'tool-call', id: 'read-a', name: 'read', arguments: '{"file_path":"a.txt"}' }],
+      } }, { surfaceOp: 'append' }),
+      at(6, 'tool/call', { turn: 1, step: 1, callId: 'read-a', name: 'read', arguments: '{"file_path":"a.txt"}' }),
+      at(7, 'tool/result', { turn: 1, step: 1, message: {
+        id: 'result-a', role: 'user', source: { kind: 'tool', callId: 'read-a' },
+        content: [{ type: 'tool-result', toolCallId: 'read-a', content: [{ type: 'text', text: 'alpha' }], isError: false }],
+      } }, { surfaceOp: 'append' }),
+      at(8, 'step/end', { turn: 1, step: 1 }),
+      at(9, 'step/start', { turn: 1, step: 2 }),
+      at(10, 'assistant/message', { turn: 1, step: 2, message: assistantMessage('done', 'DONE') }, { surfaceOp: 'append' }),
+      at(11, 'step/end', { turn: 1, step: 2 }),
+      at(12, 'turn/end', { turn: 1, reason: { kind: 'completed' } }),
+      at(13, 'turn/start', { turn: 2 }),
+      at(14, 'step/start', { turn: 2, step: 1 }),
+      at(15, 'system/message', { turn: 2, step: 1, message: systemMessage('B') }, {
+        surfaceOp: { op: 'replace', startSeq: 3, endSeq: 3 }, sourceEventSeqs: [3],
+      }),
+      at(16, 'request/header', { reason: 'resume', header: { config: { provider: 'test', model: 'test' }, tools: [] } }),
+      at(17, 'assistant/message', { turn: 2, step: 1, message: assistantMessage('resumed', 'RESUMED') }, { surfaceOp: 'append' }),
+      at(18, 'step/end', { turn: 2, step: 1 }),
+      at(19, 'turn/end', { turn: 2, reason: { kind: 'completed' } }),
+    ]
+    const elided = new Set([3, 5, 6, 7])
+    const partial = assembler(history.filter(entry => !elided.has(entry.event.seq)))
+    expect(snapshot(partial).eventNodes.filter(node => node.kind === 'tool-result')).toHaveLength(0)
+    partial.prepend(history.filter(entry => elided.has(entry.event.seq)), false)
+    expect(() => { partial.flush() }).not.toThrow()
+    expect(snapshot(partial).eventNodes.filter(node => node.kind === 'tool-result')).toHaveLength(1)
+    expect(snapshot(partial)).toEqual(snapshot(assembler(history)))
+  })
+
   it('withholds unknown replacement order in request headers until prepend', () => {
     const system = (seq: number, text: string, replaces?: number) => at(seq, 'system/message', {
       turn: 1, step: 1, message: systemMessage(text),
