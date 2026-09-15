@@ -103,6 +103,18 @@ describe('real Loader composition', () => {
     const server = loaded.webServer
     const port = server.port
     const launchUrl = loaded.connection.authenticatedUrl(`http://127.0.0.1:${String(port)}`)
+
+    // A browser that cannot receive the tokenized URL — a home-screen PWA
+    // with its own cookie jar — lands on the sign-in page, whose form
+    // submits the pasted token through the same root exchange.
+    const signIn = await request(port, '/')
+    expect(signIn.status).toBe(401)
+    expect(signIn.type).toBe('text/html; charset=utf-8')
+    expect(signIn.body).toContain('<form method="GET" action="/">')
+    expect(signIn.body).toContain('name="token"')
+    expect(signIn.body).not.toContain('role="alert"')
+    expect((await request(port, '/?token=wrong')).body).toContain('role="alert"')
+
     const exchange = await fetch(launchUrl, { redirect: 'manual' })
     expect(exchange.status).toBe(303)
     expect(exchange.headers.get('location')).toBe('/')
@@ -114,12 +126,6 @@ describe('real Loader composition', () => {
       headers.set('cookie', cookie)
       return { ...init, headers }
     }
-
-    expect(await request(port, '/')).toMatchObject({
-      status: 401,
-      type: 'text/plain; charset=utf-8',
-      body: 'dsh web authentication required; reopen the URL printed by dsh web.\n',
-    })
 
     // Real assets with their MIME types; a live rebuild is served on the next read.
     expect(await request(port, '/app.js')).toMatchObject({ status: 200, type: 'text/javascript; charset=utf-8', body: 'export {}' })
