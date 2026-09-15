@@ -178,6 +178,51 @@ async function initializeSecret(credentials: CredentialProvider): Promise<Buffer
 }
 
 /**
+ * Render the 401 sign-in page. The form submits the pasted token as the
+ * `token` query parameter on `GET /`, reusing the ordinary launch-token
+ * exchange, so a client that cannot receive the tokenized URL — a home-screen
+ * PWA with its own cookie jar — can mint its cookie by pasting the token.
+ * @param tokenRejected - whether a token was submitted and not accepted.
+ * @returns the complete self-contained HTML document.
+ */
+function unauthorizedPage(tokenRejected: boolean): string {
+  const rejected = tokenRejected
+    ? '<p role="alert">That token was not accepted.</p>\n'
+    : ''
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>dsh web</title>
+<style>
+:root { color-scheme: light dark }
+body { margin: 0; min-height: 100vh; display: grid; place-items: center;
+  font: 16px/1.5 system-ui, sans-serif }
+main { display: grid; gap: 1rem; width: min(22rem, 100vw - 3rem) }
+h1, p { margin: 0 }
+form { display: grid; gap: .5rem }
+input { font: inherit; padding: .5rem; border: 1px solid CanvasText;
+  border-radius: .25rem; background: Canvas; color: CanvasText }
+button { font: inherit; padding: .5rem 1rem; justify-self: end; border: 0;
+  border-radius: .25rem; background: CanvasText; color: Canvas }
+</style>
+</head>
+<body>
+<main>
+<h1>dsh web</h1>
+${rejected}<p>Reopen the URL printed by <code>dsh web</code>, or paste its <code>token</code> value to sign in on this browser.</p>
+<form method="GET" action="/">
+<input type="password" name="token" aria-label="Token" autocomplete="off" autofocus>
+<button type="submit">Sign in</button>
+</form>
+</main>
+</body>
+</html>
+`
+}
+
+/**
  * Process launch-token exchange and persistent signed-cookie verification.
  * Connection loads the credential provider's signing secret during activation
  * and retains it for synchronous request authentication.
@@ -232,7 +277,8 @@ export class BrowserAuth {
   /**
    * Authenticate an index request. A valid root query token mints the cookie
    * and redirects to clean `/`; a valid cookie lets the caller serve the
-   * index; every other request receives the same minimal 401 response.
+   * index; every other request receives the 401 sign-in page, whose token
+   * field submits through the same root query token exchange.
    * @param req - incoming root or configured-index request.
    * @param res - response owned when this method returns false.
    * @returns true only when the caller may serve index.html.
@@ -273,7 +319,7 @@ export class BrowserAuth {
         res.end()
         return false
       }
-      this.writeUnauthorized(req, res)
+      this.writeUnauthorized(req, res, true)
       return false
     }
     if (this.isAuthenticated(req)) return true
@@ -301,13 +347,16 @@ export class BrowserAuth {
       && payload.expiresAt - payload.issuedAt <= this.maxAgeMilliseconds
   }
 
-  private writeUnauthorized(req: ConnectionIndexRequest, res: ConnectionIndexResponse): void {
+  private writeUnauthorized(
+    req: ConnectionIndexRequest,
+    res: ConnectionIndexResponse,
+    tokenRejected = false,
+  ): void {
     res.writeHead(401, {
       'cache-control': 'no-store',
-      'content-type': 'text/plain; charset=utf-8',
+      'content-type': 'text/html; charset=utf-8',
+      'referrer-policy': 'no-referrer',
     })
-    res.end(req.method === 'HEAD'
-      ? undefined
-      : 'dsh web authentication required; reopen the URL printed by dsh web.\n')
+    res.end(req.method === 'HEAD' ? undefined : unauthorizedPage(tokenRejected))
   }
 }
