@@ -140,31 +140,44 @@ describe('BrowserAuth', () => {
     })
   })
 
-  it('accepts the cookie for index serving and gives every unauthenticated request one response', async () => {
+  it('accepts the cookie for index serving and serves one 401 sign-in page to every unauthenticated request', async () => {
     const auth = await createAuth(new RecordCredentials())
     const { cookie } = exchange(auth)
     const allowed = response()
     expect(auth.authorizeIndex(request('/index.html', '127.0.0.1:3080', { cookie }), allowed.value)).toBe(true)
     expect(allowed.state).toEqual({})
 
-    for (const candidate of [
-      request('/'),
-      request('/?token=wrong'),
-      request('/?token=wrong&token=again'),
-      request('/index.html?token=wrong'),
-      request(auth.authenticatedUrl('http://127.0.0.1:3080'), '127.0.0.1:3080', { method: 'HEAD' }),
-    ]) {
+    const signInPage = (candidate: ConnectionIndexRequest): ResponseState => {
       const denied = response()
       expect(auth.authorizeIndex(candidate, denied.value)).toBe(false)
       expect(denied.state.status).toBe(401)
       expect(denied.state.headers).toEqual({
         'cache-control': 'no-store',
-        'content-type': 'text/plain; charset=utf-8',
+        'content-type': 'text/html; charset=utf-8',
+        'referrer-policy': 'no-referrer',
       })
-      expect(denied.state.body).toBe(candidate.method === 'HEAD'
-        ? undefined
-        : 'dsh web authentication required; reopen the URL printed by dsh web.\n')
+      return denied.state
     }
+
+    // A client that cannot receive the tokenized URL recovers by pasting the
+    // token: the page's form submits it through the ordinary root exchange.
+    for (const candidate of [request('/'), request('/index.html')]) {
+      const state = signInPage(candidate)
+      expect(state.body).toContain('<form method="GET" action="/">')
+      expect(state.body).toContain('name="token"')
+      expect(state.body).not.toContain('role="alert"')
+    }
+
+    for (const candidate of [
+      request('/?token=wrong'),
+      request('/?token=wrong&token=again'),
+      request('/index.html?token=wrong'),
+    ]) {
+      expect(signInPage(candidate).body).toContain('role="alert"')
+    }
+
+    expect(signInPage(request(auth.authenticatedUrl('http://127.0.0.1:3080'), '127.0.0.1:3080', { method: 'HEAD' })).body)
+      .toBeUndefined()
   })
 
   it('rejects tampering, expiry, future issuance, and a longer lifetime than configured', async () => {
