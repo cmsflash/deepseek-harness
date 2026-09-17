@@ -1,0 +1,6 @@
+# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
+# side as of the last confirmed-consistent state. Both languages carry equal authority;
+# after editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/bug-fix/2026-09-17-connection-mounts-dedicated-channels.md
+2026-09-17-connection-mounts-dedicated-channels.md: 0dfb8c7e1e87dc0b40112a2d84260bd6d4428897
+2026-09-17-connection-mounts-dedicated-channels.zh.md: 63c1c87a74d00966f6769de245e9873eebdbf182

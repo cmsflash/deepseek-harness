@@ -137,7 +137,10 @@ export interface HostConnectionFetch {
 /** Host registry for logical RPC channels carried by the current transport. */
 export interface HostConnectionRpc {
   /**
-   * Register one authenticated absolute channel prefix.
+   * Register one authenticated absolute channel prefix. The physical route is
+   * mounted on Connection's own Web carrier, so the caller injects only
+   * `connection`; without a Web carrier the registration stays pending and
+   * mounts when one arrives. A channel name already registered throws.
    * @param channel - absolute logical channel such as `/rpc`.
    * @param handler - decoded endpoint handler returning the existing RPC result shape.
    * @returns asynchronous disposer removing the channel and its physical route.
