@@ -1,0 +1,19 @@
+# Bilingual-pair consistency record for 2026-09-17-connection-mounts-dedicated-channels.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/bug-fix/2026-09-17-connection-mounts-dedicated-channels.md
+/agent-note-connection-mounts-dedicated-rpc-channels-on-its-own-carrier:
+  en: 747157eff4d72c38
+  zh: 086d51117d02b4d0
+/agent-note-connection-mounts-dedicated-rpc-channels-on-its-own-carrier/problem:
+  en: 7b17300e6a28113e
+  zh: 4a28390abb958d3e
+/agent-note-connection-mounts-dedicated-rpc-channels-on-its-own-carrier/decision:
+  en: fb777d041c08f338
+  zh: fb9fd7c7fef3cc97
+/agent-note-connection-mounts-dedicated-rpc-channels-on-its-own-carrier/alternatives-considered:
+  en: 01e356414ce1f2c4
+  zh: 821ac0b94b0271ad
+/agent-note-connection-mounts-dedicated-rpc-channels-on-its-own-carrier/consequences:
+  en: 058073825e7286db
+  zh: 2131244b50509e3f
