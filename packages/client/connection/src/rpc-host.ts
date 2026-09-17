@@ -1,7 +1,7 @@
 /** Host registry and HTTP adapter for generic Connection RPC channels. */
 
 import { Context, Service } from '@deepseek-ai/cordis'
-import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
+import type { WebRoute, WebServer } from '@deepseek-ai/dsh-host-webserver'
 import type { PeerId, PeerScope, Principal } from '@deepseek-ai/dsh-typert-protocol'
 import type { ConnectionInteractions } from './connect-protocol.ts'
 import {
@@ -59,6 +59,9 @@ interface ConnectionServerResponse {
   readonly result: ConnectionRpcResult<unknown>
 }
 
+/** The Web server registry dedicated RPC channels mount their physical routes on. */
+export type WebRouteCarrier = Pick<WebServer, 'register'>
+
 declare module '@deepseek-ai/cordis' {
   interface Context {
     /** Host Connection transport and RPC registrations. */
@@ -66,7 +69,12 @@ declare module '@deepseek-ai/cordis' {
   }
 }
 
-/** Host Connection service whose channel registrations belong to the caller fiber. */
+/**
+ * Host Connection service whose channel registrations belong to the caller
+ * fiber. Physical routes are mounted through the Web carrier this plugin
+ * itself injects, so a registrant needs only `connection` in its own `inject`
+ * and a dedicated channel outlives no carrier generation it was mounted on.
+ */
 export class HostConnectionService extends Service implements HostConnectionHandle {
   /** The Peer every authenticated browser connection shares. */
   readonly browserPeer: PeerScope
@@ -75,6 +83,9 @@ export class HostConnectionService extends Service implements HostConnectionHand
   private disposed = false
   private readonly interceptors = new Map<string, ConnectionRpcInterceptor>()
   private readonly fetchRoutes = new Map<string, RegisteredFetchRoute>()
+  private readonly channels = new Map<string, WebRoute>()
+  private carrier: WebRouteCarrier | undefined
+  private readonly carrierDisposers = new Map<string, () => void>()
 
   readonly allowsRemoteAuthorities: boolean
 
@@ -99,6 +110,39 @@ export class HostConnectionService extends Service implements HostConnectionHand
       await Promise.all(peers.map(peer => peer.dispose()))
     }, 'client-connection: Peer scopes')
     this.allowsRemoteAuthorities = trustedHosts.some(isRemoteAuthority)
+  }
+
+  /**
+   * Attach the Web carrier that mounts dedicated channels. Channels registered
+   * before the carrier arrives mount now; channels registered while it is
+   * attached mount immediately. The returned disposer unmounts every channel
+   * from this carrier and leaves the registrations pending for the next one.
+   * @param carrier - route registry of the active Web server.
+   * @returns disposer detaching the carrier.
+   */
+  attachCarrier(carrier: WebRouteCarrier): () => void {
+    if (this.carrier !== undefined) {
+      throw new Error('connection: a Web carrier is already attached')
+    }
+    this.carrier = carrier
+    for (const [channel, route] of this.channels) this.mount(channel, route)
+    return () => {
+      for (const dispose of this.carrierDisposers.values()) dispose()
+      this.carrierDisposers.clear()
+      this.carrier = undefined
+    }
+  }
+
+  private mount(channel: string, route: WebRoute): void {
+    if (this.carrier === undefined) return
+    this.carrierDisposers.set(channel, this.carrier.register(route))
+  }
+
+  private unmount(channel: string): void {
+    const dispose = this.carrierDisposers.get(channel)
+    if (dispose === undefined) return
+    this.carrierDisposers.delete(channel)
+    dispose()
   }
 
   /** Generic channel registry scoped to the Context reading this service. */
@@ -270,10 +314,17 @@ export class HostConnectionService extends Service implements HostConnectionHand
         await bridge(req, res, fetchHandler, admission.peer)
       },
     }
-    return owner.effect(
-      () => owner.webServer.register(route),
-      `client-connection: ${channel} rpc channel`,
-    )
+    return owner.effect(() => {
+      if (this.channels.has(channel)) {
+        throw new Error(`connection: RPC channel ${JSON.stringify(channel)} is already registered`)
+      }
+      this.channels.set(channel, route)
+      this.mount(channel, route)
+      return () => {
+        this.unmount(channel)
+        this.channels.delete(channel)
+      }
+    }, `client-connection: ${channel} rpc channel`)
   }
 
   private registerInterceptor(

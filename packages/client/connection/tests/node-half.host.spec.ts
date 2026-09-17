@@ -478,11 +478,84 @@ describe('connection node half', () => {
     }])
 
     expect(() => connection.rpc.handle('/rpc', async () => ({ ok: true, value: null })))
-      .toThrow(/duplicate route/)
+      .toThrow('RPC channel "/rpc" is already registered')
     await remove()
     expect(routes.map(candidate => candidate.path)).toEqual([API_PATH, '/connect'])
     await fiber.dispose()
     expect(routes).toHaveLength(0)
+  })
+
+  it('mounts a dedicated channel registered by a plugin that injects only connection', async () => {
+    const ctx = new Context()
+    const routes: WebRoute[] = []
+    provideBrowserCredentials(ctx)
+    ctx.provide('webServer', fakeHttpServer(routes, []) as WebServer)
+    const fiber = ctx.plugin({ inject: [...inject], apply })
+    await fiber.await()
+
+    // The registrant's inject list names no webServer: reading ctx.webServer
+    // there would throw under the strict-inject proxy. Only ctx.connection is read.
+    const registrant = ctx.plugin({
+      inject: ['connection'],
+      apply: (scoped: Context) => {
+        scoped.connection.rpc.handle('/plugin-rpc', async endpoint => ({ ok: true, value: { endpoint } }))
+      },
+    })
+    await registrant.await()
+    const route = routes.find(candidate => candidate.path === '/plugin-rpc')
+    expect(route).toMatchObject({ kind: 'prefix', path: '/plugin-rpc' })
+
+    const connection = ctx.get('connection') as HostConnectionHandle
+    const result = fakeResponse()
+    await route!.handler(fakePost({
+      host: '127.0.0.1:3080',
+      cookie: browserCookie(connection, '127.0.0.1:3080'),
+    }, '/plugin-rpc/speak', {
+      type: 'client-request', rpcId: RpcId('rpc-plugin'), method: 'speak', payload: {},
+    }), result.response)
+    expect(result.state.status).toBe(200)
+    expect(JSON.parse(String(result.state.body))).toMatchObject({
+      rpcId: 'rpc-plugin', result: { ok: true, value: { endpoint: 'speak' } },
+    })
+
+    await registrant.dispose()
+    expect(routes.map(candidate => candidate.path)).toEqual([API_PATH, '/connect'])
+    await fiber.dispose()
+  })
+
+  it('mounts channels registered before the Web carrier and unmounts them with it', async () => {
+    const ctx = new Context()
+    const routes: WebRoute[] = []
+    provideBrowserCredentials(ctx)
+    const fiber = ctx.plugin({ inject: [...inject], apply })
+    await fiber.await()
+    const connection = ctx.get('connection') as HostConnectionHandle
+    const remove = connection.rpc.handle('/early', async () => ({ ok: true, value: null }))
+    expect(routes).toEqual([])
+
+    const carrier = ctx.plugin((scoped: Context) => {
+      scoped.provide('webServer', fakeHttpServer(routes, []) as WebServer)
+    })
+    await carrier.await()
+    await vi.waitFor(() => {
+      expect(routes.map(candidate => candidate.path).sort()).toEqual([API_PATH, '/connect', '/early'])
+    })
+
+    await carrier.dispose()
+    await vi.waitFor(() => { expect(routes).toEqual([]) })
+
+    // The registration survives the carrier and mounts again on the next one.
+    const replacement = ctx.plugin((scoped: Context) => {
+      scoped.provide('webServer', fakeHttpServer(routes, []) as WebServer)
+    })
+    await replacement.await()
+    await vi.waitFor(() => {
+      expect(routes.map(candidate => candidate.path).sort()).toEqual([API_PATH, '/connect', '/early'])
+    })
+    await remove()
+    expect(routes.map(candidate => candidate.path)).toEqual([API_PATH, '/connect'])
+    await replacement.dispose()
+    await fiber.dispose()
   })
 
   it('dispatches claimed /api endpoints and withdraws the claim', async () => {
