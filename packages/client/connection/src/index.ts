@@ -112,7 +112,10 @@ export const Config: z<ConnectionConfig> = z.object({
 /**
  * Provides carrier-neutral RPC and Fetch registries. When `webServer` is
  * present, the plugin also mounts the `/api` browser transport with Host/Origin
- * checks and persistent browser authentication.
+ * checks and persistent browser authentication, and mounts every dedicated
+ * `rpc.handle` channel on that same server. Registrants therefore inject only
+ * `connection`; a channel registered before or after the carrier arrives is
+ * served for exactly the carrier's lifetime.
  * @param ctx - Host plugin context.
  * @param config - resolved plugin config (schema defaults applied).
  */
@@ -151,6 +154,7 @@ export async function apply(ctx: Context, config?: ConnectionConfig): Promise<vo
       },
     }
     webCtx.effect(() => webCtx.webServer.register(route), 'client-connection: /api route')
+    webCtx.effect(() => connection.attachCarrier(webCtx.webServer), 'client-connection: dedicated channel carrier')
   })
   ctx.inject(['attachments'], (attachmentCtx) => {
     assertImageBodyCapacity(attachmentCtx, maxRequestBodyBytes)
