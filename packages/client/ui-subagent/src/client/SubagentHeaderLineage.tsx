@@ -87,6 +87,11 @@ function tokenTotal(
       + usage.cacheReadTokens + usage.cacheWriteTokens
 }
 
+/** Billed dollars: four decimals below one dollar, two from one dollar on. */
+function formatUsd(usd: number, t: TranslateNS<typeof NS>): string {
+  return t('cost.usd', { amount: usd.toFixed(usd < 1 ? 4 : 2) })
+}
+
 /** Exact whole-second active-turn duration for one catalog row. */
 function activityDuration(
   summary: SessionSummary | undefined,
@@ -307,7 +312,8 @@ function CatalogRows({
         const secondary = [summary?.title, mode, activity]
           .filter(value => value !== undefined)
           .join(' · ')
-        const totalTokens = tokenTotal(summary?.projectionValues?.tokenUsage)
+        const usage = summary?.projectionValues?.tokenUsage
+        const totalTokens = tokenTotal(usage)
         const durationMs = activityDuration(
           summary,
           entry.activity,
@@ -316,13 +322,14 @@ function CatalogRows({
         const tokenMetric = totalTokens === undefined
           ? undefined
           : t('tokens.total', { value: formatTokens(totalTokens, t) })
+        const costMetric = usage === undefined ? undefined : formatUsd(usage.costUsd, t)
         const durationMetric = durationMs === undefined
           ? undefined
           : {
             compact: formatDuration(durationMs, t),
             exact: formatExactDuration(durationMs, t),
           }
-        const metrics = [tokenMetric, durationMetric?.exact]
+        const metrics = [tokenMetric, costMetric, durationMetric?.exact]
           .filter(value => value !== undefined)
           .join(' · ')
 
@@ -390,7 +397,17 @@ function CatalogRows({
                 </span>
                 {metrics !== '' && (
                   <span className={css.metrics}>
-                    {tokenMetric !== undefined && <span className={css.metricToken}>{tokenMetric}</span>}
+                    {tokenMetric !== undefined && (
+                      <span className={css.metricToken}>
+                        {tokenMetric}
+                        {costMetric !== undefined && (
+                          <>
+                            <span className={css.metricSep} aria-hidden>·</span>
+                            <span>{costMetric}</span>
+                          </>
+                        )}
+                      </span>
+                    )}
                     {durationMetric !== undefined && (
                       <span
                         className={css.metricDuration}

@@ -246,6 +246,11 @@
   line-height: 18px;
 }
 
+.metricSep {
+  color: var(--dsw-alias-separator-primary);
+  margin: 0 4px;
+}
+
 .metricDuration {
   grid-row: 2;
 }

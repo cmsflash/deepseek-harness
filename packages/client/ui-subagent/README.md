@@ -57,7 +57,7 @@ The header lineage renderer reads `subagentsByParent` and session summaries thro
 
 ### Duration and tokens
 
-Token totals sum the four disjoint `tokenUsage` buckets. Duration sums completed `subagentTiming` turns, advances once per second only for an open turn on a running child, and freezes after the child becomes inactive; an interrupted open turn is bounded by its same-cut `active.through`, never by newer session metadata.
+Token totals sum the four disjoint `tokenUsage` buckets, and the row places the projection's billed `costUsd` total beside its token count. Duration sums completed `subagentTiming` turns, advances once per second only for an open turn on a running child, and freezes after the child becomes inactive; an interrupted open turn is bounded by its same-cut `active.through`, never by newer session metadata.
 
 ### Composer election
 

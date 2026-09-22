@@ -17,7 +17,7 @@ import type { ChatViewSlotProps } from '../contract/slots.ts'
 import type { ChatSnapshot } from '../contract/snapshot.ts'
 import { formatTokensPerSecond } from './message-chrome.ts'
 import { assistantStepReading } from '../contract/turn-metrics.ts'
-import { formatCacheHitPercent, formatExactTokens, formatTokens } from './token-format.ts'
+import { formatCacheHitPercent, formatExactTokens, formatTokens, formatUsd } from './token-format.ts'
 import { MEASURE_STYLE, useStatDialog } from './stat-dialog.ts'
 import css from './StatsPills.module.css'
 import dialogCss from './stat-dialog.module.css'
@@ -244,6 +244,8 @@ function UsagePill({ usage, t, dialog }: {
   const totalText = t('message.turnUsage.count', { count: formatTokens(total, t) })
   const cacheHit = cacheHitPercent(usage)
   const cacheHitText = cacheHit !== null ? t('stats.cacheHit', { percent: cacheHit }) : null
+  const costText = formatUsd(usage.costUsd, t)
+  const segments = [totalText, cacheHitText, costText].filter((text): text is string => text !== null)
   return (
     <span ref={rootRef} className={css.anchor}>
       <button
@@ -251,18 +253,17 @@ function UsagePill({ usage, t, dialog }: {
         className={css.pill}
         aria-haspopup="dialog"
         aria-expanded={open}
-        aria-label={cacheHitText === null ? totalText : `${totalText} · ${cacheHitText}`}
+        aria-label={segments.join(' · ')}
         onClick={() => { setOpen(!open) }}
       >
         <IconDatabaseOutline16 />
         <span className={css.label}>
-          {totalText}
-          {cacheHitText !== null && (
-            <>
-              <span className={css.sep} aria-hidden>·</span>
-              {cacheHitText}
-            </>
-          )}
+          {segments.map((text, index) => (
+            <span key={text}>
+              {index > 0 && <span className={css.sep} aria-hidden>·</span>}
+              {text}
+            </span>
+          ))}
         </span>
       </button>
       {open && createPortal(
@@ -305,6 +306,15 @@ function UsagePill({ usage, t, dialog }: {
             )}
             <dt>{t('message.turnUsage.output')}</dt>
             <dd>{exactCount(usage.outputTokens, t)}</dd>
+            <dt>{t('cost.label')}</dt>
+            <dd>
+              {costText}
+              {usage.unpricedCalls !== 0 && (
+                <span className={dialogCss.reasoning}>
+                  {t('cost.unpriced', { count: String(usage.unpricedCalls) })}
+                </span>
+              )}
+            </dd>
           </dl>
           {/* jscpd:ignore-end */}
         </div>,

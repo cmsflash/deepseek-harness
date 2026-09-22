@@ -126,7 +126,7 @@ describe('formatters', () => {
 })
 
 describe('StatsPills', () => {
-  const USAGE = { uncachedInputTokens: 10, outputTokens: 5, cacheReadTokens: 90, cacheWriteTokens: 0 }
+  const USAGE = { uncachedInputTokens: 10, outputTokens: 5, cacheReadTokens: 90, cacheWriteTokens: 0, costUsd: 0, unpricedCalls: 1 }
 
   /** A whole-log sessionStats value: zeros plus overrides. */
   function sessionStats(overrides: Record<string, number>): Record<string, number> {
@@ -149,7 +149,7 @@ describe('StatsPills', () => {
   }
 
   function tokenUsage(cacheReadTokens: number, uncachedInputTokens: number) {
-    return { uncachedInputTokens, outputTokens: 1, cacheReadTokens, cacheWriteTokens: 0 }
+    return { uncachedInputTokens, outputTokens: 1, cacheReadTokens, cacheWriteTokens: 0, costUsd: 0, unpricedCalls: 1 }
   }
 
   /** A step whose timing yields 3.8s LLM, 0.8s TTFT, and 20 tok/s over 60 tokens. */
@@ -168,11 +168,11 @@ describe('StatsPills', () => {
     // it; the usage pill leads with the whole-log token total. Its accessible
     // name separates the segments the visual sep glyph joins.
     const usagePill = view.getAllByRole('button')
-    expect(usagePill.map(pill => pill.textContent)).toEqual(['105 tok·Cache hit 90%'])
-    expect(usagePill[0]!.getAttribute('aria-label')).toBe('105 tok · Cache hit 90%')
+    expect(usagePill.map(pill => pill.textContent)).toEqual(['105 tok·Cache hit 90%·$0.0000'])
+    expect(usagePill[0]!.getAttribute('aria-label')).toBe('105 tok · Cache hit 90% · $0.0000')
     const empty = makeSource()
     const emptyView = render(<StatsPills {...props(empty.source, {
-      tokenUsage: { uncachedInputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
+      tokenUsage: { uncachedInputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, costUsd: 0, unpricedCalls: 0 },
       contextPressure: {},
     })} />)
     expect(emptyView.container.textContent).toBe('')
@@ -300,7 +300,7 @@ describe('StatsPills', () => {
     const [timePill, usagePill] = [...view.getAllByRole('button')] as [HTMLElement, HTMLElement]
     expect(timePill.textContent).toBe('1 轮 1 步·20 tok/s')
     // Whole-log total 9995 + 5 + 1 compacts to 10K.
-    expect(usagePill.textContent).toBe('10K tok·缓存命中 99.95%')
+    expect(usagePill.textContent).toBe('10K tok·缓存命中 99.95%·$0.0000')
     fireEvent.click(timePill)
     const timeDialog = view.getByRole('dialog')
     expect(timeDialog.getAttribute('aria-label')).toBe('会话统计')
@@ -323,7 +323,7 @@ describe('StatsPills', () => {
     // Context occupancy lives on the composer's ContextMeter ring, not here.
     const pills = view.getAllByRole('button')
     expect(pills).toHaveLength(1)
-    expect(pills[0]!.textContent).toBe('105 tok·Cache hit 90%')
+    expect(pills[0]!.textContent).toBe('105 tok·Cache hit 90%·$0.0000')
   })
 
   it('drops the usage pill when no projection is composed', () => {
@@ -350,7 +350,7 @@ describe('StatsPills', () => {
     // closed step in the whole log, so nothing renders on a brand-new session.
     const empty = makeSource()
     const view = render(<StatsPills {...props(empty.source, {
-      tokenUsage: { uncachedInputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
+      tokenUsage: { uncachedInputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, costUsd: 0, unpricedCalls: 0 },
       sessionStats: sessionStats({}),
     })} />)
     expect(view.container.textContent).toBe('')
@@ -361,7 +361,7 @@ describe('StatsPills', () => {
     // the counts pill renders alone, not an uninformative zero-token pill.
     const { source } = makeSource()
     const view = render(<StatsPills {...props(source, {
-      tokenUsage: { uncachedInputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
+      tokenUsage: { uncachedInputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, costUsd: 0, unpricedCalls: 0 },
       sessionStats: sessionStats({ turns: 1, steps: 1 }),
     })} />)
     expect(view.container.textContent).toBe('1 turns 1 steps')
@@ -404,14 +404,44 @@ describe('StatsPills', () => {
   it('omits the cache-hit segment when nothing was billed on the input side', () => {
     const { source } = makeSource({ nodes: [assistant(1, 1)] })
     const view = render(<StatsPills {...props(source, {
-      tokenUsage: { uncachedInputTokens: 0, outputTokens: 7, cacheReadTokens: 0, cacheWriteTokens: 0 },
+      tokenUsage: { uncachedInputTokens: 0, outputTokens: 7, cacheReadTokens: 0, cacheWriteTokens: 0, costUsd: 0, unpricedCalls: 1 },
     })} />)
     const usagePill = view.getAllByRole('button')[0]!
-    expect(usagePill.textContent).toBe('7 tok')
-    expect(usagePill.getAttribute('aria-label')).toBe('7 tok')
+    expect(usagePill.textContent).toBe('7 tok·$0.0000')
+    expect(usagePill.getAttribute('aria-label')).toBe('7 tok · $0.0000')
     // Output-only activity still fills the dialog's token rows.
     fireEvent.click(usagePill)
     expect(view.getByRole('dialog').textContent).toContain('Output7 tok')
+  })
+
+  it('always shows the billed total and notes how many calls went unpriced', () => {
+    const { source } = makeSource({ nodes: [assistant(1, 1)] })
+    const priced = render(<StatsPills {...props(source, {
+      tokenUsage: { ...USAGE, costUsd: 0.03872985, unpricedCalls: 0 },
+    })} />)
+    const pricedPill = priced.getAllByRole('button')[0]!
+    expect(pricedPill.textContent).toBe('105 tok·Cache hit 90%·$0.0387')
+    expect(pricedPill.getAttribute('aria-label')).toBe('105 tok · Cache hit 90% · $0.0387')
+    fireEvent.click(pricedPill)
+    expect(priced.getByRole('dialog').textContent).toContain('Cost$0.0387')
+    expect(priced.getByRole('dialog').textContent).not.toContain('unpriced')
+    priced.unmount()
+
+    const dollar = render(<StatsPills {...props(source, {
+      tokenUsage: { ...USAGE, costUsd: 1.2, unpricedCalls: 0 },
+    })} />)
+    expect(dollar.getAllByRole('button')[0]!.textContent).toBe('105 tok·Cache hit 90%·$1.20')
+    dollar.unmount()
+
+    // Unpriced calls add nothing to the sum; the dialog counts them so a
+    // partial figure is never mistaken for the whole spend.
+    const mixed = render(<StatsPills {...props(source, {
+      tokenUsage: { ...USAGE, costUsd: 0.02, unpricedCalls: 3 },
+    })} />)
+    const mixedPill = mixed.getAllByRole('button')[0]!
+    expect(mixedPill.textContent).toBe('105 tok·Cache hit 90%·$0.0200')
+    fireEvent.click(mixedPill)
+    expect(mixed.getByRole('dialog').textContent).toContain('Cost$0.0200 (3 unpriced)')
   })
 
   it('includes cache writes in the total and the cache-hit denominator', () => {
@@ -422,9 +452,11 @@ describe('StatsPills', () => {
         outputTokens: 7,
         cacheReadTokens: 90,
         cacheWriteTokens: 100,
+        costUsd: 0,
+        unpricedCalls: 1,
       },
     })} />)
-    expect(view.getAllByRole('button')[0]!.textContent).toBe('207 tok·Cache hit 45%')
+    expect(view.getAllByRole('button')[0]!.textContent).toBe('207 tok·Cache hit 45%·$0.0000')
     // A session that did write cache keeps the row, exact.
     fireEvent.click(view.getAllByRole('button')[0]!)
     expect(view.getByRole('dialog').textContent).toContain('Cache write100 tok')

@@ -29,6 +29,17 @@ export function formatExactTokens(value: number, t: ChatViewSlotProps['t']): str
   return groups.join(t('number.groupSeparator'))
 }
 
+/**
+ * Billed US-dollar amount: four decimals below one dollar so sub-cent turns
+ * stay distinguishable, two decimals from one dollar on.
+ * @param usd - non-negative finite amount.
+ * @param t - Chat locale seat.
+ * @returns locale-owned currency text.
+ */
+export function formatUsd(usd: number, t: ChatViewSlotProps['t']): string {
+  return t('cost.usd', { amount: usd.toFixed(usd < 1 ? 4 : 2) })
+}
+
 /** Round a cache-read ratio to exact percentage units, with positive ties rounded up. */
 function roundedPercentUnits(cacheReadTokens: number, denominator: number, decimalPlaces: 0 | 1): number {
   const unitsPerPercent = decimalPlaces === 0 ? 1 : 10

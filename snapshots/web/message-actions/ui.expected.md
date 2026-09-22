@@ -94,6 +94,6 @@
 - button "3 turns 4 steps · {{throughput}} tok/s":
   - img
   - text: 3 turns 4 steps{{throughput}} tok/s
-- button "7.9K tok · Cache hit 98%":
+- button "7.9K tok · Cache hit 98% · $0.0000":
   - img
-  - text: 7.9K tokCache hit 98%
+  - text: 7.9K tokCache hit 98%$0.0000

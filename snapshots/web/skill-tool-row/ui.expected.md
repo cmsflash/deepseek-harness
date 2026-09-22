@@ -63,6 +63,6 @@
 - button "1 turns 2 steps":
   - img
   - text: 1 turns 2 steps
-- button "310 tok · Cache hit 0%":
+- button "310 tok · Cache hit 0% · $0.0000":
   - img
-  - text: 310 tokCache hit 0%
+  - text: 310 tokCache hit 0%$0.0000

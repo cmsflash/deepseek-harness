@@ -41,7 +41,7 @@
 - button "1 turns 1 steps · {{throughput}} tok/s":
   - img
   - text: 1 turns 1 steps{{throughput}} tok/s
-- button "4.4K tok · Cache hit 97%":
+- button "4.4K tok · Cache hit 97% · $0.0000":
   - img
-  - text: 4.4K tokCache hit 97%
+  - text: 4.4K tokCache hit 97%$0.0000
 - button "3% of context used": 3%
