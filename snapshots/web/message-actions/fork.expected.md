@@ -1,7 +1,7 @@
 - tree "Sessions":
-  - treeitem "Ungrouped" [expanded]:
+  - treeitem "Ungrouped 3 sessions" [expanded]:
     - img
-    - text: Ungrouped
+    - text: Ungrouped 3
   - treeitem "Use the read tool twice (2) now" [selected]
   - treeitem "Use the read tool twice (1) now"
   - treeitem "Use the read tool twice 1min"

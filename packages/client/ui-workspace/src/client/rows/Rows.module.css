@@ -164,8 +164,13 @@
   flex: 1;
   min-width: 0;
   display: flex;
-  flex-direction: column;
-  gap: 2px;
+  align-items: baseline;
+  gap: 6px;
+}
+
+/* The title yields first: it may ellipsize, the count never shrinks. */
+.projectText .title {
+  flex: 0 1 auto;
 }
 
 .title {
@@ -238,6 +243,16 @@
 .searchScheduleIndicator {
   margin-right: 0;
   margin-left: 4px;
+}
+
+/* The count sits inside the text run, clear of the trailing actions, so it
+   stays legible while the row is hovered. */
+.count {
+  flex: none;
+  font-size: 12px;
+  line-height: 20px;
+  color: var(--dsw-alias-label-tertiary);
+  font-variant-numeric: tabular-nums;
 }
 
 .dot {

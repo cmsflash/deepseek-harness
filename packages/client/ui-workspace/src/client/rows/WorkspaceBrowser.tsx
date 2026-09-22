@@ -814,6 +814,7 @@ export function WorkspaceBrowser({
     () => visibleSessionIds(list, archivedSessionIds),
     [archivedSessionIds, list],
   )
+  const totalSessionCount = flatMemberIds.length
   const orderedWorkspaces = useMemo(() => workspaces.map((workspace) => {
     const memberIds = workspace.sessionIds
     const baseOrder = orderBy === 'updated'
@@ -1115,6 +1116,12 @@ export function WorkspaceBrowser({
         {wide && (
           <span className={clsx(css.sectionLabel, css.wide, searchExpanded && css.sectionLabelHidden)}>
             {groupBy === 'flat' ? t('section.sessions') : t('section.workspaces')}
+            <span
+              className={css.sectionCount}
+              aria-label={t(totalSessionCount === 1 ? 'sessions.total.one' : 'sessions.total.other', { n: totalSessionCount })}
+            >
+              {totalSessionCount}
+            </span>
           </span>
         )}
         {wide && (

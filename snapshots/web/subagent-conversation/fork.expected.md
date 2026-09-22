@@ -1,6 +1,6 @@
 - tree "Sessions":
-  - treeitem "workspace" [expanded]:
+  - treeitem "workspace 2 sessions" [expanded]:
     - img
-    - text: workspace
+    - text: workspace 2
   - treeitem "Explain event sourcing in one (1) now" [selected]
   - treeitem "Ask a research subagent to now"

@@ -122,9 +122,11 @@ function rowHalf(e: { clientY: number; currentTarget: HTMLElement }): 'before' |
 }
 
 /**
- * Project (workspace) header row: folder + title;
+ * Project (workspace) header row: folder + title + visible session count;
  * hover reveals the chevron and create button, and dwelling on a real
- * Workspace shows its hover card (the ungrouped bucket has none).
+ * Workspace shows its hover card (the ungrouped bucket has none). The count
+ * sits immediately after the title and never shrinks, so a long Workspace
+ * name truncates rather than crowding or displacing the number.
  * `containsCurrent` arrives on the node (derivation fact, no renderer scan).
  * @param props.group - derived group node.
  * @param props.containsCurrentDescendant - highlight an ancestor even when its subtree is collapsed.
@@ -181,6 +183,12 @@ export function ProjectRowItem({ group, containsCurrentDescendant = false, onTog
       </span>
       <span className={css.projectText}>
         <span className={css.title}>{label}</span>
+        <span
+          className={css.count}
+          aria-label={t(row.sessionCount === 1 ? 'sessions.count.one' : 'sessions.count.other', { n: row.sessionCount })}
+        >
+          {row.sessionCount}
+        </span>
       </span>
       <span className={css.rowActions}>
         {actions !== undefined && (
