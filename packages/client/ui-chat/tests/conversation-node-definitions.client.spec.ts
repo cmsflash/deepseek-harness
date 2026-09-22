@@ -1652,6 +1652,8 @@ describe('built-in conversation node Definitions', () => {
       cacheWriteTokens: 1,
       reasoningTokens: 1,
       routes: [{ provider: 'fake', model: 'fake' }],
+      costUsd: 0,
+      unpricedCalls: 1,
     })
   })
 

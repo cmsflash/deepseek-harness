@@ -11,11 +11,22 @@ import type { ProjectionDefinition } from '@deepseek-ai/dsh-session-projection'
 import type { ContextPressureProjection, TokenUsageProjection } from './projection.ts'
 import { foldSurfaceProjection } from './surface-projection.ts'
 
+const projectionSchema = z.object({
+  uncachedInputTokens: z.number().int().nonnegative(),
+  outputTokens: z.number().int().nonnegative(),
+  cacheReadTokens: z.number().int().nonnegative(),
+  cacheWriteTokens: z.number().int().nonnegative(),
+  costUsd: z.number().nonnegative(),
+  unpricedCalls: z.number().int().nonnegative(),
+}).strict()
+
 const zeroBuckets = (): TokenUsageProjection => ({
   uncachedInputTokens: 0,
   outputTokens: 0,
   cacheReadTokens: 0,
   cacheWriteTokens: 0,
+  costUsd: 0,
+  unpricedCalls: 0,
 })
 
 const bucketsFrom = (usage: TokenUsage): TokenUsageProjection => ({
@@ -23,6 +34,8 @@ const bucketsFrom = (usage: TokenUsage): TokenUsageProjection => ({
   outputTokens: usage.outputTokens,
   cacheReadTokens: usage.cacheReadTokens ?? 0,
   cacheWriteTokens: usage.cacheWriteTokens ?? 0,
+  costUsd: usage.costUsd ?? 0,
+  unpricedCalls: usage.costUsd === undefined ? 1 : 0,
 })
 
 const bucketsEqual = (left: TokenUsageProjection, right: TokenUsageProjection): boolean =>
@@ -30,6 +43,8 @@ const bucketsEqual = (left: TokenUsageProjection, right: TokenUsageProjection): 
   && left.outputTokens === right.outputTokens
   && left.cacheReadTokens === right.cacheReadTokens
   && left.cacheWriteTokens === right.cacheWriteTokens
+  && left.costUsd === right.costUsd
+  && left.unpricedCalls === right.unpricedCalls
 
 const addReplacing = (
   totals: TokenUsageProjection,
@@ -40,14 +55,9 @@ const addReplacing = (
   outputTokens: totals.outputTokens - (previous?.outputTokens ?? 0) + next.outputTokens,
   cacheReadTokens: totals.cacheReadTokens - (previous?.cacheReadTokens ?? 0) + next.cacheReadTokens,
   cacheWriteTokens: totals.cacheWriteTokens - (previous?.cacheWriteTokens ?? 0) + next.cacheWriteTokens,
+  costUsd: totals.costUsd - (previous?.costUsd ?? 0) + next.costUsd,
+  unpricedCalls: totals.unpricedCalls - (previous?.unpricedCalls ?? 0) + next.unpricedCalls,
 })
-
-const projectionSchema = z.object({
-  uncachedInputTokens: z.number().int().nonnegative(),
-  outputTokens: z.number().int().nonnegative(),
-  cacheReadTokens: z.number().int().nonnegative(),
-  cacheWriteTokens: z.number().int().nonnegative(),
-}).strict()
 
 /**
  * The token-usage unit's state schema — the one definition of the state
@@ -112,11 +122,12 @@ type ContextPressureState = z.infer<typeof contextPressureStateSchema>
  *
  * Each v2 Assistant settlement contributes the last usage sample embedded in
  * its stream. `llm/retry-started` closes the replacement slot so the retried
- * attempt adds to the total.
+ * attempt adds to the total. Billed cost sums alongside the token buckets; an
+ * attempt without a price adds zero and increments `unpricedCalls`.
  */
 export const tokenUsageProjectionDefinition = {
   key: 'tokenUsage',
-  stateVersion: 2,
+  stateVersion: 3,
   stateSchema: tokenUsageStateSchema,
   init: () => ({ totals: zeroBuckets(), last: null }),
   apply: (state, event) => {

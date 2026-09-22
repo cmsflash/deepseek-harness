@@ -47,7 +47,7 @@
 - button "Good response"
 - button "Bad response"
 - button "Branch into a new conversation"
-- button "Usage 19K tok"
+- button "Usage 19K tok · $0.0000": Usage 19K tok$0.0000
 - text: {{clock}}
 - textbox "Message or run a task, / commands, @ files or sessions"
 - button "Add files or run commands"
@@ -55,5 +55,5 @@
 - button "Select model, current DeepSeek-V4-Flash": DeepSeek-V4-Flash
 - button "Send message" [disabled]
 - button "1 turns 2 steps · {{throughput}} tok/s": 1 turns 2 steps{{throughput}} tok/s
-- button "19K tok · Cache hit 94%": 19K tokCache hit 94%
+- button "19K tok · Cache hit 94% · $0.0000": 19K tokCache hit 94%$0.0000
 - button "8% of context used": 8%

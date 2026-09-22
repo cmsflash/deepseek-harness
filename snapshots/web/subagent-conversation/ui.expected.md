@@ -37,5 +37,5 @@
 - 'button "Access mode, current: Custom"': Custom
 - button "Send message" [disabled]
 - button "2 turns 2 steps · {{throughput}} tok/s": 2 turns 2 steps{{throughput}} tok/s
-- button "15.7K tok · Cache hit 99%": 15.7K tokCache hit 99%
+- button "15.7K tok · Cache hit 99% · $0.0000": 15.7K tokCache hit 99%$0.0000
 - button "6% of context used": 6%

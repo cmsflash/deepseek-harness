@@ -80,6 +80,10 @@ export interface TurnTokenUsage {
   readonly reasoningTokens?: number
   /** Present only when every billed attempt has provider/model attribution. */
   readonly routes?: readonly TurnTokenUsageRoute[]
+  /** Sum of every priced attempt's `costUsd`; unpriced attempts contribute zero. */
+  readonly costUsd: number
+  /** Attempts that reported usage without a `costUsd`. */
+  readonly unpricedCalls: number
 }
 
 /** Turn-local footer row that owns actions and optional feature contributions. */
