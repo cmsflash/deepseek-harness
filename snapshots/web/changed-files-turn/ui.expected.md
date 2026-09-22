@@ -91,5 +91,5 @@
 - button "好的回答"
 - button "有问题的回答"
 - button "在新对话中分支"
-- button "用量 36.2K tok"
+- button "用量 36.2K tok · $0.0000": 用量 36.2K tok$0.0000
 - text: {{clock}}

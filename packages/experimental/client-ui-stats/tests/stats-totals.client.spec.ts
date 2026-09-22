@@ -19,6 +19,8 @@ const USAGE: TokenUsageProjection = {
   outputTokens: 500_000,
   cacheReadTokens: 8_000_000,
   cacheWriteTokens: 0,
+  costUsd: 0,
+  unpricedCalls: 0,
 }
 
 describe('whole-session totals', () => {

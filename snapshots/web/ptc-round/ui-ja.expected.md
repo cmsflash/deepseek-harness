@@ -34,5 +34,5 @@
 - button "モデルを選択、現在 DeepSeek-V4-Flash": DeepSeek-V4-Flash
 - button "メッセージを送信" [disabled]
 - button "1ターン 2ステップ · {{throughput}} tok/s": 1ターン 2ステップ{{throughput}} tok/s
-- button "17.5K tok · キャッシュヒット 52%": 17.5K tokキャッシュヒット 52%
+- button "17.5K tok · キャッシュヒット 52% · $0.0000": 17.5K tokキャッシュヒット 52%$0.0000
 - button "コンテキストの7%を使用中": 7%

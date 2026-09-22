@@ -9,7 +9,7 @@ import { launchWebScaffold, seedSession, watchConsole, webSnapshotMode, type Web
 import { newEnglishPage, saveFailureShot } from './support.ts'
 
 const SEED_ID = 'stats-truncated-tooltip-web-e2e'
-const USAGE_READING = '5.8M tok · Cache hit 98%'
+const USAGE_READING = '5.8M tok · Cache hit 98% · $0.0000'
 
 /**
  * Generate one closed single-step turn whose billed usage totals 5.8M tokens at a 98% cache hit.

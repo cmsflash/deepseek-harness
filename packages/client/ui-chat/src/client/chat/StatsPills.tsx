@@ -4,7 +4,7 @@
 // token totals, and click-open dialogs. Settled-node identity prevents
 // stream-delta updates from rerendering the pills.
 
-import { memo, useMemo, type ReactNode } from 'react'
+import { Fragment, memo, useMemo, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { IconDatabaseOutlineRegular, IconGaugeOutlineRegular, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { UseProjection } from '@deepseek-ai/dsh-api-session-controller/client'
@@ -16,7 +16,7 @@ import type { ChatViewSlotProps, PerformanceUsageInjected } from '../contract/sl
 import type { ChatSnapshot } from '../contract/snapshot.ts'
 import { formatTokensPerSecond } from './message-chrome.ts'
 import { assistantStepReading } from '../contract/turn-metrics.ts'
-import { formatCacheHitPercent, formatExactTokens, formatTokens } from './token-format.ts'
+import { formatCacheHitPercent, formatExactTokens, formatTokens, formatUsd } from './token-format.ts'
 import { MEASURE_STYLE, useStatDialog } from './stat-dialog.ts'
 import css from './StatsPills.module.css'
 import dialogCss from './stat-dialog.module.css'
@@ -144,18 +144,23 @@ function exactCount(value: number, t: Translate): string {
   return t('message.turnUsage.count', { count: formatExactTokens(value, t) })
 }
 
-/** One or two reading segments, visually joined by a separator glyph. */
-function reading(first: string, second: string | null): Pick<PillContent, 'label' | 'text'> {
-  if (second === null) return { label: first, text: first }
+/** One or more reading segments, visually joined by a separator glyph. */
+function reading(first: string, ...rest: readonly (string | null)[]): Pick<PillContent, 'label' | 'text'> {
+  const tail = rest.filter((text): text is string => text !== null)
+  if (tail.length === 0) return { label: first, text: first }
   return {
     label: (
       <>
         {first}
-        <span className={css.sep} aria-hidden>·</span>
-        {second}
+        {tail.map(text => (
+          <Fragment key={text}>
+            <span className={css.sep} aria-hidden>·</span>
+            {text}
+          </Fragment>
+        ))}
       </>
     ),
-    text: `${first} · ${second}`,
+    text: [first, ...tail].join(' · '),
   }
 }
 
@@ -309,11 +314,12 @@ export const UsagePill = memo(function UsagePill({ useProjection, usePerformance
   // Same aggregate as the Turn pill's totalTokens: every prompt-side billing bucket plus output.
   const total = billedInputTokens(usage) + usage.outputTokens
   const totalText = t('message.turnUsage.count', { count: formatTokens(total, t) })
+  const costText = formatUsd(usage.costUsd, t)
   return (
     <DialogPill
       stat="usage"
       icon={icon}
-      {...reading(totalText, cacheHitText)}
+      {...reading(totalText, cacheHitText, costText)}
       title={t('stats.dialog.usageTitle')}
       titleValue={exactCount(total, t)}
     >
@@ -341,6 +347,15 @@ export const UsagePill = memo(function UsagePill({ useProjection, usePerformance
         )}
         <dt>{t('message.turnUsage.output')}</dt>
         <dd>{exactCount(usage.outputTokens, t)}</dd>
+        <dt>{t('cost.label')}</dt>
+        <dd>
+          {costText}
+          {usage.unpricedCalls !== 0 && (
+            <span className={dialogCss.reasoning}>
+              {t('cost.unpriced', { count: String(usage.unpricedCalls) })}
+            </span>
+          )}
+        </dd>
       </dl>
       {/* jscpd:ignore-end */}
     </DialogPill>

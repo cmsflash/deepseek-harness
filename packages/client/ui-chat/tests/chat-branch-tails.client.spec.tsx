@@ -1091,7 +1091,7 @@ describe('small branch tails', () => {
       t,
       useChat: bindSnapshotSelector(source),
       useProjection: (key: string) => key === 'tokenUsage'
-        ? { uncachedInputTokens: 0, outputTokens: 10, cacheReadTokens: 0, cacheWriteTokens: 0 }
+        ? { uncachedInputTokens: 0, outputTokens: 10, cacheReadTokens: 0, cacheWriteTokens: 0, costUsd: 0, unpricedCalls: 1 }
         : undefined,
     }
     const view = render(
@@ -1103,7 +1103,7 @@ describe('small branch tails', () => {
     // The untimed counts pill renders static, so the usage pill is the only button.
     const [usagePill] = [...view.getAllByRole('button')] as [HTMLElement]
     expect(view.getByText('1 轮 1 步').closest('button')).toBeNull()
-    expect(usagePill.textContent).toBe('10 tok')
+    expect(usagePill.textContent).toBe('10 tok·$0.0000')
     // Pure output accounting still reaches the usage pill's click-open dialog rows.
     fireEvent.click(usagePill)
     const dialog = view.getByRole('dialog')

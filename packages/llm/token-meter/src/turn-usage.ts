@@ -24,6 +24,10 @@ export interface TurnTokenUsage {
   readonly reasoningTokens?: number
   /** Present only when every billed attempt has provider/model attribution. */
   readonly routes?: readonly TurnTokenUsageRoute[]
+  /** Sum of every priced attempt's `costUsd`; unpriced attempts contribute zero. */
+  readonly costUsd: number
+  /** Attempts that reported usage without a `costUsd`. */
+  readonly unpricedCalls: number
 }
 
 interface NormalizedAttempt {
@@ -34,6 +38,7 @@ interface NormalizedAttempt {
   readonly cacheWriteTokens?: number
   readonly reasoningTokens?: number
   readonly route?: TurnTokenUsageRoute
+  readonly costUsd?: number
 }
 
 type AttemptState =
@@ -60,6 +65,10 @@ function isCount(value: unknown): value is number {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
 }
 
+function isCost(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0
+}
+
 function safeSum(values: readonly number[]): number | undefined {
   let total = 0
   for (const value of values) {
@@ -80,11 +89,12 @@ function streamUsage(stream: SessionEvent<'assistant/message'>['data']['stream']
 
 function normalizeUsage(usage: TokenUsage, route?: TurnTokenUsageRoute): NormalizedAttempt | undefined {
   const {
-    inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens, reasoningTokens, totalTokens,
+    inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens, reasoningTokens, totalTokens, costUsd,
   } = usage
   if (!isCount(inputTokens) || !isCount(outputTokens)) return undefined
   if (cacheReadTokens !== undefined && !isCount(cacheReadTokens)) return undefined
   if (cacheWriteTokens !== undefined && !isCount(cacheWriteTokens)) return undefined
+  if (costUsd !== undefined && !isCost(costUsd)) return undefined
   if (reasoningTokens !== undefined && (!isCount(reasoningTokens) || reasoningTokens > outputTokens)) {
     return undefined
   }
@@ -120,6 +130,7 @@ function normalizeUsage(usage: TokenUsage, route?: TurnTokenUsageRoute): Normali
     ...cacheWriteTokens === undefined ? {} : { cacheWriteTokens },
     ...reasoningTokens === undefined ? {} : { reasoningTokens },
     ...route === undefined ? {} : { route },
+    ...costUsd === undefined ? {} : { costUsd },
   }
 }
 
@@ -146,6 +157,12 @@ function aggregateAttempts(attempts: readonly NormalizedAttempt[]): TurnTokenUsa
     for (const route of attributed) unique.set(`${route.provider}\0${route.model}`, route)
     routes = [...unique.values()]
   }
+  let costUsd = 0
+  let unpricedCalls = 0
+  for (const attempt of attempts) {
+    if (attempt.costUsd === undefined) unpricedCalls += 1
+    else costUsd += attempt.costUsd
+  }
 
   return {
     uncachedInputTokens: inputTokens,
@@ -155,6 +172,8 @@ function aggregateAttempts(attempts: readonly NormalizedAttempt[]): TurnTokenUsa
     ...cacheWriteTokens === undefined ? {} : { cacheWriteTokens },
     ...reasoningTokens === undefined ? {} : { reasoningTokens },
     ...routes === undefined ? {} : { routes },
+    costUsd,
+    unpricedCalls,
   }
 }
 
