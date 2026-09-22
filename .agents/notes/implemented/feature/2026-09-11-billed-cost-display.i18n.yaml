@@ -1,0 +1,19 @@
+# Bilingual-pair consistency record for 2026-09-11-billed-cost-display.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-09-11-billed-cost-display.md
+/agent-note-billed-cost-at-the-session-turn-and-subagent-scopes:
+  en: 9ecde015f1db4629
+  zh: 5909442e664631dd
+/agent-note-billed-cost-at-the-session-turn-and-subagent-scopes/problem:
+  en: f9b137ab30a1797e
+  zh: 7a86e54587fcf979
+/agent-note-billed-cost-at-the-session-turn-and-subagent-scopes/decision:
+  en: ec8475ef7efcd4c8
+  zh: f4ddfff8b62b7bd8
+/agent-note-billed-cost-at-the-session-turn-and-subagent-scopes/alternatives-considered:
+  en: 672bea861d9a123b
+  zh: 14bcd60bbadf44f2
+/agent-note-billed-cost-at-the-session-turn-and-subagent-scopes/consequences:
+  en: 1e75e41a466bea22
+  zh: 637e872d466f4b06

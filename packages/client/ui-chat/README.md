@@ -64,7 +64,7 @@ Generic command rows retain the ordinary command glyph in every lifecycle state;
 <a id="turn-token-usage"></a>
 ## Turn token usage
 
-A completed Turn shows an expandable usage row only when the loaded window includes `turn/start` and every started model attempt reports safe, exact usage. The row omits unavailable optional buckets. Incomplete or contradictory accounting hides the complete disclosure instead of presenting a partial total.
+A completed Turn shows an expandable usage row only when the loaded window includes `turn/start` and every started model attempt reports safe, exact usage. The row omits unavailable optional buckets. Incomplete or contradictory accounting hides the complete disclosure instead of presenting a partial total. The Turn pill and the session usage pill under the composer each append the billed dollar total, summing the priced attempts in scope; the dialog's `Cost` row appends `(N unpriced)` when any attempt lacked a rate, so a partial sum is never mistaken for the whole spend ([billed cost display](../../../.agents/notes/implemented/feature/2026-09-11-billed-cost-display.md)).
 
 Settings → General → Performance & usage appears after Send behavior while busy and before Session Log upload, and stores `ui-chat.performanceUsage` as `detailed` (default) or `compact`. Compact shows only available output speed and cache-hit percentage beneath the composer, without interactive statistic dialogs or per-Turn usage. Detailed exposes session statistics and per-Turn token usage. Neither mode shows elapsed time in the completed-turn footer. The preference changes presentation only; accounting and Session events remain intact.
 

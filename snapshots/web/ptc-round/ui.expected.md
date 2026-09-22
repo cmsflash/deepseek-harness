@@ -33,5 +33,5 @@
 - button "Select model, current DeepSeek-V4-Flash": DeepSeek-V4-Flash
 - button "Send message" [disabled]
 - button "1 turns 2 steps · {{throughput}} tok/s": 1 turns 2 steps{{throughput}} tok/s
-- button "17.5K tok · Cache hit 52%": 17.5K tokCache hit 52%
+- button "17.5K tok · Cache hit 52% · $0.0000": 17.5K tokCache hit 52%$0.0000
 - button "7% of context used": 7%

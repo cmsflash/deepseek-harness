@@ -4,7 +4,7 @@ import { createPortal } from 'react-dom'
 import { IconDatabaseOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TurnTokenUsage } from '../contract/chat-nodes.ts'
 import type { ChatViewSlotProps } from '../contract/slots.ts'
-import { formatCacheHitPercent, formatExactTokens, formatTokens } from './token-format.ts'
+import { formatCacheHitPercent, formatExactTokens, formatTokens, formatUsd } from './token-format.ts'
 import { MEASURE_STYLE, useStatDialog } from './stat-dialog.ts'
 import css from './TurnUsagePanel.module.css'
 import dialogCss from './stat-dialog.module.css'
@@ -36,6 +36,8 @@ export function TurnUsagePanel({ usage, t }: TurnUsagePanelProps) {
     : formatCacheHitPercent(usage.cacheReadTokens, usage.totalTokens - usage.outputTokens, 1)
   const total = formatCompactCount(usage.totalTokens, t)
   const routes = usage.routes?.map(route => `${route.provider}/${route.model}`).join(', ') ?? ''
+  const cost = formatUsd(usage.costUsd, t)
+  const label = t('message.turnUsage.consumed', { total })
 
   return (
     <span ref={rootRef} className={css.root}>
@@ -44,10 +46,15 @@ export function TurnUsagePanel({ usage, t }: TurnUsagePanelProps) {
         className={css.trigger}
         aria-haspopup="dialog"
         aria-expanded={open}
+        aria-label={`${label} · ${cost}`}
         onClick={() => { setOpen(!open) }}
       >
         <IconDatabaseOutlineRegular />
-        <span className={css.label}>{t('message.turnUsage.consumed', { total })}</span>
+        <span className={css.label}>
+          {label}
+          <span className={css.sep} aria-hidden>·</span>
+          {cost}
+        </span>
       </button>
       {open && createPortal(
         <div
@@ -98,6 +105,15 @@ export function TurnUsagePanel({ usage, t }: TurnUsagePanelProps) {
               {usage.reasoningTokens !== undefined && (
                 <span className={dialogCss.reasoning}>
                   {t('message.turnUsage.reasoning', { tokens: formatExactCount(usage.reasoningTokens, t) })}
+                </span>
+              )}
+            </dd>
+            <dt>{t('cost.label')}</dt>
+            <dd>
+              {cost}
+              {usage.unpricedCalls !== 0 && (
+                <span className={dialogCss.reasoning}>
+                  {t('cost.unpriced', { count: String(usage.unpricedCalls) })}
                 </span>
               )}
             </dd>
