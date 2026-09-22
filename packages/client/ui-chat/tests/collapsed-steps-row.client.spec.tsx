@@ -8,7 +8,7 @@ import { cleanup, render } from '@testing-library/react'
 import { makeTranslate } from '@deepseek-ai/dsh-client-test-runtime'
 import { zh as commonZh } from '@deepseek-ai/dsh-client-locale/src/locales/zh.ts'
 import { CollapsedStepsRow, type CollapsedStepsRowProps } from '../src/client/chat/CollapsedStepsRow.tsx'
-import { zh } from '../src/client/locale.ts'
+import { en, zh } from '../src/client/locale.ts'
 
 afterEach(cleanup)
 
@@ -18,7 +18,7 @@ function row(overrides: Partial<CollapsedStepsRowProps> = {}) {
   const props: CollapsedStepsRowProps = {
     turn: 3,
     keys: ['hidden-1', 'hidden-2'],
-    metrics: { steps: 12, calls: 15, files: 2, added: 40, removed: 7, elapsedMs: 0, inputTokens: 0, outputTokens: 0 },
+    metrics: { steps: 12, calls: 15, contextInjections: 0, files: 2, added: 40, removed: 7, elapsedMs: 0, inputTokens: 0, outputTokens: 0 },
     expanded: false,
     loading: false,
     onToggle: vi.fn(),
@@ -40,8 +40,24 @@ describe('CollapsedStepsRow', () => {
     expect(text).toContain('2 个文件')
   })
 
+  it.each([
+    [1, '1 context injection'],
+    [3, '3 context injections'],
+  ])('labels %i context injections without zero-valued step or call counts', (count, label) => {
+    const { view } = row({
+      metrics: {
+        steps: 0, calls: 0, contextInjections: count, files: 0, added: 0, removed: 0,
+        elapsedMs: 0, inputTokens: 0, outputTokens: 0,
+      },
+      t: makeTranslate(en),
+    })
+    expect(view.getByRole('button', { name: label }).textContent).toBe(label)
+  })
+
   it('omits the edit group when the collapsed steps changed no lines', () => {
-    const { view } = row({ metrics: { steps: 4, calls: 2, files: 0, added: 0, removed: 0, elapsedMs: 0, inputTokens: 0, outputTokens: 0 } })
+    const { view } = row({
+      metrics: { steps: 4, calls: 2, contextInjections: 0, files: 0, added: 0, removed: 0, elapsedMs: 0, inputTokens: 0, outputTokens: 0 },
+    })
     const text = view.container.textContent ?? ''
     expect(text).toContain('4 步')
     expect(text).toContain('2 次调用')
@@ -49,20 +65,24 @@ describe('CollapsedStepsRow', () => {
   })
 
   it('reports a touched empty file independently of line volume', () => {
-    const { view } = row({ metrics: { steps: 1, calls: 1, files: 1, added: 0, removed: 0, elapsedMs: 0, inputTokens: 0, outputTokens: 0 } })
+    const { view } = row({
+      metrics: { steps: 1, calls: 1, contextInjections: 0, files: 1, added: 0, removed: 0, elapsedMs: 0, inputTokens: 0, outputTokens: 0 },
+    })
     expect(view.container.textContent).toContain('1 个文件')
     expect(view.container.textContent).not.toContain('+0')
   })
 
   it('shows only the step count when nothing else happened', () => {
-    const { view } = row({ metrics: { steps: 1, calls: 0, files: 0, added: 0, removed: 0, elapsedMs: 0, inputTokens: 0, outputTokens: 0 } })
+    const { view } = row({
+      metrics: { steps: 1, calls: 0, contextInjections: 0, files: 0, added: 0, removed: 0, elapsedMs: 0, inputTokens: 0, outputTokens: 0 },
+    })
     expect(view.container.textContent).toBe('1 步')
   })
 
   it('reports elapsed time and token spend when the hidden steps recorded them', () => {
     const { view } = row({
       metrics: {
-        steps: 3, calls: 2, files: 0, added: 0, removed: 0,
+        steps: 3, calls: 2, contextInjections: 0, files: 0, added: 0, removed: 0,
         elapsedMs: 65_000, inputTokens: 1_500, outputTokens: 200,
       },
     })
@@ -74,7 +94,7 @@ describe('CollapsedStepsRow', () => {
   it('leads with the bare duration', () => {
     const { view } = row({
       metrics: {
-        steps: 3, calls: 2, files: 0, added: 0, removed: 0,
+        steps: 3, calls: 2, contextInjections: 0, files: 0, added: 0, removed: 0,
         elapsedMs: 65_000, inputTokens: 1_500, outputTokens: 200,
       },
     })
@@ -84,14 +104,16 @@ describe('CollapsedStepsRow', () => {
   it('drops the step count for a turn whose hidden work is all tool calls', () => {
     // A tool-only group settles no assistant node before the last step, so a
     // literal "0 steps" would misdescribe what is hidden.
-    const { view } = row({ metrics: { steps: 0, calls: 5, files: 0, added: 0, removed: 0, elapsedMs: 0, inputTokens: 0, outputTokens: 0 } })
+    const { view } = row({
+      metrics: { steps: 0, calls: 5, contextInjections: 0, files: 0, added: 0, removed: 0, elapsedMs: 0, inputTokens: 0, outputTokens: 0 },
+    })
     expect(view.container.textContent).toBe('5 次调用')
   })
 
   it('renders contributed figures after every built-in one', () => {
     const { view } = row({
       metrics: {
-        steps: 3, calls: 2, files: 0, added: 0, removed: 0,
+        steps: 3, calls: 2, contextInjections: 0, files: 0, added: 0, removed: 0,
         elapsedMs: 65_000, inputTokens: 1_500, outputTokens: 200,
       },
       renderSlot: ((key: string) => (key === 'conversation.chat.collapsedMetric'
@@ -109,7 +131,7 @@ describe('CollapsedStepsRow', () => {
     let seen: unknown = null
     row({
       turn: 7,
-      metrics: { steps: 4, calls: 9, files: 0, added: 0, removed: 0, elapsedMs: 0, inputTokens: 0, outputTokens: 0 },
+      metrics: { steps: 4, calls: 9, contextInjections: 0, files: 0, added: 0, removed: 0, elapsedMs: 0, inputTokens: 0, outputTokens: 0 },
       renderSlot: ((_key: string, owner: unknown) => { seen = owner; return null }) as unknown as CollapsedStepsRowProps['renderSlot'],
     })
     expect(seen).toEqual({ turn: 7, keys: ['hidden-1', 'hidden-2'], steps: 4, calls: 9 })

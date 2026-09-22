@@ -152,6 +152,29 @@ describe('ChatView step collapse', () => {
     expect(flow(view)).toEqual(['collapsed:1', 's3'])
   })
 
+  it('counts and restores context injections without hiding the prompt or live answer', () => {
+    const nodes = [
+      { ...stepNode('ask', 1, 1), kind: 'user' },
+      { ...stepNode('ctx1', 1, 1), kind: 'context' },
+      { ...stepNode('ctx2', 1, 1), kind: 'context' },
+      stepNode('answer', 1, 1),
+    ]
+    const expandTurn = vi.fn()
+    const view = mount(nodes, 'collapsed', { expandTurn })
+    const button = view.getByRole('button', { name: '2 次上下文注入' })
+    expect(flow(view)).toEqual(['ask', 'collapsed:1', 'answer'])
+    expect(button.getAttribute('aria-expanded')).toBe('false')
+
+    fireEvent.click(button)
+    expect(flow(view)).toEqual(['ask', 'collapsed:1', 'ctx1', 'ctx2', 'answer'])
+    expect(button.getAttribute('aria-expanded')).toBe('true')
+    expect(expandTurn).not.toHaveBeenCalled()
+
+    fireEvent.click(button)
+    expect(flow(view)).toEqual(['ask', 'collapsed:1', 'answer'])
+    expect(button.getAttribute('aria-expanded')).toBe('false')
+  })
+
   it('hands a contributor exactly the keys the row hides', () => {
     // Scope parity with the built-in figures: a contributor that folds these
     // keys states the same thing they do, and never counts the visible step.

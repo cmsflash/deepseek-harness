@@ -1,10 +1,5 @@
-// Step-collapse fold: split the rendered Chat order into rows that stay
-// visible and the settled steps that hide behind one per-turn summary.
-//
-// Granularity is the log's own: a `turn` is one user round, and each `step`
-// inside it is one model call with its tool calls. Only a turn's LAST step
-// carries current work, so earlier steps collapse; a node with no step
-// coordinate (the prompting message, the turn tail) is never collapsed.
+// Per-turn summaries hide earlier assistant/tool steps and turn-owned context
+// injections. The latest assistant/tool step and human messages stay visible.
 //
 // The fold reads the already-published order and node store, so it adds no
 // engine state and no per-node subscription.
@@ -30,6 +25,8 @@ export interface CollapsedStepMetrics {
   steps: number
   /** Settled tool calls across those steps, counting nested subcalls. */
   calls: number
+  /** Turn-owned context rows, including injections beside the visible last step. */
+  contextInjections: number
   /** Distinct file paths their applied diffs touched, across every hidden step. */
   files: number
   added: number
@@ -110,15 +107,8 @@ function foldTool(tool: ToolCallBlock, metrics: CollapsedStepMetrics, paths: Set
   for (const child of tool.subCalls) foldTool(child, metrics, paths)
 }
 
-/**
- * Node kinds that stand for a turn's intermediate work.
- *
- * Collapsibility is decided by kind, not by whether a node sits inside a step
- * window: the engine assigns a step Location by log position, so the prompting
- * user message and any context injections logged inside a step carry one too.
- * Hiding those would remove the reader's own words from the transcript.
- */
-const COLLAPSIBLE_KINDS: ReadonlySet<string> = new Set(['assistant-step', 'tool-call'])
+/** Only assistant and tool rows determine which step remains visible. */
+const STEP_WORK_KINDS: ReadonlySet<string> = new Set(['assistant-step', 'tool-call'])
 
 function count(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0
@@ -152,20 +142,24 @@ function foldAssistant(data: AssistantLike | undefined, metrics: CollapsedStepMe
  * call whether that call produced prose, tool calls, or both.
  */
 function foldNode(node: ChatConversationViewNode, metrics: CollapsedStepMetrics, paths: Set<string>): void {
+  if (node.kind === 'context') {
+    metrics.contextInjections += 1
+    return
+  }
   if (node.kind === 'assistant-step') {
     metrics.steps += 1
     foldAssistant(node.data as AssistantLike | undefined, metrics)
     return
   }
-  if (node.kind === 'tool-call') foldTool((node.data as ToolChatData).root, metrics, paths)
+  foldTool((node.data as ToolChatData).root, metrics, paths)
 }
 
 /**
  * Group the rendered order so each turn keeps only its last step visible.
  *
- * Only assistant and tool rows collapse, so the prompting message, context
- * injections, and the turn tail stay visible wherever the log placed them. A
- * turn whose collapsible rows all belong to its last step produces no marker.
+ * Earlier assistant/tool rows and every turn-owned context injection collapse.
+ * Human messages and the turn tail stay visible. A single-step turn with context
+ * injections still gets a summary; context without a resolved turn stays visible.
  * An expanded turn contributes its hidden keys as ordinary rows, so expansion
  * renders through the same seat as everything else.
  * A collapsed history page serves a step's boundaries and withholds its
@@ -199,37 +193,27 @@ export function collapseSettledSteps(
   for (const key of order) {
     const node = store.get(key)
     if (node === undefined) continue
-    if (!COLLAPSIBLE_KINDS.has(node.kind)) continue
+    if (!STEP_WORK_KINDS.has(node.kind)) continue
     const { turn, step } = coordinates(node.location)
     if (turn === undefined || step === undefined) continue
     const seen = lastStep.get(turn)
     if (seen === undefined || step > seen) lastStep.set(turn, step)
   }
 
-  // Where each turn's marker opens: its first assistant or tool row.
-  //
-  // Resolved over the whole order before any row is emitted, because the set
-  // of rows the marker would otherwise latch onto changes as the reader
-  // expands and folds. Anchoring on kind — rather than on the first row
-  // carrying a step coordinate — is also what keeps the marker below the
-  // prompting message and any context injection: the engine assigns a step
-  // Location by log position, so those carry one too.
-  //
-  // Only a turn that actually hides something gets an anchor: one whose
-  // collapsible rows all belong to its last step, and which withheld nothing,
-  // renders as an ordinary transcript.
+  // Stable anchors keep summaries in place across expansion. A context row
+  // anchors its turn even when no earlier assistant/tool step is hidden.
   const anchors = new Map<number, string>()
   for (const key of order) {
     const node = store.get(key)
-    if (node === undefined || !COLLAPSIBLE_KINDS.has(node.kind)) continue
+    if (node === undefined) continue
     const { turn, step } = coordinates(node.location)
-    if (turn === undefined || step === undefined) continue
-    if (!accounts.has(turn) && step === lastStep.get(turn)) continue
-    if (anchors.has(turn)) continue
+    if (turn === undefined || anchors.has(turn)) continue
+    if (node.kind !== 'context') {
+      if (!STEP_WORK_KINDS.has(node.kind) || step === undefined) continue
+      if (!accounts.has(turn) && step === lastStep.get(turn)) continue
+    }
     anchors.set(turn, key)
   }
-  // The last step of each turn stays visible: it is the turn's current work,
-  // and while streaming it is the live one.
 
   const rows: ChatFlowRow[] = []
   // One open marker per turn, so a turn's hidden steps collapse into a single
@@ -269,19 +253,18 @@ export function collapseSettledSteps(
     // The marker opens at the turn's own anchor, decided before this pass, so
     // expanding a turn cannot move its summary row.
     if (turn !== undefined && anchors.get(turn) === key) openMarker(turn)
-    const collapsible = COLLAPSIBLE_KINDS.has(node.kind)
-      && turn !== undefined && step !== undefined && step !== lastStep.get(turn)
+    const collapsible = turn !== undefined && (node.kind === 'context'
+      || (STEP_WORK_KINDS.has(node.kind) && step !== undefined && step !== lastStep.get(turn)))
     if (!collapsible) {
       rows.push({ kind: 'node', key })
       continue
     }
     const marker = openMarker(turn)
     marker.keys.push(key)
-    // A step described by an account is already counted there; folding its
-    // loaded nodes too would double it once expansion materializes them.
-    if (!accountedSteps.has(stepKey(turn, step))) {
-      foldNode(node, marker.metrics, marker.paths)
-    }
+    // Host pages retain injected messages; their inferred step's account does
+    // not include them. Assistant/tool nodes in that account are already counted.
+    const accounted = step !== undefined && accountedSteps.has(stepKey(turn, step))
+    if (node.kind === 'context' || !accounted) foldNode(node, marker.metrics, marker.paths)
     if (expanded.has(turn)) rows.push({ kind: 'node', key })
   }
   for (const marker of markers.values()) marker.metrics.files = marker.paths.size
@@ -300,7 +283,7 @@ export function collapseSettledSteps(
  */
 function foldDigests(digests: readonly StepDigest[] | undefined): CollapsedStepMetrics {
   const metrics: CollapsedStepMetrics = {
-    steps: 0, calls: 0, files: 0, added: 0, removed: 0, elapsedMs: 0, inputTokens: 0, outputTokens: 0,
+    steps: 0, calls: 0, contextInjections: 0, files: 0, added: 0, removed: 0, elapsedMs: 0, inputTokens: 0, outputTokens: 0,
   }
   for (const digest of digests ?? []) {
     metrics.steps += digest.steps

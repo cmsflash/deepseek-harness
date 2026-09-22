@@ -48,6 +48,15 @@ export const CollapsedStepsRow = memo(function CollapsedStepsRow({
   if (metrics.calls > 0) {
     parts.push(<span key="calls" className={css.metric}>{t('collapse.calls', { count: metrics.calls })}</span>)
   }
+  if (metrics.contextInjections > 0) {
+    parts.push(
+      <span key="context" className={css.metric}>
+        {t(metrics.contextInjections === 1 ? 'collapse.contextInjection' : 'collapse.contextInjections', {
+          count: metrics.contextInjections,
+        })}
+      </span>,
+    )
+  }
   const tokens = metrics.inputTokens + metrics.outputTokens
   if (tokens > 0) {
     parts.push(

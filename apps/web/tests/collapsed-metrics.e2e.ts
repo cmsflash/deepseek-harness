@@ -19,6 +19,7 @@ async function figures(row: Locator): Promise<Record<string, string | null>> {
   return {
     steps: await row.getByText(/^\d+ steps$/).textContent(),
     calls: await row.getByText(/^\d+ calls$/).textContent(),
+    contextInjections: await row.getByText(/^\d+ context injections?$/).textContent(),
     added: await row.getByText(/^\+\d+$/).textContent(),
     removed: await row.getByText(/^-\d+ lines$/).textContent(),
     files: await row.getByText(/^\d+ files$/).textContent(),
@@ -68,7 +69,14 @@ describe.skipIf(MODE === 'record')('web e2e: settled file metrics across live, r
     const row = page.locator('[data-collapsed-turn="1"]')
     await row.waitFor({ timeout: 15_000 })
     const live = await figures(row)
-    expect(live).toEqual({ steps: '1 steps', calls: '1 calls', added: '+1', removed: '-0 lines', files: '1 files' })
+    expect(live).toEqual({
+      steps: '1 steps', calls: '1 calls', contextInjections: '1 context injection',
+      added: '+1', removed: '-0 lines', files: '1 files',
+    })
+    const contexts = page.locator('[data-chat-flow-kind="context"]')
+    const prompt = page.getByText(prompts[0] as string, { exact: true })
+    expect(await contexts.count()).toBe(0)
+    expect(await prompt.isVisible()).toBe(true)
     const contents = await readFile(join(scaffold.workspaceCwd, 'workspace', 'notes.txt'), 'utf8')
     expect(contents).toBe('hello world')
 
@@ -77,13 +85,28 @@ describe.skipIf(MODE === 'record')('web e2e: settled file metrics across live, r
     expect(await page.locator('[data-chat-call-id]').count()).toBe(0)
     const reloaded = await figures(row)
     expect(reloaded).toEqual(live)
+    expect(await contexts.count()).toBe(0)
     await row.locator('button[aria-expanded]').click()
     await expect.poll(() => page.locator('[data-chat-call-id]').count(), { timeout: 15_000 }).toBe(1)
+    expect(await contexts.count()).toBe(1)
     const expanded = await figures(row)
     expect(expanded).toEqual(live)
+    await contexts.getByRole('button', { name: /^Context injection/ }).click()
+    const contextBody = contexts.locator('[data-context-injection-body]')
+    await contextBody.waitFor({ state: 'visible' })
+    expect(await contextBody.textContent()).toContain('Current DSH file policy')
+    expect(await prompt.isVisible()).toBe(true)
+    expect(await page.getByText('DONE', { exact: true }).isVisible()).toBe(true)
+
+    await row.locator('button[aria-expanded]').click()
+    expect(await contexts.count()).toBe(0)
+    const recollapsed = await figures(row)
+    expect(recollapsed).toEqual(live)
+    expect(await prompt.isVisible()).toBe(true)
+    expect(await page.getByText('DONE', { exact: true }).isVisible()).toBe(true)
     await compareOrRefreshGolden(
       join(SNAPSHOT_DIR, 'metrics.expected.json'),
-      JSON.stringify({ live, reloaded, expanded, file: contents }, null, 2),
+      JSON.stringify({ live, reloaded, expanded, recollapsed, file: contents }, null, 2),
       MODE,
     )
     await assertFinalWorkspaceSnapshot(SNAPSHOT_DIR, join(scaffold.workspaceCwd, 'workspace'))

@@ -52,7 +52,7 @@ function settled(callId: string, options: {
   meta?: unknown
   subCalls?: readonly ToolCallBlock[]
   parentCallId?: string
-} = {}): ToolCallBlock {
+} = {}): Extract<ToolCallBlock, { kind: 'tool-result' }> {
   return {
     kind: 'tool-result',
     seq: 0,
@@ -113,6 +113,13 @@ describe('collapseSettledSteps', () => {
       .toEqual(['ask', 'collapsed:1', 's2', 'tail'])
   })
 
+  it('keeps assistant rows without resolved step coordinates visible', () => {
+    const nodes = [node({ key: 'session' }), node({ key: 'turn', turn: 1 })]
+    expect(collapseSettledSteps(['session', 'turn'], store(nodes), EMPTY)).toEqual([
+      { kind: 'node', key: 'session' }, { kind: 'node', key: 'turn' },
+    ])
+  })
+
   it('collapses each turn independently', () => {
     const nodes = [
       node({ key: 'a1', turn: 1, step: 1 }),
@@ -161,7 +168,7 @@ describe('collapseSettledSteps', () => {
     ]
     const rows = collapseSettledSteps(['s1', 't1', 's2'], store(nodes), EMPTY)
     expect((rows[0] as { metrics: unknown }).metrics)
-      .toEqual({ steps: 1, calls: 2, files: 1, added: 1, removed: 0, elapsedMs: 0, inputTokens: 0, outputTokens: 0 })
+      .toEqual({ steps: 1, calls: 2, contextInjections: 0, files: 1, added: 1, removed: 0, elapsedMs: 0, inputTokens: 0, outputTokens: 0 })
   })
 
   it('reads a settled mutation exactly as the diff card does', () => {
@@ -200,6 +207,16 @@ describe('collapseSettledSteps', () => {
     }
   })
 
+  it('counts a settled result whose call head is outside the loaded window', () => {
+    const nodes = [
+      toolNode('result', 1, 1, { ...settled('result'), kind: 'tool-result', call: null }),
+      node({ key: 'answer', turn: 1, step: 2 }),
+    ]
+    expect(collapseSettledSteps(['result', 'answer'], store(nodes), EMPTY)[0]).toMatchObject({
+      metrics: { calls: 1, files: 0, added: 0, removed: 0 },
+    })
+  })
+
   it('counts one file once across repeated edits inside the collapsed group', () => {
     const nodes = [
       toolNode('t1', 1, 1, edited('t1', 'a.ts', 'one\n', 'two\n')),
@@ -211,20 +228,75 @@ describe('collapseSettledSteps', () => {
       .toMatchObject({ files: 1, added: 2, removed: 2 })
   })
 
-  it('never collapses the prompting message or context injections inside a step window', () => {
-    // The engine assigns a step Location by log position, so these rows carry
-    // one; hiding them would remove the reader's own words.
+  it('folds context injections while keeping human messages and the last step visible', () => {
     const nodes = [
+      node({ key: 'system', kind: 'system-prompt', turn: 1, step: 1 }),
       node({ key: 'ask', kind: 'user', turn: 1, step: 1 }),
       node({ key: 'ctx1', kind: 'context', turn: 1, step: 1 }),
       toolNode('t1', 1, 1),
-      node({ key: 'a1', kind: 'assistant-step', turn: 1, step: 1 }),
-      node({ key: 'a2', kind: 'assistant-step', turn: 1, step: 2 }),
+      node({ key: 'a1', turn: 1, step: 1 }),
+      node({ key: 'steer', kind: 'steering', turn: 1, step: 2 }),
+      node({ key: 'ctx2', kind: 'context', turn: 1, step: 2 }),
+      node({ key: 'a2', turn: 1, step: 2 }),
       node({ key: 'tail', kind: 'turn-tail', turn: 1 }),
     ]
-    const rows = collapseSettledSteps(['ask', 'ctx1', 't1', 'a1', 'a2', 'tail'], store(nodes), EMPTY)
-    expect(rows.map(r => (r.kind === 'node' ? r.key : `collapsed:${String(r.turn)}`)))
-      .toEqual(['ask', 'ctx1', 'collapsed:1', 'a2', 'tail'])
+    const rows = collapseSettledSteps(nodes.map(entry => entry.key), store(nodes), EMPTY)
+    expect(rows.map(row => row.kind === 'node' ? row.key : `collapsed:${String(row.turn)}`))
+      .toEqual(['system', 'ask', 'collapsed:1', 'steer', 'a2', 'tail'])
+    expect(rows[2]).toMatchObject({
+      keys: ['ctx1', 't1', 'a1', 'ctx2'],
+      metrics: { steps: 1, calls: 1, contextInjections: 2 },
+    })
+  })
+
+  it.each([undefined, 1])('summarizes context without hiding the only assistant step (context step %s)', (step) => {
+    const nodes = [
+      node({ key: 'ask', kind: 'user', turn: 1 }),
+      node({ key: 'ctx', kind: 'context', turn: 1, ...step === undefined ? {} : { step } }),
+      node({ key: 'answer', turn: 1, step: 1 }),
+    ]
+    const order = nodes.map(entry => entry.key)
+    const closed = collapseSettledSteps(order, store(nodes), EMPTY)
+    expect(closed).toMatchObject([
+      { kind: 'node', key: 'ask' },
+      { kind: 'collapsed', turn: 1, keys: ['ctx'], metrics: { contextInjections: 1, steps: 0, calls: 0 } },
+      { kind: 'node', key: 'answer' },
+    ])
+    const opened = collapseSettledSteps(order, store(nodes), new Set([1]))
+    expect(opened.map(row => row.kind === 'node' ? row.key : `collapsed:${String(row.turn)}`))
+      .toEqual(['ask', 'collapsed:1', 'ctx', 'answer'])
+    expect(opened[1]).toEqual(closed[1])
+  })
+
+  it('does not treat a later context injection as a new assistant step', () => {
+    const nodes = [
+      node({ key: 'answer', turn: 1, step: 1 }),
+      node({ key: 'ctx', kind: 'context', turn: 1, step: 2 }),
+    ]
+    expect(collapseSettledSteps(['answer', 'ctx'], store(nodes), EMPTY)).toMatchObject([
+      { kind: 'node', key: 'answer' },
+      { kind: 'collapsed', turn: 1, keys: ['ctx'], metrics: { contextInjections: 1, steps: 0 } },
+    ])
+  })
+
+  it('summarizes turn-owned context before any assistant step exists', () => {
+    const nodes = [node({ key: 'ctx', kind: 'context', turn: 1 })]
+    expect(collapseSettledSteps(['ctx'], store(nodes), EMPTY)).toMatchObject([
+      { kind: 'collapsed', turn: 1, keys: ['ctx'], metrics: { contextInjections: 1, steps: 0 } },
+    ])
+  })
+
+  it('keeps session-owned context outside turn summaries', () => {
+    const nodes = [
+      node({ key: 'ctx', kind: 'context' }),
+      node({ key: 'a1', turn: 1, step: 1 }),
+      node({ key: 'a2', turn: 1, step: 2 }),
+    ]
+    expect(collapseSettledSteps(['ctx', 'a1', 'a2'], store(nodes), EMPTY)).toMatchObject([
+      { kind: 'node', key: 'ctx' },
+      { kind: 'collapsed', turn: 1, keys: ['a1'], metrics: { contextInjections: 0 } },
+      { kind: 'node', key: 'a2' },
+    ])
   })
 
   it('counts one step per assistant node even when its work is all tool calls', () => {
@@ -382,6 +454,28 @@ describe('collapseSettledSteps with withheld steps', () => {
     // row must not shrink to whatever the window happens to hold.
     expect(metricsOf(opened)).toEqual(metricsOf(closed))
     expect(metricsOf(closed)).toMatchObject({ steps: 1, calls: 2, inputTokens: 1000, outputTokens: 50 })
+  })
+
+  it('counts retained context independently of step accounts before and after expansion', () => {
+    const ask = node({ key: 'ask', kind: 'user', turn: 1, step: 1 })
+    const ctx1 = node({ key: 'ctx1', kind: 'context', turn: 1, step: 1 })
+    const ctx2 = node({ key: 'ctx2', kind: 'context', turn: 1, step: 2 })
+    const answer = node({ key: 'a2', turn: 1, step: 2 })
+    const withheld = new Map([[1, [account(1, 1)]]])
+    const coldNodes = [ask, ctx1, ctx2, answer]
+    const cold = collapseSettledSteps(coldNodes.map(entry => entry.key), store(coldNodes), EMPTY, withheld)
+    const loadedNodes = [ask, ctx1, node({ key: 'a1', turn: 1, step: 1 }), ctx2, answer]
+    const opened = collapseSettledSteps(
+      loadedNodes.map(entry => entry.key), store(loadedNodes), new Set([1]), new Map(), withheld,
+    )
+    expect(cold[1]).toMatchObject({
+      kind: 'collapsed', keys: ['ctx1', 'ctx2'], metrics: { contextInjections: 2, steps: 1, calls: 2 },
+    })
+    expect(opened[1]).toMatchObject({
+      kind: 'collapsed', keys: ['ctx1', 'a1', 'ctx2'], metrics: { contextInjections: 2, steps: 1, calls: 2 },
+    })
+    expect(opened.map(row => row.kind === 'node' ? row.key : `collapsed:${String(row.turn)}`))
+      .toEqual(['ask', 'collapsed:1', 'ctx1', 'a1', 'ctx2', 'a2'])
   })
 
   it('counts an accounted step once even when its nodes are loaded', () => {
