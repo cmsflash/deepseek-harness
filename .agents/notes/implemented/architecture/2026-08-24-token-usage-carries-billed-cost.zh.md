@@ -31,4 +31,4 @@ Harness 中没有任何东西能说出一轮对话花了多少钱。`TokenUsage`
 - pi-ai 不为其模型计价的路由不报告成本。这体现为字段缺席，而不是 `$0.00`。
 - 成本由目录价格推算，而非来自提供方账单。目录价格过期会产生一个笃定却错误的数字；该金额是估算，只有在价格恰好吻合时才等于实际。
 - `llm-deepseek` 未作改动，不报告成本。它需要针对自己的价格来源做同样的映射。
-- 该数字对任何 `TokenUsage` 消费方可用，包括折叠 step 行的 `conversation.chat.collapsedMetric` slot——仓库外插件无需再改动核心即可填充它。
+- 该数字对任何 `TokenUsage` 消费方可用。会话、轮次与子代理三处显示通过 `tokenUsage` 投影和 `deriveTurnTokenUsage` 读取它（[计费成本显示](../feature/2026-09-11-billed-cost-display.zh.md)）。

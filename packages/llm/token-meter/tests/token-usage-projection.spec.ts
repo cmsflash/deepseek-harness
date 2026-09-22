@@ -15,7 +15,15 @@ const ZERO: TokenUsageProjection = {
   outputTokens: 0,
   cacheReadTokens: 0,
   cacheWriteTokens: 0,
+  costUsd: 0,
+  unpricedCalls: 0,
 }
+
+/** A token-only expectation: every attempt priced at zero and counted unpriced. */
+const unpriced = (
+  buckets: Omit<TokenUsageProjection, 'costUsd' | 'unpricedCalls'>,
+  calls: number,
+): TokenUsageProjection => ({ ...buckets, costUsd: 0, unpricedCalls: calls })
 
 async function harness(): Promise<{
   ctx: Context
@@ -123,12 +131,12 @@ describe('tokenUsage session projection', () => {
     usageChunk(session, usage, 1, 1)
     finalUsage(session, usage, 1, 1)
 
-    expect(projected(ctx, session)).toEqual({
+    expect(projected(ctx, session)).toEqual(unpriced({
       uncachedInputTokens: 10,
       outputTokens: 4,
       cacheReadTokens: 7,
       cacheWriteTokens: 2,
-    })
+    }, 1))
     expect(changes).toHaveLength(1)
   })
 
@@ -147,12 +155,12 @@ describe('tokenUsage session projection', () => {
       cacheWriteTokens: 1,
     }, 1, 1)
 
-    expect(projected(ctx, session)).toEqual({
+    expect(projected(ctx, session)).toEqual(unpriced({
       uncachedInputTokens: 14,
       outputTokens: 5,
       cacheReadTokens: 8,
       cacheWriteTokens: 1,
-    })
+    }, 1))
   })
 
   it('accumulates retried attempts while replacing samples within each attempt', async () => {
@@ -203,12 +211,12 @@ describe('tokenUsage session projection', () => {
     }, 1, 1)
     session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
 
-    expect(projected(ctx, session)).toEqual({
+    expect(projected(ctx, session)).toEqual(unpriced({
       uncachedInputTokens: 24,
       outputTokens: 7,
       cacheReadTokens: 11,
       cacheWriteTokens: 1,
-    })
+    }, 2))
   })
 
   it('accumulates disjoint buckets across steps without adding reasoning twice', async () => {
@@ -240,12 +248,12 @@ describe('tokenUsage session projection', () => {
       cacheWriteTokens: 4,
     }, 1, 2)
 
-    expect(projected(ctx, session)).toEqual({
+    expect(projected(ctx, session)).toEqual(unpriced({
       uncachedInputTokens: 30,
       outputTokens: 15,
       cacheReadTokens: 2,
       cacheWriteTokens: 4,
-    })
+    }, 2))
   })
 
   it('retains a usage chunk when the request produces no final assistant message', async () => {
@@ -253,12 +261,63 @@ describe('tokenUsage session projection', () => {
     startStep(session, 1, 1)
     usageChunk(session, { inputTokens: 9, outputTokens: 1 }, 1, 1)
     session.append('step/end', { turn: 1, step: 1 })
-    expect(projected(ctx, session)).toEqual({
+    expect(projected(ctx, session)).toEqual(unpriced({
       uncachedInputTokens: 9,
       outputTokens: 1,
       cacheReadTokens: 0,
       cacheWriteTokens: 0,
+    }, 1))
+  })
+
+  it('sums billed cost across priced attempts', async () => {
+    const { ctx, session } = await harness()
+    startStep(session, 1, 1)
+    usageChunk(session, { inputTokens: 10, outputTokens: 2, costUsd: 0.01 }, 1, 1)
+    finalUsage(session, { inputTokens: 14, outputTokens: 5, costUsd: 0.0201855 }, 1, 1)
+    startStep(session, 1, 2)
+    finalUsage(session, { inputTokens: 3, outputTokens: 1, costUsd: 0.0044279 }, 1, 2)
+
+    const value = projected(ctx, session)
+    expect(value).toMatchObject({ uncachedInputTokens: 17, outputTokens: 6, unpricedCalls: 0 })
+    expect(value.costUsd).toBeCloseTo(0.0246134, 10)
+  })
+
+  it('counts unpriced attempts while summing the priced ones', async () => {
+    const { ctx, session } = await harness()
+    startStep(session, 1, 1)
+    finalUsage(session, { inputTokens: 14, outputTokens: 5, costUsd: 0.02 }, 1, 1)
+    startStep(session, 1, 2)
+    finalUsage(session, { inputTokens: 3, outputTokens: 1 }, 1, 2)
+    expect(projected(ctx, session)).toEqual({
+      uncachedInputTokens: 17,
+      outputTokens: 6,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      costUsd: 0.02,
+      unpricedCalls: 1,
     })
+
+    startStep(session, 1, 3)
+    finalUsage(session, { inputTokens: 1, outputTokens: 1, costUsd: 0.5 }, 1, 3)
+    expect(projected(ctx, session)).toMatchObject({ costUsd: 0.52, unpricedCalls: 1 })
+  })
+
+  it('lets a final sample replace the price and pricing state of its stream sample', async () => {
+    const { ctx, session } = await harness()
+    startStep(session, 1, 1)
+    usageChunk(session, { inputTokens: 10, outputTokens: 2, costUsd: 0.01 }, 1, 1)
+    finalUsage(session, { inputTokens: 14, outputTokens: 5 }, 1, 1)
+    expect(projected(ctx, session)).toEqual(unpriced({
+      uncachedInputTokens: 14,
+      outputTokens: 5,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+    }, 1))
+
+    startStep(session, 1, 2)
+    usageChunk(session, { inputTokens: 1, outputTokens: 1 }, 1, 2)
+    finalUsage(session, { inputTokens: 1, outputTokens: 1, costUsd: 0.005 }, 1, 2)
+    expect(projected(ctx, session)).toMatchObject({ costUsd: 0.005, unpricedCalls: 1 })
   })
 
   it('does not erase historical billing when the visible surface is replaced', async () => {
@@ -279,12 +338,12 @@ describe('tokenUsage session projection', () => {
       sourceEventSeqs: [before.seq],
     })
 
-    expect(projected(ctx, session)).toEqual({
+    expect(projected(ctx, session)).toEqual(unpriced({
       uncachedInputTokens: 12,
       outputTokens: 3,
       cacheReadTokens: 0,
       cacheWriteTokens: 0,
-    })
+    }, 1))
   })
 
   it('unregisters with the token-meter fiber and restores from a JSON checkpoint', async () => {
@@ -299,12 +358,12 @@ describe('tokenUsage session projection', () => {
     expect(ctx.sessionProjections.snapshot(session).values).not.toHaveProperty('tokenUsage')
 
     await ctx.plugin(TokenMeter)
-    expect(ctx.sessionProjections.viewCheckpoint(checkpoint).tokenUsage).toEqual({
+    expect(ctx.sessionProjections.viewCheckpoint(checkpoint).tokenUsage).toEqual(unpriced({
       uncachedInputTokens: 8,
       outputTokens: 2,
       cacheReadTokens: 5,
       cacheWriteTokens: 0,
-    })
+    }, 1))
   })
 })
 

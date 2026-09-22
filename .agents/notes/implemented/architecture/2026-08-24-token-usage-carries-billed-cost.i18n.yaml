@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/architecture/2026-08-24-token-usage-carries-billed-cost.md
-2026-08-24-token-usage-carries-billed-cost.md: c8f0247ba1219c70a94ff6b159dd4a93d1d6b3cd
-2026-08-24-token-usage-carries-billed-cost.zh.md: 334699dffa4db6044aa7cc7ea95a08731c8356da
+2026-08-24-token-usage-carries-billed-cost.md: 13e9cfb4b5417b479291f848ab8389015b8bd519
+2026-08-24-token-usage-carries-billed-cost.zh.md: 87675db2c867724e7e48769807ce6647ba57aa15

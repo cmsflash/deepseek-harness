@@ -376,18 +376,32 @@ describe('SubagentHeaderLineage', () => {
         outputTokens: 200,
         cacheReadTokens: 3_000,
         cacheWriteTokens: 400,
+        costUsd: 0,
+        unpricedCalls: 2,
       },
       finished: {
         uncachedInputTokens: 123,
         outputTokens: 0,
         cacheReadTokens: 0,
         cacheWriteTokens: 0,
+        costUsd: 0.0044279,
+        unpricedCalls: 0,
       },
       interrupted: {
         uncachedInputTokens: 123_000_000,
         outputTokens: 0,
         cacheReadTokens: 0,
         cacheWriteTokens: 0,
+        costUsd: 0,
+        unpricedCalls: 1,
+      },
+      days: {
+        uncachedInputTokens: 5_000_000,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        costUsd: 12.5,
+        unpricedCalls: 0,
       },
     } as const
     const entries = rows.map(([id, activity]) => ({
@@ -426,15 +440,20 @@ describe('SubagentHeaderLineage', () => {
     expect(within(trigger).getByText('9 个子代理')).toBeTruthy()
     hoverCatalog(trigger)
 
-    const runningRow = screen.getByRole('treeitem', { name: /running.*4\.6K tok · 1分10秒/ })
+    const runningRow = screen.getByRole('treeitem', { name: /running.*4\.6K tok · \$0\.0000 · 1分10秒/ })
     const runningMetrics = within(runningRow)
-    const tokenMetric = runningMetrics.getByText('4.6K tok')
+    const costMetric = runningMetrics.getByText('$0.0000')
+    const tokenMetric = costMetric.parentElement as HTMLElement
     const durationMetric = runningMetrics.getByText('1分10秒')
+    // Tokens and dollars share the top line; duration sits beneath them.
+    expect(tokenMetric.textContent).toBe('4.6K tok·$0.0000')
     expect(tokenMetric.parentElement).toBe(durationMetric.parentElement)
     expect(tokenMetric.nextElementSibling).toBe(durationMetric)
-    expect(screen.getByRole('treeitem', { name: /finished.*123 tok · 1小时02分03秒/ })).toBeTruthy()
-    expect(screen.getByRole('treeitem', { name: /interrupted.*123M tok · 6秒/ })).toBeTruthy()
-    expect(screen.getByRole('treeitem', { name: /days.*12天05小时06分07秒/ })).toBeTruthy()
+    // Every child with a projection carries its billed dollars between tokens
+    // and duration; a child whose calls were all unpriced reads $0.0000.
+    expect(screen.getByRole('treeitem', { name: /finished.*123 tok · \$0\.0044 · 1小时02分03秒/ })).toBeTruthy()
+    expect(screen.getByRole('treeitem', { name: /interrupted.*123M tok · \$0\.0000 · 6秒/ })).toBeTruthy()
+    expect(screen.getByRole('treeitem', { name: /days.*5M tok · \$12\.50 · 12天05小时06分07秒/ })).toBeTruthy()
     expect(screen.getByText('12天5小时').getAttribute('title'))
       .toBe('总活跃耗时：12天05小时06分07秒')
     expect(screen.getByText('1天')).toBeTruthy()
@@ -444,9 +463,9 @@ describe('SubagentHeaderLineage', () => {
     expect(screen.getByText('约1年')).toBeTruthy()
 
     await vi.advanceTimersByTimeAsync(1_000)
-    expect(screen.getByRole('treeitem', { name: /running.*4\.6K tok · 1分11秒/ })).toBeTruthy()
-    expect(screen.getByRole('treeitem', { name: /finished.*123 tok · 1小时02分03秒/ })).toBeTruthy()
-    expect(screen.getByRole('treeitem', { name: /interrupted.*123M tok · 6秒/ })).toBeTruthy()
+    expect(screen.getByRole('treeitem', { name: /running.*4\.6K tok · \$0\.0000 · 1分11秒/ })).toBeTruthy()
+    expect(screen.getByRole('treeitem', { name: /finished.*123 tok · \$0\.0044 · 1小时02分03秒/ })).toBeTruthy()
+    expect(screen.getByRole('treeitem', { name: /interrupted.*123M tok · \$0\.0000 · 6秒/ })).toBeTruthy()
   })
 
   it('lazily expands and collapses descendant catalogs with direct-parent navigation', () => {

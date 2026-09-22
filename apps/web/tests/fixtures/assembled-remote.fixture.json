@@ -322,7 +322,9 @@
               "uncachedInputTokens": 1914,
               "outputTokens": 708,
               "cacheReadTokens": 6880,
-              "cacheWriteTokens": 32
+              "cacheWriteTokens": 32,
+              "costUsd": 0,
+              "unpricedCalls": 87
             },
             "contextPressure": {
               "pressureTokens": 104,
@@ -390,7 +392,9 @@
               "uncachedInputTokens": 0,
               "outputTokens": 0,
               "cacheReadTokens": 0,
-              "cacheWriteTokens": 0
+              "cacheWriteTokens": 0,
+              "costUsd": 0,
+              "unpricedCalls": 0
             },
             "contextPressure": {},
             "contextBreakdown": {
@@ -455,7 +459,9 @@
               "uncachedInputTokens": 0,
               "outputTokens": 0,
               "cacheReadTokens": 0,
-              "cacheWriteTokens": 0
+              "cacheWriteTokens": 0,
+              "costUsd": 0,
+              "unpricedCalls": 0
             },
             "contextPressure": {},
             "contextBreakdown": {
@@ -5802,7 +5808,9 @@
           "uncachedInputTokens": 1914,
           "outputTokens": 708,
           "cacheReadTokens": 6880,
-          "cacheWriteTokens": 32
+          "cacheWriteTokens": 32,
+          "costUsd": 0,
+          "unpricedCalls": 87
         },
         "contextPressure": {
           "pressureTokens": 104,

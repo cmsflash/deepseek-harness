@@ -83,9 +83,9 @@
   - img
 - button "Branch into a new conversation":
   - img
-- button "Usage 19K tok":
+- button "Usage 19K tok · $0.0000":
   - img
-  - text: Usage 19K tok
+  - text: Usage 19K tok$0.0000
 - button "Ran for {{duration}}":
   - img
   - text: Ran for {{duration}}
@@ -101,7 +101,7 @@
 - button "1 turns 2 steps · {{throughput}} tok/s":
   - img
   - text: 1 turns 2 steps{{throughput}} tok/s
-- button "19K tok · Cache hit 94%":
+- button "19K tok · Cache hit 94% · $0.0000":
   - img
-  - text: 19K tokCache hit 94%
+  - text: 19K tokCache hit 94%$0.0000
 - button "8% of context used": 8%

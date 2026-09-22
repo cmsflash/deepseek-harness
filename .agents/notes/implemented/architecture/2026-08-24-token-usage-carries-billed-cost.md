@@ -31,4 +31,4 @@ Cost rides the existing `assistant/message` event's `usage` field, so it is dura
 - A route whose models pi-ai does not price reports no cost. That is visible as absence, not as `$0.00`.
 - Cost is derived from catalog rates, not from a provider invoice. A stale catalog rate produces a confidently wrong number; the figure is an estimate that happens to be exact when the rates match.
 - `llm-deepseek` is untouched and reports no cost. It would need the same mapping against its own price source.
-- The number is available to any `TokenUsage` consumer, including the collapsed-step row's `conversation.chat.collapsedMetric` slot, which an out-of-tree plugin can fill without further core changes.
+- The number is available to any `TokenUsage` consumer. The session, Turn, and subagent displays read it through the `tokenUsage` projection and `deriveTurnTokenUsage` ([billed cost display](../feature/2026-09-11-billed-cost-display.md)).

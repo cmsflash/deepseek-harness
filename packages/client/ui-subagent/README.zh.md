@@ -57,7 +57,7 @@ kind: "package-reference"
 
 ### 耗时与 token
 
-token 用量总计为四个互不重叠的 `tokenUsage` 桶之和。耗时会累加已完成的 `subagentTiming` 轮次，仅在运行中 child 存在未结束轮次时每秒递增一次，并在 child 变为 inactive 后冻结；被中断的未结束轮次以其同一切面的 `active.through` 为上界，绝不使用更新的会话元数据。
+token 用量总计为四个互不重叠的 `tokenUsage` 桶之和；行会把投影的计费 `costUsd` 总额放在其 token 计数旁。耗时会累加已完成的 `subagentTiming` 轮次，仅在运行中 child 存在未结束轮次时每秒递增一次，并在 child 变为 inactive 后冻结；被中断的未结束轮次以其同一切面的 `active.through` 为上界，绝不使用更新的会话元数据。
 
 ### 编辑器选举
 

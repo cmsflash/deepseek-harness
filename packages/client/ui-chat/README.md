@@ -40,7 +40,7 @@ Each nonempty appended `system/message` owns a collapsed prompt row, including a
 <a id="turn-token-usage"></a>
 ## Turn token usage
 
-A completed Turn shows an expandable usage row only when the loaded window includes `turn/start` and every started model attempt reports safe, exact usage. The row omits unavailable optional buckets. Incomplete or contradictory accounting hides the complete disclosure instead of presenting a partial total.
+A completed Turn shows an expandable usage row only when the loaded window includes `turn/start` and every started model attempt reports safe, exact usage. The row omits unavailable optional buckets. Incomplete or contradictory accounting hides the complete disclosure instead of presenting a partial total. The Turn pill and the session usage pill under the composer each append the billed dollar total, summing the priced attempts in scope; the dialog's `Cost` row appends `(N unpriced)` when any attempt lacked a rate, so a partial sum is never mistaken for the whole spend ([billed cost display](../../../.agents/notes/implemented/feature/2026-09-11-billed-cost-display.md)).
 
 After Assistant replies settle, the completed-turn timing dialog omits TTFT and decoding speed, both after live replies and after reopening history. Elapsed turn time remains available. The Session Stats pill reads timing independently from its durable projection.
 

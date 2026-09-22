@@ -1905,12 +1905,14 @@ describe('ChatView', () => {
         cacheReadTokens: 4_940,
         outputTokens: 100,
         totalTokens: 10_100,
+        costUsd: 0,
+        unpricedCalls: 1,
       }]]),
     })
     const view = render(<h.ChatView {...h.props} />)
     // The usage pill carries the compact total; cache hit stays dialog-only.
     const trigger = view.getByRole('button', { name: /用量 10\.1K tok/ })
-    expect(trigger.textContent).toBe('用量 10.1K tok')
+    expect(trigger.textContent).toBe('用量 10.1K tok·$0.0000')
     expect(view.queryByRole('dialog')).toBeNull()
     fireEvent.click(trigger)
     const dialog = view.getByRole('dialog')

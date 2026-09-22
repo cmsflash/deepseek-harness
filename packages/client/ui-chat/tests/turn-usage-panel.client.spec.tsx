@@ -22,11 +22,14 @@ describe('TurnUsagePanel', () => {
       reasoningTokens: 42,
       totalTokens: 15_800,
       routes: [{ provider: 'deepseek', model: 'deepseek-chat' }],
+      costUsd: 0.0201855,
+      unpricedCalls: 0,
     }
     const view = render(<TurnUsagePanel usage={usage} t={t} />)
 
     const trigger = view.getByRole('button')
-    expect(trigger.textContent).toBe('Usage 15.8K tok')
+    expect(trigger.textContent).toBe('Usage 15.8K tok·$0.0202')
+    expect(trigger.getAttribute('aria-label')).toBe('Usage 15.8K tok · $0.0202')
     expect(trigger.querySelector('svg')).not.toBeNull()
     expect(trigger.getAttribute('aria-haspopup')).toBe('dialog')
     expect(trigger.getAttribute('aria-expanded')).toBe('false')
@@ -47,6 +50,8 @@ describe('TurnUsagePanel', () => {
     expect(details.textContent).toContain('Cached input4,940 tok')
     expect(details.textContent).toContain('Cache write0 tok')
     expect(details.textContent).toContain('Output5,800 tok (42 tok reasoning)')
+    expect(details.textContent).toContain('Cost$0.0202')
+    expect(details.textContent).not.toContain('unpriced')
     expect(details.textContent).not.toContain('Total')
   })
 
@@ -55,17 +60,22 @@ describe('TurnUsagePanel', () => {
       uncachedInputTokens: 120,
       outputTokens: 30,
       totalTokens: 150,
+      costUsd: 0,
+      unpricedCalls: 2,
     }
     const view = render(<TurnUsagePanel usage={usage} t={t} />)
 
     const trigger = view.getByRole('button')
-    expect(trigger.textContent).toBe('Usage 150 tok')
+    expect(trigger.textContent).toBe('Usage 150 tok·$0.0000')
+    expect(trigger.getAttribute('aria-label')).toBe('Usage 150 tok · $0.0000')
     fireEvent.click(trigger)
     expect(view.queryByText('Provider / model')).toBeNull()
     expect(view.queryByText('Cache hit')).toBeNull()
     expect(view.queryByText('Cached input')).toBeNull()
     expect(view.queryByText('Cache write')).toBeNull()
     expect(view.queryByText(/reasoning/)).toBeNull()
+    // Cost never disappears; the dialog counts the calls no rate covered.
+    expect(view.getByRole('dialog').textContent).toContain('Cost$0.0000 (2 unpriced)')
   })
 
   it('keeps a partial cache hit below 100 in the dialog and closes on Escape or outside pointerdown', () => {
@@ -74,12 +84,14 @@ describe('TurnUsagePanel', () => {
       cacheReadTokens: 999,
       outputTokens: 100,
       totalTokens: 1_100,
+      costUsd: 0,
+      unpricedCalls: 1,
     }
     const view = render(<TurnUsagePanel usage={usage} t={t} />)
     const trigger = view.getByRole('button')
     // The pill carries the compact total; cache-hit rate and exact token
     // counts stay in the dialog.
-    expect(trigger.textContent).toBe('Usage 1.1K tok')
+    expect(trigger.textContent).toBe('Usage 1.1K tok·$0.0000')
 
     fireEvent.click(trigger)
     const dialog = view.getByRole('dialog')

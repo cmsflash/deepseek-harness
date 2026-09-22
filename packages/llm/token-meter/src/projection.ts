@@ -15,6 +15,13 @@ export interface TokenUsageProjection {
   outputTokens: number
   cacheReadTokens: number
   cacheWriteTokens: number
+  /**
+   * Sum of every priced attempt's `costUsd`; an attempt whose provider
+   * published no rate contributes zero and is counted in `unpricedCalls`.
+   */
+  costUsd: number
+  /** Billed attempts that reported usage without a `costUsd`. */
+  unpricedCalls: number
 }
 
 /**

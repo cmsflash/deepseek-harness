@@ -78,6 +78,8 @@ describe('deriveTurnTokenUsage', () => {
       cacheWriteTokens: 0,
       reasoningTokens: 8,
       routes: [{ provider: 'deepseek', model: 'deepseek-chat' }],
+      costUsd: 0,
+      unpricedCalls: 1,
     })
   })
 
@@ -132,6 +134,8 @@ describe('deriveTurnTokenUsage', () => {
       outputTokens: 30,
       totalTokens: 240,
       cacheReadTokens: 70,
+      costUsd: 0,
+      unpricedCalls: 2,
     })
   })
 
@@ -165,6 +169,8 @@ describe('deriveTurnTokenUsage', () => {
     ['total below known prompt', usage({ totalTokens: 160 })],
     ['contradictory complete buckets', usage({ totalTokens: 171, cacheWriteTokens: 0 })],
     ['reasoning exceeds output', usage({ reasoningTokens: 21 })],
+    ['negative cost', usage({ costUsd: -0.01 })],
+    ['non-finite cost', usage({ costUsd: Number.POSITIVE_INFINITY })],
     ['prompt bucket overflow', usage({
       inputTokens: Number.MAX_SAFE_INTEGER,
       outputTokens: 0,
@@ -201,7 +207,9 @@ describe('deriveTurnTokenUsage', () => {
       event(7, 'step/end', { turn: 1, step: 2 }),
       event(8, 'turn/end', { turn: 1, reason: { kind: 'completed' } }),
     ]
-    expect(deriveTurnTokenUsage(events)).toEqual({ uncachedInputTokens: 200, outputTokens: 40, totalTokens: 345 })
+    expect(deriveTurnTokenUsage(events)).toEqual({
+      uncachedInputTokens: 200, outputTokens: 40, totalTokens: 345, costUsd: 0, unpricedCalls: 2,
+    })
   })
 
   it('sums multiple steps and preserves distinct attributed routes', () => {
@@ -224,7 +232,27 @@ describe('deriveTurnTokenUsage', () => {
         { provider: 'deepseek', model: 'deepseek-chat' },
         { provider: 'openai', model: 'gpt-5' },
       ],
+      costUsd: 0,
+      unpricedCalls: 2,
     })
+  })
+
+  it('sums the priced attempts and counts the unpriced ones', () => {
+    const twoSteps = (second: TokenUsage) => [
+      event(1, 'turn/start', { turn: 1 }),
+      event(2, 'step/start', { turn: 1, step: 1 }),
+      message(3, usage({ costUsd: 0.0201855 })),
+      event(4, 'step/end', { turn: 1, step: 1 }),
+      event(5, 'step/start', { turn: 1, step: 2 }),
+      message(6, second, 'deepseek', 'deepseek-chat', 2),
+      event(7, 'step/end', { turn: 1, step: 2 }),
+      event(8, 'turn/end', { turn: 1, reason: { kind: 'completed' } }),
+    ]
+    const priced = deriveTurnTokenUsage(twoSteps(usage({ costUsd: 0.0044279 })))
+    expect(priced?.costUsd).toBeCloseTo(0.0246134, 10)
+    expect(priced?.unpricedCalls).toBe(0)
+    expect(deriveTurnTokenUsage(twoSteps(usage({ costUsd: 0 })))).toMatchObject({ costUsd: 0.0201855, unpricedCalls: 0 })
+    expect(deriveTurnTokenUsage(twoSteps(usage()))).toMatchObject({ costUsd: 0.0201855, unpricedCalls: 1 })
   })
 
   it('fails closed when aggregation overflows a safe integer', () => {

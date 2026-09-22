@@ -33,9 +33,9 @@
   - img
 - button "在新对话中分支":
   - img
-- button "用量 8.2K tok":
+- button "用量 8.2K tok · $0.0000":
   - img
-  - text: 用量 8.2K tok
+  - text: 用量 8.2K tok$0.0000
 - button "用时 {{duration}}":
   - img
   - text: 用时 {{duration}}
@@ -51,7 +51,7 @@
 - button "1 轮 1 步 · {{throughput}} tok/s":
   - img
   - text: 1 轮 1 步{{throughput}} tok/s
-- button "8.2K tok · 缓存命中 16%":
+- button "8.2K tok · 缓存命中 16% · $0.0000":
   - img
-  - text: 8.2K tok缓存命中 16%
+  - text: 8.2K tok缓存命中 16%$0.0000
 - button "上下文已用 1%": 1%

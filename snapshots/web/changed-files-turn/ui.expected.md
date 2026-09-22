@@ -142,9 +142,9 @@
   - img
 - button "在新对话中分支":
   - img
-- button "用量 36.2K tok":
+- button "用量 36.2K tok · $0.0000":
   - img
-  - text: 用量 36.2K tok
+  - text: 用量 36.2K tok$0.0000
 - button "用时 {{duration}}":
   - img
   - text: 用时 {{duration}}

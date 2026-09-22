@@ -179,7 +179,7 @@ describe('web e2e: assistant IconActions wait for the turn to end', () => {
     expect(await trigger.getAttribute('aria-expanded')).toBe('false')
     // The usage pill carries the icon and the turn total; the time pill beside
     // it carries the run time, and both keep their details dialog-only.
-    expect(await trigger.textContent()).toBe('Usage 15.8K tok')
+    expect(await trigger.textContent()).toBe('Usage 15.8K tok·$0.0000')
     const timeTrigger = page.getByRole('button', { name: /^Ran for \S+$/ })
     expect(await timeTrigger.count()).toBe(1)
     expect(await page.locator('[data-turn-tail]').getByText(/tok\/s|TTFT/).count()).toBe(0)
@@ -195,6 +195,8 @@ describe('web e2e: assistant IconActions wait for the turn to end', () => {
     expect(await dialog.getByText('7,808 tok', { exact: true }).count()).toBe(1)
     expect(await dialog.getByText('112 tok (42 tok reasoning)', { exact: true }).count()).toBe(1)
     expect(await dialog.getByText('15,811 tok', { exact: true }).count()).toBe(1)
+    expect(await dialog.getByText('Cost', { exact: true }).count()).toBe(1)
+    expect(await dialog.getByText('$0.0000 (2 unpriced)', { exact: true }).count()).toBe(1)
     await page.keyboard.press('Escape')
     expect(await page.getByRole('dialog').count()).toBe(0)
 
