@@ -357,6 +357,52 @@ describe('workspace browser rows', () => {
     expect(onToggle).toHaveBeenCalledOnce()
   })
 
+  it('shows the visible session count on a Workspace row, folded or expanded', () => {
+    const folded: GroupNode = {
+      key: 'project', workspaceId: wid('project'), cwd: '/projects/project', createdAt: 0, label: 'Project',
+      sessionCount: 3, expanded: false, containsCurrent: false, sessions: [],
+    }
+    const view = render(<ProjectRowItem group={folded} onToggle={vi.fn()} onCreate={vi.fn()} t={t} />)
+    // sessionCount is derived independently of expansion, so a folded group —
+    // which renders no session rows — still reports its true membership.
+    const row = screen.getByRole('treeitem', { name: 'Project' })
+    expect(screen.getByText('Project').nextElementSibling?.textContent).toBe('3')
+    expect(row.getAttribute('aria-description')).toBe('3 个会话')
+
+    view.rerender(<ProjectRowItem group={{ ...folded, expanded: true }} onToggle={vi.fn()} onCreate={vi.fn()} t={t} />)
+    expect(screen.getByRole('treeitem', { name: 'Project' }).getAttribute('aria-description')).toBe('3 个会话')
+  })
+
+  it('places the count immediately after the Workspace title, not in the trailing actions', () => {
+    const group: GroupNode = {
+      key: 'project', workspaceId: wid('project'), cwd: '/projects/project', createdAt: 0, label: 'Project',
+      sessionCount: 2, expanded: false, containsCurrent: false, sessions: [],
+    }
+    render(<ProjectRowItem group={group} onToggle={vi.fn()} onCreate={vi.fn()} t={t} />)
+    const title = screen.getByText('Project')
+    const count = title.nextElementSibling as HTMLElement
+    // Adjacent siblings in one text run, sharing the title's parent rather
+    // than the hover-swapped action area; the count describes the row instead
+    // of joining its accessible name.
+    expect(count.textContent).toBe('2')
+    expect(count.getAttribute('aria-hidden')).toBe('true')
+    expect(count.parentElement).toBe(title.parentElement)
+    expect(screen.getByRole('treeitem', { name: 'Project' }).getAttribute('aria-description')).toBe('2 个会话')
+  })
+
+  it('counts an empty Workspace as zero and uses the singular label at one', () => {
+    const empty: GroupNode = {
+      key: 'empty', workspaceId: wid('empty'), cwd: '/projects/empty', createdAt: 0, label: 'Empty',
+      sessionCount: 0, expanded: false, containsCurrent: false, sessions: [],
+    }
+    const view = render(<ProjectRowItem group={empty} onToggle={vi.fn()} onCreate={vi.fn()} t={t} />)
+    expect(screen.getByRole('treeitem', { name: 'Empty' }).getAttribute('aria-description')).toBe('0 个会话')
+    expect(screen.getByText('Empty').nextElementSibling?.textContent).toBe('0')
+
+    view.rerender(<ProjectRowItem group={{ ...empty, sessionCount: 1 }} onToggle={vi.fn()} onCreate={vi.fn()} t={t} />)
+    expect(screen.getByRole('treeitem', { name: 'Empty' }).getAttribute('aria-description')).toBe('1 个会话')
+  })
+
   it('renders and opens a selected running Session row', () => {
     const node: SessionNode = {
       id: sid('session'), title: 'Session', blank: false, running: true,

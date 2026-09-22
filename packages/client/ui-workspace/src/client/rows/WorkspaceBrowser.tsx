@@ -34,7 +34,7 @@ import type { WorkspaceBrowserProps } from '../contract/slots.ts'
 import type { ArchivedFilter, GroupNode, SessionNode, SessionOrderBy, SessionRowState } from '../tree.ts'
 import {
   deriveFlat, deriveGroups, deriveSearchResults, orderByRecency, owningGroupKey, owningParentFolder,
-  pinCurrentBlank, reconcileManualOrder, sessionMemberIds, UNGROUPED_KEY,
+  pinCurrentBlank, reconcileManualOrder, sessionMemberIds, UNGROUPED_KEY, visibleSessionIds,
 } from '../tree.ts'
 import { ProjectRowItem, SearchResultItem, SessionNodeItem } from './Rows.tsx'
 import { FLAT_SESSION_ORDER_KEY, type SessionGroupBy } from '../stores.ts'
@@ -1001,6 +1001,12 @@ export function WorkspaceBrowser({
     [orderState, archivedFilter],
   )
   const flatMemberIds = useMemo(() => sessionMemberIds(list), [list])
+  // The total counts the rows the browser shows, so the archive filter that
+  // hides or isolates archived Sessions applies to it as it does to the groups.
+  const totalSessionCount = useMemo(
+    () => visibleSessionIds(list, archivedSessionIds, archivedFilter).length,
+    [archivedFilter, archivedSessionIds, list],
+  )
   const orderedWorkspaces = useMemo(() => workspaces.map((workspace) => {
     const memberIds = workspace.sessionIds
     const baseOrder = orderBy === 'updated'
@@ -1298,7 +1304,13 @@ export function WorkspaceBrowser({
       <div className={clsx(css.sectionHeader, wide && searchSpacingMotionEnabled && css.searchSpacingMotion)}>
         {wide && (
           <span className={clsx(css.sectionLabel, css.wide, searchExpanded && css.sectionLabelHidden)}>
-            {groupBy === 'flat' ? t('section.sessions') : t('section.workspaces')}
+            <span>{groupBy === 'flat' ? t('section.sessions') : t('section.workspaces')}</span>
+            <span
+              className={css.sectionCount}
+              title={t(totalSessionCount === 1 ? 'sessions.total.one' : 'sessions.total.other', { n: totalSessionCount })}
+            >
+              {totalSessionCount}
+            </span>
           </span>
         )}
         {wide && (

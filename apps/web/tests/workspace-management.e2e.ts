@@ -991,7 +991,7 @@ describe('web e2e: workspace management (create / rename / grouping / hover affo
     expect(createdResponse.request().postDataJSON()).toHaveProperty('payload.args.request.sessionId', createdSessionId)
     await page.locator(`[data-conversation-session="${createdSessionId}"]`).waitFor()
     await expect.poll(() => section.locator('[aria-selected="true"]').evaluate(row =>
-      row.closest('[class*="groupSection"]')?.querySelector('[role="treeitem"]')?.textContent,
+      row.closest('[class*="groupSection"]')?.querySelector('[role="treeitem"] [class*="title"]')?.textContent,
     ), { timeout: 10_000 }).toBe('folder-group')
     expect([...parentWorkspace.sessionIds]).toEqual(previousParentSessionIds)
     expect([...childWorkspace.sessionIds]).toEqual(childSessionIds)

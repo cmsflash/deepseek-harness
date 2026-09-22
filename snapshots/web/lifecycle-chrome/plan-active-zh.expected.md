@@ -5,7 +5,7 @@
   - button "插件"
   - button "自动化任务"
   - button "更多"
-- text: 工作区
+- text: 工作区1
 - button "搜索会话"
 - textbox "搜索会话名称"
 - button "视图选项"

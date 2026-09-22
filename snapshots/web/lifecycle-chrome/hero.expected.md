@@ -5,7 +5,7 @@
   - button "Plugins"
   - button "Automation tasks"
   - button "More"
-- text: Workspaces
+- text: Workspaces1
 - button "Search sessions"
 - textbox "Search session names"
 - button "View options"
