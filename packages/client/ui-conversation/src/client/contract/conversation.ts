@@ -1,4 +1,6 @@
-import type { SessionEventLike } from '@deepseek-ai/dsh-api-session-controller/client'
+import type {
+  SessionEventLike, SessionEventLikeEntry, SessionLiveEventEntry,
+} from '@deepseek-ai/dsh-api-session-controller/client'
 import type { SessionEvent } from '@deepseek-ai/dsh-session/types'
 
 /** Definition-local identity and lifecycle role extracted from one event. */
@@ -107,21 +109,23 @@ export type ConversationLocation =
   | { readonly kind: 'unresolved' }
 
 interface ConversationMatchOf<
-  Event extends SessionEventLike,
+  Record extends SessionEventLikeEntry,
   Role extends ConversationMatchResult['role'],
 > {
-  readonly event: Event
+  readonly event: Record['event']
+  /** Original accepted Client entry, retaining Host history metadata. */
+  readonly record: Record
   readonly role: Role
   readonly location: ConversationLocation
 }
 
 /** One scalar event accepted as a Context's unique start. */
-export type ConversationStartMatch = ConversationMatchOf<SessionEvent, 'start'>
+export type ConversationStartMatch = ConversationMatchOf<SessionLiveEventEntry, 'start'>
 
 /** One event accepted by a Definition, with its lifecycle role and resolved Location. */
 export type ConversationMatch =
   | ConversationStartMatch
-  | ConversationMatchOf<SessionEventLike, 'update'>
+  | ConversationMatchOf<SessionEventLikeEntry, 'update'>
 
 /** Target-neutral identity returned by a business Definition. */
 export interface ConversationViewNode {

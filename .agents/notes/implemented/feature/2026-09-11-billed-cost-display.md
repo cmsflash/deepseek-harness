@@ -12,7 +12,9 @@ Every priced model call records `costUsd` on its `assistant/message` usage ([Tok
 
 `TokenUsageProjection` and `TurnTokenUsage` gain two required fields: `costUsd`, the sum of every priced attempt's cost, and `unpricedCalls`, the number of billed attempts whose provider published no rate. An unpriced attempt contributes zero to the sum and one to the count. The `tokenUsage` unit's `stateVersion` rises to 3 so the projection cache rebuilds from the log. The Turn fold rejects a negative or non-finite cost as it rejects a malformed count.
 
-Three displays read the fields. The session usage pill under the Composer appends the dollar total after the cache-hit segment and adds a `Cost` row to its dialog; the Turn-tail usage pill appends the Turn's total and adds the same row; a subagent row in the lineage menu places the child's total beside its token count. The figure is always present: a session whose calls all lack a rate reads `$0.0000`, and each dialog's `Cost` row appends `(N unpriced)` whenever the count is nonzero, so a reader can tell a partial sum from a complete one. Amounts use four decimals below one dollar and two from one dollar on, so sub-cent Turns remain distinguishable.
+Three displays read the fields. The session usage pill under the Composer appends the dollar total after the cache-hit segment and adds a `Cost` row to its dialog; the Turn-tail usage pill appends the Turn's total and adds the same row; a subagent row in the lineage menu places the child's total beside its token count. The figure is always present in an available usage display: a session whose calls all lack a rate reads `$0.0000`, and each dialog's `Cost` row appends `(N unpriced)` whenever the count is nonzero, so a reader can tell a partial sum from a complete one. Amounts use four decimals below one dollar and two from one dollar on, so sub-cent Turns remain distinguishable.
+
+The Turn footer receives accounting through [turn-end history metadata](../architecture/2026-09-22-turn-usage-history-metadata.md), so collapsing or paging details does not change its value or availability.
 
 ## Alternatives considered
 

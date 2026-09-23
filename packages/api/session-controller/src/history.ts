@@ -39,6 +39,8 @@ import type {
 } from './types.ts'
 import { SessionAssistantStreamAccumulator } from './assistant-stream.ts'
 import { collapseSteps, elidedEventsOfTurn } from './step-collapse.ts'
+import { historyTurnUsage } from './turn-usage.ts'
+import type { TurnTokenUsage } from '@deepseek-ai/dsh-token-meter/turn-usage'
 
 const DEFAULT_MAX_MESSAGES = 50
 const MESSAGE_TYPES = new Set(['user/message', 'assistant/message'])
@@ -103,8 +105,10 @@ export class SessionHistoryController {
       throw new RemoteError('gateway/internal', `session log does not contain through seq ${String(throughSeq)}`, {})
     }
     if (request.fromSeq !== undefined) {
+      const events = sourceLog.slice(request.fromSeq, throughSeq + 1)
+      const usage = historyTurnUsage(events, sourceLog.slice(0, throughSeq + 1))
       return {
-        records: pageRecords(sourceLog.slice(request.fromSeq, throughSeq + 1)),
+        records: pageRecords(events, usage.byEnd),
         hasMore: request.fromSeq > 0,
       }
     }
@@ -114,8 +118,10 @@ export class SessionHistoryController {
       request.maxMessages ?? DEFAULT_MAX_MESSAGES,
       throughSeq,
     )
+    const scope = sourceLog.slice(0, throughSeq + 1)
+    const usage = historyTurnUsage(page.events, scope)
     return {
-      ...detailPage(page.events, sourceLog.slice(0, throughSeq + 1), request.stepDetail),
+      ...detailPage(page.events, scope, request.stepDetail, usage.byEnd),
       hasMore: page.hasMore,
     }
   }
@@ -217,6 +223,7 @@ export class SessionHistoryController {
       const cursor = source.cursor
       snapshotCursor = cursor
       const page = paginate(events, undefined, request.maxMessages ?? DEFAULT_MAX_MESSAGES)
+      const usage = historyTurnUsage(page.events, events)
       const assistantStream = request.assistantStream === true
         ? this.assistantStreams.get(target)?.snapshot() ?? { revision: 0 }
         : undefined
@@ -229,7 +236,7 @@ export class SessionHistoryController {
         type: 'snapshot',
         header: wireHeader(source.header),
         cursor,
-        ...detailPage(page.events, events, request.stepDetail),
+        ...detailPage(page.events, events, request.stepDetail, usage.byEnd),
         hasMore: page.hasMore,
         projections: source.projections === undefined
           ? { asOfSeq: cursor, values: {} }
@@ -264,7 +271,7 @@ export class SessionHistoryController {
           throw new RemoteError('gateway/internal', `session event stream skipped seq ${String(expectedSeq)}`, {})
         }
         nextOffset = SessionLogOffset(nextOffset + 1)
-        yield entryFor(item.event)
+        yield entryFor(item.event, usage.continuation.append(item.event))
       }
     } finally {
       this.closeFollowers.delete(close)
@@ -476,17 +483,21 @@ function wireHeader(header: SessionHeader): SessionWireHeader {
   return { ...header }
 }
 
-function entryFor(event: SessionEvent): SessionEventEntry {
+function entryFor(event: SessionEvent, turnUsage?: TurnTokenUsage | null): SessionEventEntry {
   return {
     type: 'event',
     // Session.append validates and freezes event data as JSON before publication.
     event: event as unknown as SessionWireEvent,
+    ...event.type === 'turn/end' ? { turnUsage: turnUsage ?? null } : {},
   }
 }
 
 /** Encode one bounded logical page without changing its pagination cut. */
-function pageRecords(events: readonly SessionEvent[]): SessionHistoryRecord[] {
-  return events.map(entryFor)
+function pageRecords(
+  events: readonly SessionEvent[],
+  usage?: ReadonlyMap<number, TurnTokenUsage | null>,
+): SessionHistoryRecord[] {
+  return events.map(event => entryFor(event, usage?.get(event.seq)))
 }
 
 /**
@@ -501,12 +512,13 @@ function detailPage(
   page: readonly SessionEvent[],
   scope: readonly SessionEvent[],
   detail: SessionStepDetail | undefined,
+  usage: ReadonlyMap<number, TurnTokenUsage | null>,
 ): { readonly records: SessionHistoryRecord[]; readonly digests?: readonly StepDigest[] } {
-  if (detail !== 'collapsed') return { records: pageRecords(page) }
+  if (detail !== 'collapsed') return { records: pageRecords(page, usage) }
   const collapsed = collapseSteps(page, scope)
-  if (collapsed.digests.length === 0) return { records: pageRecords(page) }
-  if (collapsed.events.length === 0) return { records: pageRecords(page) }
-  return { records: coveringRecords(page, collapsed.events), digests: collapsed.digests }
+  if (collapsed.digests.length === 0) return { records: pageRecords(page, usage) }
+  if (collapsed.events.length === 0) return { records: pageRecords(page, usage) }
+  return { records: coveringRecords(page, collapsed.events, usage), digests: collapsed.digests }
 }
 
 /**
@@ -515,15 +527,20 @@ function detailPage(
  * and the last record also for those after it.
  * @param page - the complete contiguous page the kept events were drawn from.
  * @param kept - the events the collapsed page serves, ascending by seq; non-empty.
+ * @param usage - complete-turn accounting keyed by each served end sequence.
  * @returns records whose coverage joins end to end from the page's first seq to its last.
  */
-function coveringRecords(page: readonly SessionEvent[], kept: readonly SessionEvent[]): SessionHistoryRecord[] {
+function coveringRecords(
+  page: readonly SessionEvent[],
+  kept: readonly SessionEvent[],
+  usage: ReadonlyMap<number, TurnTokenUsage | null>,
+): SessionHistoryRecord[] {
   const pageStart = (page[0] as SessionEvent).seq
   const pageEnd = (page.at(-1) as SessionEvent).seq
   return kept.map((event, index) => {
     const from = index === 0 ? pageStart : (kept[index - 1] as SessionEvent).seq + 1
     const to = index === kept.length - 1 ? pageEnd : event.seq
-    const record = entryFor(event)
+    const record = entryFor(event, usage.get(event.seq))
     return from === event.seq && to === event.seq ? record : { ...record, covers: { from, to } }
   })
 }

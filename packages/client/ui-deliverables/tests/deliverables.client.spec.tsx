@@ -151,7 +151,7 @@ function at(
 function matched(input: SessionLiveEventEntry, role: 'start'): ConversationStartMatch
 function matched(input: SessionLiveEventEntry, role: 'update'): ConversationMatch
 function matched(input: SessionLiveEventEntry, role: ConversationMatch['role']): ConversationMatch {
-  return { event: input.event, role, location: { kind: 'unresolved' } }
+  return { event: input.event, record: input, role, location: { kind: 'unresolved' } }
 }
 
 function call(

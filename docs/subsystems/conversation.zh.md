@@ -13,6 +13,7 @@ Session Controller 拥有连续的已加载逻辑 event window。每个 `Session
 | 概念 | Owner 与用途 |
 |---|---|
 | Event Definition | 业务包一次匹配一个持久 event 或 Client-only 瞬态 event，以稳定 `(kind, id)` 关联输入、折叠确定性 State，并可选择 materialize 一个 target node。 |
+| Match | 已接受的输入及其生命周期角色和 Location。`record` 保留原始 Client entry 及其 Host 元数据；`event` 与 `record.event` 是同一个对象。 |
 | Context | Engine 为一个 `(kind, id)` 拥有的有序 Match 与当前 State。一个瞬态 event 只占一个 update Match；只有 update 的证据可以保持 pending，直到分页补齐其唯一持久 start。 |
 | Location | Engine 根据持久 boundary event 推导的 Session、Turn 或 Step 坐标。Definition 可以向一个 Turn 或 Step 发布类型化数据。 |
 | View Definition | Target 包为每个 Session 创建一个增量 builder，并拥有该 target 的最终 snapshot 类型。 |

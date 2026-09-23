@@ -13,6 +13,7 @@ The Session Controller owns the contiguous loaded logical-event window. Each `Se
 | Concept | Owner and purpose |
 |---|---|
 | Event Definition | A business package matches one durable or Client-only transient event at a time, correlates it by stable `(kind, id)`, folds deterministic State, and optionally materializes one target node. |
+| Match | An accepted input with its lifecycle role and Location. `record` retains the original Client entry and its Host metadata; `event` is the same object as `record.event`. |
 | Context | The engine-owned ordered Matches and current State for one `(kind, id)`. A transient event occupies one update Match; update-only evidence may remain pending until pagination supplies its unique durable start. |
 | Location | The engine-owned Session, Turn, or Step coordinates derived from durable boundary events. Definitions may publish typed data onto one Turn or Step. |
 | View Definition | A target package creates one incremental builder per Session and owns the final snapshot type for that target. |

@@ -28,6 +28,8 @@ const FIXTURE = join(SNAPSHOT_DIR, 'session.v3.jsonl')
 const RUNNING_EXPECTED = join(SNAPSHOT_DIR, 'running.expected.md')
 const SETTLED_EXPECTED = join(SNAPSHOT_DIR, 'settled.expected.md')
 const USAGE_EXPANDED_EXPECTED = join(SNAPSHOT_DIR, 'usage-expanded.expected.md')
+const COLLAPSED_USAGE_EXPECTED = join(SNAPSHOT_DIR, 'collapsed-usage.expected.md')
+const COLLAPSED_USAGE_DETAILS_EXPECTED = join(SNAPSHOT_DIR, 'collapsed-usage-details.expected.md')
 const COMPLETED_EXPECTED = join(SNAPSHOT_DIR, 'completed.expected.md')
 const FOCUSED_EXPECTED = join(SNAPSHOT_DIR, 'focused.expected.md')
 const MODE = webSnapshotMode()
@@ -211,10 +213,40 @@ describe('web e2e: assistant IconActions wait for the turn to end', () => {
     const expanded = await captureStableAria(page, '[class*="centerCol"]', scaffold!.workspaceCwd)
     await compareOrRefreshGolden(USAGE_EXPANDED_EXPECTED, expanded, MODE)
 
+    await page.keyboard.press('Escape')
+    await page.getByRole('button', { name: 'Settings', exact: true }).click()
+    await page.getByRole('button', { name: 'Compact', exact: true }).click()
+    await page.getByRole('menuitem', { name: 'Collapsed steps', exact: true }).click()
+    await page.getByRole('button', { name: 'Close', exact: true }).click()
+
     const warningStart = tripwire.warnings.length
     await page.reload({ waitUntil: 'load' })
     await expect.poll(() => timeTrigger.count(), { timeout: 15_000 }).toBe(1)
     acknowledgeReloadConnectionLoss(tripwire, warningStart)
+    const collapsed = page.locator('[data-collapsed-turn="1"]')
+    await collapsed.waitFor({ timeout: 15_000 })
+    expect(await page.locator('[data-chat-call-id]').count()).toBe(0)
+    expect(await trigger.textContent()).toBe('Usage 15.8K tok·$0.0000')
+    await compareOrRefreshGolden(
+      COLLAPSED_USAGE_EXPECTED,
+      await captureStableAria(page, '[class*="centerCol"]', scaffold!.workspaceCwd),
+      MODE,
+    )
+    await trigger.click()
+    expect(await dialog.getByText('15,811 tok', { exact: true }).count()).toBe(1)
+    expect(await dialog.getByText('$0.0000 (2 unpriced)', { exact: true }).count()).toBe(1)
+    await compareOrRefreshGolden(
+      COLLAPSED_USAGE_DETAILS_EXPECTED,
+      await captureStableAria(page, '[data-turn-usage-details]', scaffold!.workspaceCwd),
+      MODE,
+    )
+    await page.keyboard.press('Escape')
+    await collapsed.locator('button[aria-expanded]').click()
+    await expect.poll(() => page.locator('[data-chat-call-id]').count(), { timeout: 15_000 }).toBe(1)
+    expect(await trigger.textContent()).toBe('Usage 15.8K tok·$0.0000')
+    await collapsed.locator('button[aria-expanded]').click()
+    expect(await page.locator('[data-chat-call-id]').count()).toBe(0)
+    expect(await trigger.textContent()).toBe('Usage 15.8K tok·$0.0000')
     await timeTrigger.click()
     expect(await timeDialog.count()).toBe(1)
     expect(await timeDialog.getByText(/tok\/s/).count()).toBe(0)
@@ -303,6 +335,7 @@ describe('web e2e: assistant IconActions wait for the turn to end', () => {
     await assertFixtureInventory(
       SNAPSHOT_DIR,
       [
+        'collapsed-usage.expected.md', 'collapsed-usage-details.expected.md',
         'completed.expected.md', 'focused.expected.md', 'running.expected.md', 'session.v3.jsonl',
         'settled.expected.md', 'usage-expanded.expected.md',
       ],

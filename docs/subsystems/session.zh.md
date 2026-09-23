@@ -745,6 +745,8 @@ interface TurnEndReasonMap {
 
 ## Remote 历史分页：`SessionPageRequest` 与 `StepDigest`
 
+`SessionEventEntry` 携带未修改的 `event` 和可选的 `turnUsage` 元数据。历史页与实时 follow 在每条下发的 `turn/end` 上附带此字段：`TurnTokenUsage` 值描述截至该结束事件的完整轮次，`null` 则表示无法精确记账。汇总不属于 `SessionEventMap`，也不持久化。折叠、分页边界和精确区间读取均不缩小其记账范围。[控制器参考](../../packages/api/session-controller/README.zh.md#use-this-package)拥有交付行为，[token-meter](../../packages/llm/token-meter/README.zh.md#turn-accounting)拥有记账规则。
+
 `page` Remote 在不激活 Agent 的情况下读取历史。不带 `fromSeq` 时，它下发一页按消息对齐的向后分页；带 `fromSeq` 时，它按完整详情下发精确的闭区间 `[fromSeq, throughSeq]`。当 `fromSeq` 不是位于 `throughSeq + 1` 及之前的非负安全整数，或与 `beforeSeq`、`maxMessages`、`stepDetail: 'collapsed'` 同时出现时，Host 以 `gateway/bad-request` 拒绝请求，而不是截短数据。Client 的完整详情恢复用这一区间回填已加载窗口，因此分页与恢复行为由 controller 的[包参考](../../packages/api/session-controller/README.zh.md)拥有。
 
 ```ts type-equiv

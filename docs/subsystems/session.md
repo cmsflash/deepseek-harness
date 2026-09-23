@@ -741,6 +741,8 @@ The backends that consume this contract are on [persistence.md](persistence.md).
 
 ## Remote history paging: `SessionPageRequest` and `StepDigest`
 
+`SessionEventEntry` carries an unchanged `event` and optional `turnUsage` metadata. History pages and live follow attach this field to each served `turn/end`: a `TurnTokenUsage` value describes the complete turn through that end, while `null` means exact accounting is unavailable. The summary stays outside `SessionEventMap` and is not persisted. Collapse, page boundaries, and exact interval reads do not narrow its accounting scope. The [controller reference](../../packages/api/session-controller/README.md#use-this-package) owns delivery behavior; [token-meter](../../packages/llm/token-meter/README.md#turn-accounting) owns the accounting rules.
+
 The `page` Remote reads history without activating an Agent. Without `fromSeq` it serves one message-aligned backwards page; with `fromSeq` it serves the exact inclusive interval `[fromSeq, throughSeq]` at full detail, and the Host rejects the request as `gateway/bad-request` rather than truncating when `fromSeq` is not a safe non-negative integer at or before `throughSeq + 1`, or when `beforeSeq`, `maxMessages`, or `stepDetail: 'collapsed'` accompanies it. The Client's full-detail recovery uses this interval to refill a loaded window, so the controller's [package reference](../../packages/api/session-controller/README.md) owns the paging and recovery behavior.
 
 ```ts type-equiv

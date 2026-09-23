@@ -852,7 +852,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'SessionEventLikeEntry',
-    declaration: 'export type SessionEventLikeEntry = {\n    readonly type: \'event\';\n    readonly event: SessionEvent;\n    readonly covers?: SessionHistoryCoverage;\n} | {\n    readonly type: \'transient\';\n    readonly event: AssistantLiveChunkEvent;\n};',
+    declaration: 'export type SessionEventLikeEntry = {\n    readonly type: \'event\';\n    readonly event: SessionEvent;\n    readonly covers?: SessionHistoryCoverage;\n    readonly turnUsage?: TurnTokenUsage | null;\n} | {\n    readonly type: \'transient\';\n    readonly event: AssistantLiveChunkEvent;\n};',
   },
   {
     name: 'SessionEventSource',
@@ -1045,6 +1045,14 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'TranslateNS',
     declaration: 'export type TranslateNS<N extends keyof LocaleNamespaceMap & string> = Translate<LocaleKeysOf<N>>;',
+  },
+  {
+    name: 'TurnTokenUsage',
+    declaration: 'export interface TurnTokenUsage {\n    readonly uncachedInputTokens: number;\n    readonly outputTokens: number;\n    readonly totalTokens: number;\n    readonly cacheReadTokens?: number;\n    readonly cacheWriteTokens?: number;\n    readonly reasoningTokens?: number;\n    readonly routes?: readonly TurnTokenUsageRoute[];\n    readonly costUsd: number;\n    readonly unpricedCalls: number;\n}',
+  },
+  {
+    name: 'TurnTokenUsageRoute',
+    declaration: 'export interface TurnTokenUsageRoute {\n    readonly provider: string;\n    readonly model: string;\n}',
   },
   {
     name: 'UseFactorySlot',

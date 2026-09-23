@@ -224,6 +224,7 @@ describe('built-in conversation node Definitions', () => {
     const input = at(1, 'turn/start', { turn: 1 })
     const invalidStart = {
       ...input,
+      record: input,
       role: 'start' as const,
       location: { kind: 'session' as const },
     }
@@ -236,6 +237,7 @@ describe('built-in conversation node Definitions', () => {
     const input = at(1, 'turn/start', { turn: 1 })
     const invalidStart = {
       ...input,
+      record: input,
       role: 'start' as const,
       location: { kind: 'session' as const },
     }
@@ -1383,34 +1385,8 @@ describe('built-in conversation node Definitions', () => {
     expect(tail.branchUnavailable).toBe(true)
   })
 
-  it('publishes exact Turn usage only after pagination supplies the full lifecycle window', () => {
-    const value = assembler([
-      at(3, 'assistant/message', {
-        turn: 1,
-        step: 1,
-        message: assistantMessage('usage-assistant', 'done'),
-        usage: {
-          inputTokens: 10,
-          outputTokens: 4,
-          totalTokens: 17,
-          cacheReadTokens: 2,
-          cacheWriteTokens: 1,
-          reasoningTokens: 1,
-        },
-      }, { surfaceOp: 'append' }),
-      at(4, 'step/end', { turn: 1, step: 1 }),
-      at(5, 'turn/end', { turn: 1, reason: { kind: 'completed' } }),
-    ], true)
-
-    expect((node(snapshot(value), 'turn-tail')?.data as TurnTailChatData).tokenUsage).toBeUndefined()
-
-    value.prepend([
-      at(1, 'turn/start', { turn: 1 }),
-      at(2, 'step/start', { turn: 1, step: 1 }),
-    ], false)
-    value.flush()
-
-    expect((node(snapshot(value), 'turn-tail')?.data as TurnTailChatData).tokenUsage).toEqual({
+  it('keeps authoritative Turn usage when its start is outside the page and later prepended', () => {
+    const usage = {
       uncachedInputTokens: 10,
       outputTokens: 4,
       totalTokens: 17,
@@ -1418,9 +1394,81 @@ describe('built-in conversation node Definitions', () => {
       cacheWriteTokens: 1,
       reasoningTokens: 1,
       routes: [{ provider: 'fake', model: 'fake' }],
-      costUsd: 0,
+      costUsd: 0.024,
       unpricedCalls: 1,
-    })
+    }
+    const end = {
+      ...at(5, 'turn/end', { turn: 1, reason: { kind: 'completed' } }),
+      turnUsage: usage,
+    }
+    const value = assembler([
+      at(3, 'assistant/message', {
+        turn: 1,
+        step: 1,
+        message: assistantMessage('usage-assistant', 'done'),
+      }, { surfaceOp: 'append' }),
+      at(4, 'step/end', { turn: 1, step: 1 }),
+      end,
+    ], true)
+
+    expect((node(snapshot(value), 'turn-tail')?.data as TurnTailChatData).tokenUsage).toBe(usage)
+
+    value.prepend([
+      at(1, 'turn/start', { turn: 1 }),
+      at(2, 'step/start', { turn: 1, step: 1 }),
+    ], false)
+    value.flush()
+
+    expect((node(snapshot(value), 'turn-tail')?.data as TurnTailChatData).tokenUsage).toBe(usage)
+  })
+
+  it.each([undefined, null])('does not infer usage from loaded events when the Host summary is %s', (usage) => {
+    const value = assembler([
+      at(1, 'turn/start', { turn: 1 }),
+      at(2, 'step/start', { turn: 1, step: 1 }),
+      at(3, 'assistant/message', {
+        turn: 1,
+        step: 1,
+        message: assistantMessage('unavailable-usage', 'done'),
+        usage: { inputTokens: 10, outputTokens: 4, totalTokens: 14, costUsd: 0.02 },
+      }, { surfaceOp: 'append' }),
+      at(4, 'step/end', { turn: 1, step: 1 }),
+      {
+        ...at(5, 'turn/end', { turn: 1, reason: { kind: 'completed' } }),
+        ...usage === undefined ? {} : { turnUsage: usage },
+      },
+    ])
+
+    expect((node(snapshot(value), 'turn-tail')?.data as TurnTailChatData).tokenUsage).toBeUndefined()
+  })
+
+  it('publishes zero usage on live completion and clears it when the history is replaced', () => {
+    const usage = { uncachedInputTokens: 0, outputTokens: 0, totalTokens: 0, costUsd: 0, unpricedCalls: 0 }
+    const prefix = [
+      at(1, 'turn/start', { turn: 1 }),
+      at(2, 'step/start', { turn: 1, step: 1 }),
+      at(3, 'assistant/message', {
+        turn: 1,
+        step: 1,
+        message: assistantMessage('zero-usage', 'done'),
+      }, { surfaceOp: 'append' }),
+      at(4, 'step/end', { turn: 1, step: 1 }),
+    ]
+    const end = at(5, 'turn/end', { turn: 1, reason: { kind: 'completed' } })
+    const value = assembler(prefix)
+    expect(node(snapshot(value), 'turn-tail')).toBeUndefined()
+
+    value.append({ ...end, turnUsage: usage })
+    value.flush()
+    expect((node(snapshot(value), 'turn-tail')?.data as TurnTailChatData).tokenUsage).toBe(usage)
+
+    value.replaceWindow([...prefix, { ...end, turnUsage: null }], false)
+    value.flush()
+    expect((node(snapshot(value), 'turn-tail')?.data as TurnTailChatData).tokenUsage).toBeUndefined()
+
+    value.replaceWindow([...prefix, end], false)
+    value.flush()
+    expect((node(snapshot(value), 'turn-tail')?.data as TurnTailChatData).tokenUsage).toBeUndefined()
   })
 
   it('replays inbox predecessors after prepend and reclassifies the dependent message as steering', () => {

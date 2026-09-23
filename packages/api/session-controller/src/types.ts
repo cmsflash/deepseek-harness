@@ -8,6 +8,7 @@ import type { LlmAttemptId, MessageId } from '@deepseek-ai/dsh-llm/brand'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import type { SessionId, SessionSeqCursor } from '@deepseek-ai/dsh-session/types'
 import type { SessionProjectionMap } from '@deepseek-ai/dsh-session-projection/types'
+import type { TurnTokenUsage } from '@deepseek-ai/dsh-token-meter/turn-usage'
 import type { JobId } from '@deepseek-ai/dsh-jobs/brand'
 import type { JsonValue } from '@deepseek-ai/dsh-util-values'
 import type { WorkspaceId } from '@deepseek-ai/dsh-workspace/types'
@@ -392,10 +393,12 @@ export type SessionAddress =
     readonly mode: 'one-shot' | 'continuable'
   }
 
-/** One raw Session event in the Remote journal. */
+/** One raw Session event with history-derived metadata in the Remote journal. */
 export interface SessionEventEntry {
   readonly type: 'event'
   readonly event: SessionWireEvent
+  /** Whole-turn accounting on turn/end, independent of the page; null when exact usage is unavailable. */
+  readonly turnUsage?: TurnTokenUsage | null
 }
 
 /** Current logical Session metadata carried on the browser wire. */

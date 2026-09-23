@@ -925,7 +925,7 @@ describe('Trajectory conversation Definitions', () => {
     const definition = DEFINITIONS.find(candidate => candidate.kind === 'trajectory-system-message')
     if (definition === undefined) throw new Error('trajectory-system-message Definition is not registered')
     const input = at(1, 'turn/start', { turn: 1 })
-    const invalidStart = { ...input, role: 'start' as const, location: { kind: 'session' as const } }
+    const invalidStart = { ...input, record: input, role: 'start' as const, location: { kind: 'session' as const } }
     const state = { seq: 1, time: 1, turn: 1, step: 1, text: 'system prompt', update: false }
 
     expect(definition.match(invalidStart.event)).toBeNull()

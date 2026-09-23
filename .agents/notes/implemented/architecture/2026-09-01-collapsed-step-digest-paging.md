@@ -30,6 +30,8 @@ File figures use `appliedFileDiffs` in `dsh-tools/presentation`, shared by the H
 
 The summary row's anchor is resolved over the whole render order before any row is emitted, and on node **kind** (the turn's first assistant or tool row). Anchoring on the first row carrying a step coordinate puts the marker above the prompting message, because the engine assigns a step Location by log position, so that message and any context injection carry one too; resolving the anchor during the row walk lets expansion move the row.
 
+Whole-turn token and cost disclosure uses [turn-end history metadata](2026-09-22-turn-usage-history-metadata.md), not the summary row's step figures. Its accounting remains complete when earlier steps are outside the page or withheld.
+
 The `ui-chat.transcriptView` preference defaults to `compact`; readers opt into `collapsed` paging. Consumer-required full detail and in-place recovery follow the [full-history reader decision](../bug-fix/2026-09-10-consumer-required-full-history.md), which supersedes preference-triggered window reopening.
 
 ## Alternatives considered
@@ -45,4 +47,4 @@ The `ui-chat.transcriptView` preference defaults to `compact`; readers opt into 
 - A collapsed page's remaining bulk is `request/header` (141 KB per event, no step coordinate, so never elidable): 67% of one measured collapsed page. It is the binding constraint on any further gain and is untouched here.
 - Expanding one turn costs a request sized by that turn: p50 151 KB, p90 528 KB, max 2.15 MB on the measured session.
 - Subagent transcripts addressed through the same Session Controller page with the same detail; the catalog child view renders through the same Chat view.
-- Each step account is independent of page boundaries; a partially loaded turn's total still grows when older pages introduce additional steps ([step-collapse note](2026-08-14-chat-collapses-settled-steps.md)).
+- Each step account is independent of page boundaries; a partially loaded turn's collapsed-process row still grows when older pages introduce additional steps ([step-collapse note](2026-08-14-chat-collapses-settled-steps.md)).

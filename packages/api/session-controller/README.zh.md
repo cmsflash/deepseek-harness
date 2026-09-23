@@ -27,6 +27,8 @@ kind: "package-reference"
 
 历史页与 follow opening 快照为每个持久 Session 事件携带一条 `{ type: 'event', event: SessionWireEvent }` record。Client 把每条已接受 record 保留为一个持久 `SessionEventLikeEntry`；Assistant token 边界保留在 `assistant/message` 或 `assistant/attempt` 的紧凑流内。工具参数、结果内容、失败信息和 `tool/result.data.meta` 原样通过；控制器不解析工具定义、不运行展示转换器，也不附加 UI 数据。
 
+每条下发的 `turn/end` record 还在未修改的持久事件之外携带 `turnUsage`。[token-meter 折叠器](../../llm/token-meter/README.zh.md#turn-accounting) 计算截至该结束事件的完整轮次 token、已记录费用和未计价调用数，包含重试尝试。结果不依赖步骤详情模式，也不要求轮次起点位于当前页内；记账无效或不完整时返回 `null`，不提供部分总量。分页与精确区间读取只使用请求截止点之前的日志，仅在下发的结束记录上附带汇总。Follow 从 opening observation 初始化同一个折叠器，此后每个已接受的实时事件恰好推进一次。这些汇总既不要求读取隐藏步骤，也不在传输中携带整个会话的汇总表。
+
 两个端点都接受 `stepDetail`。在 `collapsed` 下，既非本轮最高步骤、也不携带本轮收尾 assistant 文本的 step，只保留其 `step/start`、`step/end` 记录及一条 `StepDigest`。保留规则根据截止点之前的整份日志判定。嵌套 PTC 记录继承其根调用的 step。每条保留记录的 `covers` 声明其代表的闭区间 seq 范围，使整页覆盖保持连续；折叠后会变空的页整页下发（[决策](../../../.agents/notes/implemented/architecture/2026-09-01-collapsed-step-digest-paging.zh.md)）。
 
 Digest 记录完整 step 的模型调用数、根级与嵌套的已落定工具调用数、去重后的已记录 `filePaths`、行量、墙钟时间及计费 token。只有 `elided` 描述该页省略的事件数。文件指标通过共享 `appliedFileDiffs` 读取已记录的调用头、结果状态与元数据；成功的 write 若没有可用 hunk，保留根据参数构造的整文件回退表示。同一步骤的多个分页片段只保留一份 step 账目，仅合并省略事件计数。

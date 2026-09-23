@@ -30,6 +30,8 @@ Host 与 Client 的文件指标都通过 `dsh-tools/presentation` 中的 `applie
 
 摘要行的锚点在任何行发出之前、在整个渲染顺序上解析，并且依据节点**种类**（该 turn 的第一条 assistant 行或 tool 行）。以第一条携带 step 坐标的行作锚点会把标记放到发起消息之上，因为引擎按日志位置分配 step Location，于是那条消息和任何上下文注入也都携带一个；而在遍历行的过程中解析锚点，则会让展开操作移动该行。
 
+整轮 token 与费用详情使用[轮次结束记录的历史元数据](2026-09-22-turn-usage-history-metadata.zh.md)，而不是摘要行的步骤数字。即使更早步骤位于页外或被省略，记账也保持完整。
+
 `ui-chat.transcriptView` 默认使用 `compact`；读者自行选择 `collapsed` 分页。消费者要求完整详情时的处理和原位恢复遵循[完整历史读取决策](../bug-fix/2026-09-10-consumer-required-full-history.zh.md)，该决策替代偏好变更触发窗口重开的做法。
 
 ## 考虑过的替代方案
@@ -45,4 +47,4 @@ Host 与 Client 的文件指标都通过 `dsh-tools/presentation` 中的 `applie
 - 折叠页剩下的体量是 `request/header`（每个事件 141 KB，没有 step 坐标，因此永不可省略）：占一份被测折叠页的 67%。它是任何进一步收益的约束瓶颈，本次未作改动。
 - 展开一个 turn 的代价是一次按该 turn 大小计的请求：在被测会话上 p50 为 151 KB，p90 为 528 KB，最大 2.15 MB。
 - subagent 的 transcript 经同一个 Session Controller 以同样的细节分页；catalog 子视图经同一个 Chat 视图渲染。
-- 每份 step 账目不依赖分页边界；但更早分页引入额外步骤时，尚未加载完整的轮次总量仍会增长（[step 折叠记录](2026-08-14-chat-collapses-settled-steps.zh.md)）。
+- 每份 step 账目不依赖分页边界；但更早分页引入额外步骤时，尚未加载完整的轮次，其折叠过程行的汇总仍会增长（[step 折叠记录](2026-08-14-chat-collapses-settled-steps.zh.md)）。

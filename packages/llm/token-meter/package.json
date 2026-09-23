@@ -22,6 +22,10 @@
       "types": "./lib/types/client.d.ts",
       "default": "./lib/types/client.js"
     },
+    "./turn-usage": {
+      "types": "./lib/types/turn-usage.d.ts",
+      "default": "./lib/types/turn-usage.js"
+    },
     "./src/*": "./src/*",
     "./package.json": "./package.json"
   },

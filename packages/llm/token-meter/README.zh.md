@@ -52,7 +52,10 @@ const price = ctx.tokenMeter.estimateMessage(message)
 
 `contextBreakdown` 把 surface 顺序中最后一个非空且存活的 `system/message` 归入 `systemTokens`；休眠的空节点不贡献 token，没有非空系统消息时为零。`messageTokens` 包含其余所有可见节点，包括被取代的提示词。两者之和始终等于 `measure().nodes[].heuristicTokens`，未计量替换、压缩和逐节点清空提示词之后也成立。`toolsTokens` 跟随最新 `request/header`。三个数字都使用固定启发式规则，而非路由图片定价或文件句柄投影；它们是近似构成，不是计费数据或 `projectedTokens`。
 
-`deriveTurnTokenUsage(events)` 为浏览器消费方把一个完整轮次折叠为精确的逐次尝试与整轮用量。生命周期证据缺失、计数不安全或精确总量矛盾时不返回结果；只有每次参与的尝试都报告可选缓存、推理或路由值时，相应汇总才会出现。
+<a id="turn-accounting"></a>
+### 轮次记账
+
+不依赖运行环境的 `/turn-usage` 导出提供 `TurnUsageAccumulator` 和 `deriveTurnTokenUsage(events)`。一个累加器增量接收一个完整轮次；批量辅助函数使用同一折叠逻辑。在有效结束之前、轮次没有模型尝试，或生命周期证据缺失、计数不安全、精确总量矛盾、费用总和不是有限数时，两者都不返回结果。只有每次尝试都提供可选的缓存、推理或路由值时，相应字段才会出现。每次重试独立计入；缺少价格时贡献零并增加 `unpricedCalls`，明确的零价格则不增加该计数。累加器只保留运行中的汇总、当前尝试和去重路由，不保留已完成尝试或事件正文。
 
 ### 组合
 

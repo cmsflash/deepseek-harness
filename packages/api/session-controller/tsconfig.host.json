@@ -20,7 +20,8 @@
     "src/media-references.ts",
     "src/model-selection-projection.ts",
     "src/skill-catalog.ts",
-    "src/step-collapse.ts"
+    "src/step-collapse.ts",
+    "src/turn-usage.ts"
   ],
   "references": [
     { "path": "../../../vendor/cordis" },
@@ -38,6 +39,7 @@
     { "path": "../../jobs/jobs" },
     { "path": "../../fs/fs" },
     { "path": "../../llm/llm" },
+    { "path": "../../llm/token-meter" },
     { "path": "../../util/deque" },
     { "path": "../../util/native-command" },
     { "path": "../../preset/agent-presets" },

@@ -99,7 +99,7 @@ function at(seq: number, type: string, data: unknown): SessionLiveEventEntry {
 function matched(input: SessionLiveEventEntry, role: 'start'): ConversationStartMatch
 function matched(input: SessionLiveEventEntry, role: 'update'): ConversationMatch
 function matched(input: SessionLiveEventEntry, role: ConversationMatch['role']): ConversationMatch {
-  return { event: input.event, role, location: { kind: 'unresolved' } }
+  return { event: input.event, record: input, role, location: { kind: 'unresolved' } }
 }
 
 function assembler(entries: readonly SessionLiveEventEntry[], hasMore = false): ConversationNodeAssembler {

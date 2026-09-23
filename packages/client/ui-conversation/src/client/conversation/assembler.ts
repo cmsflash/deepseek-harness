@@ -133,9 +133,9 @@ function conversationMatch(
     if (input.type !== 'event') {
       throw new Error(`conversation Context ${key} received a transient start Match`)
     }
-    return { event: input.event, role, location }
+    return { event: input.event, record: input, role, location }
   }
-  return { event: input.event, role, location }
+  return { event: input.event, record: input, role, location }
 }
 
 /** Event Registry subset consumed by a Session-owned Assembler. */
