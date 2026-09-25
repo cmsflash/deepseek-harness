@@ -3526,7 +3526,7 @@
       "kind": "event",
       "event": "assistant/attempt",
       "surface": false,
-      "digest": "15d5dfdd822aa35e115afd74a8982825a493880457774e6850bc1520b50875e4",
+      "digest": "39aea4918333186466d0ef13e5e330d432c2e5f679709684037119207b9ec39a",
       "schema": {
         "root": 0,
         "nodes": [
@@ -4333,6 +4333,11 @@
                 "optional": true
               },
               {
+                "name": "costUsd",
+                "type": 2,
+                "optional": true
+              },
+              {
                 "name": "inputTokens",
                 "type": 2,
                 "optional": false
@@ -4441,7 +4446,7 @@
       "kind": "event",
       "event": "assistant/message",
       "surface": true,
-      "digest": "1033093edd0db80ff410e00830b523405e00bb0c7684948e531ff65095799625",
+      "digest": "b33384cad1bb37fde7462b897a6147555998e990aeff8240758b606bee2ba568",
       "schema": {
         "root": 0,
         "nodes": [
@@ -5332,6 +5337,11 @@
                 "optional": true
               },
               {
+                "name": "costUsd",
+                "type": 11,
+                "optional": true
+              },
+              {
                 "name": "inputTokens",
                 "type": 11,
                 "optional": false
@@ -5959,7 +5969,7 @@
       "kind": "event",
       "event": "compaction/summary",
       "surface": false,
-      "digest": "e2f9a41e0989f54ed8cee80f8db2bcf9d60a5c810dc9d45b83fa050b9dce7602",
+      "digest": "b2200ff436821da1fac464f76fa7e4b90dd3b4def5a5aa906562850dde0b1314",
       "schema": {
         "root": 0,
         "nodes": [
@@ -6392,6 +6402,11 @@
               },
               {
                 "name": "cacheWriteTokens",
+                "type": 5,
+                "optional": true
+              },
+              {
+                "name": "costUsd",
                 "type": 5,
                 "optional": true
               },
@@ -22516,7 +22531,7 @@
         "packages/llm/llm/src/types.ts#ReplayEnvelope"
       ],
       "sources": [
-        "packages/llm/llm/src/types.ts:448"
+        "packages/llm/llm/src/types.ts:454"
       ]
     },
     {
@@ -22613,11 +22628,6 @@
       "sources": []
     },
     {
-      "digest": "1033093edd0db80ff410e00830b523405e00bb0c7684948e531ff65095799625",
-      "names": [],
-      "sources": []
-    },
-    {
       "digest": "10e386801903f9d424602c31d3ff837a94aef623c8b391376d8d9e253525fabe",
       "names": [],
       "sources": []
@@ -22671,6 +22681,15 @@
       "sources": []
     },
     {
+      "digest": "13ef86a40da82b550a05656b83f6a8f8d4a0a27c8361a33c84b6bb587274317e",
+      "names": [
+        "packages/llm/llm/src/types.ts#StreamChunk"
+      ],
+      "sources": [
+        "packages/llm/llm/src/types.ts:476"
+      ]
+    },
+    {
       "digest": "14230f9b8b5797bb7e8c621fa636531cfbde2ffba1ef5f1fd058216ff21952a0",
       "names": [],
       "sources": []
@@ -22699,11 +22718,6 @@
     },
     {
       "digest": "1571525adc95a24e5d25b5a6440df401cd7cdd881b745178e85f5a333435cd1b",
-      "names": [],
-      "sources": []
-    },
-    {
-      "digest": "15d5dfdd822aa35e115afd74a8982825a493880457774e6850bc1520b50875e4",
       "names": [],
       "sources": []
     },
@@ -22807,13 +22821,6 @@
       "digest": "1c5a58f4599bd4a9711712551ffe2442a5e5fcd0758bafe630cc4ead850bdaa7",
       "names": [],
       "sources": []
-    },
-    {
-      "digest": "1ccb56061942f5ccb0d30c9e4f2883b9d115ff906560029de637b61d3cde896d",
-      "names": [],
-      "sources": [
-        "packages/core/session/src/types.ts:342"
-      ]
     },
     {
       "digest": "1cde1bedde79c5e8a56aee9c05c8e0a579cf5bc611deb85b93fa331a16ca978f",
@@ -22977,6 +22984,11 @@
       ]
     },
     {
+      "digest": "252253281e869dd6da08ba46e2db84f354eae50478d5933d6d0bdec246867757",
+      "names": [],
+      "sources": []
+    },
+    {
       "digest": "254dce209e735f9cb6f6b7aec0354712b1611759ec02af4d35a96f2081e666f6",
       "names": [],
       "sources": []
@@ -23039,10 +23051,17 @@
       "sources": []
     },
     {
+      "digest": "2ab65b6618418fee1831cef314f6afd302bbdcbd3bf100e12381924577acefd4",
+      "names": [],
+      "sources": [
+        "packages/core/session/src/types.ts:342"
+      ]
+    },
+    {
       "digest": "2abb711460e6238d851c30f3e4bdd87a2aa1887ee70575b3d3b7b25610673095",
       "names": [],
       "sources": [
-        "packages/llm/llm/src/types.ts:473"
+        "packages/llm/llm/src/types.ts:479"
       ]
     },
     {
@@ -23079,6 +23098,13 @@
       "names": [],
       "sources": [
         "packages/web/web-search-deepseek/src/provider.ts:71"
+      ]
+    },
+    {
+      "digest": "2d6db77fd7ee3cc6bd246f2f5f2a516a6c00bf946e9c4ba69efd3a3d12feb1a7",
+      "names": [],
+      "sources": [
+        "packages/llm/llm/src/types.ts:482"
       ]
     },
     {
@@ -23170,21 +23196,19 @@
       "sources": []
     },
     {
-      "digest": "33341aac09312300de5a178e6cc6f6544a4876f7f710cfea55eda473c8d329ef",
-      "names": [
-        "packages/llm/llm/src/assistant-stream.ts#AssistantStreamRecord"
-      ],
-      "sources": [
-        "packages/llm/llm/src/assistant-stream.ts:20"
-      ]
-    },
-    {
       "digest": "335e242de1fcc17b6ca920fc420d71bec2d76e53e37955c00948b65ab77f05c5",
       "names": [
         "packages/core/session/src/types.ts#SurfaceOp"
       ],
       "sources": [
         "packages/core/session/src/types.ts:463"
+      ]
+    },
+    {
+      "digest": "3426da561ac46526273466d347f78485a7df8ecd3cb77ae2badb949787c4e2a3",
+      "names": [],
+      "sources": [
+        "packages/llm/llm/src/assistant-stream.ts:44"
       ]
     },
     {
@@ -23235,6 +23259,11 @@
       "sources": []
     },
     {
+      "digest": "384d2fced3ee641b91d890bbd9fff0cc91e9e8ef68bc3b5490ce8fc9757ff870",
+      "names": [],
+      "sources": []
+    },
+    {
       "digest": "3860b4757d512a2869be833acb0faf834335b1b056bf3f83df5474dce95f8fa6",
       "names": [],
       "sources": [
@@ -23249,6 +23278,11 @@
       "sources": [
         "packages/feedback/message-feedback/src/types.ts:17"
       ]
+    },
+    {
+      "digest": "39aea4918333186466d0ef13e5e330d432c2e5f679709684037119207b9ec39a",
+      "names": [],
+      "sources": []
     },
     {
       "digest": "39cf2d3ff8bac81c62d49ac2ba38a095b18e80f3ad700819fa1f650a4e60197f",
@@ -23297,7 +23331,7 @@
       "digest": "3bec87f9e6ab3da03346f49923d3c51621debc0159df68605e543c3b2a026f90",
       "names": [],
       "sources": [
-        "packages/llm/llm/src/types.ts:471"
+        "packages/llm/llm/src/types.ts:477"
       ]
     },
     {
@@ -23354,6 +23388,13 @@
       "digest": "3f74ba74acd10644c1ed6947a411d8088bd2cfac74f61bb8540f96d68e31f004",
       "names": [],
       "sources": []
+    },
+    {
+      "digest": "3fa41512c434adc32d0ff812178ca5c1cc59d6bf932fb4931d530957f102d0bd",
+      "names": [],
+      "sources": [
+        "packages/core/session/src/types.ts:356"
+      ]
     },
     {
       "digest": "3fdf9582c3b5597df104d32d97dab6c6ee3a93794f3034ec6ada6272404ea27f",
@@ -23431,22 +23472,6 @@
       "digest": "47e5d84f1a93450a78c7f3954b43990d0f629af7c034a56313e5deb63e772c1b",
       "names": [],
       "sources": []
-    },
-    {
-      "digest": "47e9095591ae36e7c39ee62553097772f2bfa16304536a72dbbc3f691f605180",
-      "names": [
-        "packages/llm/llm/src/types.ts#StreamChunk"
-      ],
-      "sources": [
-        "packages/llm/llm/src/types.ts:470"
-      ]
-    },
-    {
-      "digest": "487b65c37bfedb8b72088c4107a0a90a6249701f6b26745f6d98f9b8a22b07c7",
-      "names": [],
-      "sources": [
-        "packages/llm/llm/src/assistant-stream.ts:44"
-      ]
     },
     {
       "digest": "48e5c9861f16ac07e78cb7b5ae9dabdf7bb85c58baed5a51b4ad275050ea58e3",
@@ -23691,13 +23716,6 @@
       "sources": []
     },
     {
-      "digest": "54f9276a1617d7c12594722c89cfe864bcbe4517e9a6f9c98bab14f199a135e0",
-      "names": [],
-      "sources": [
-        "packages/core/session/src/types.ts:356"
-      ]
-    },
-    {
       "digest": "557e148d30b79ee48645850832b30c717d7c3b64641deb5d6133b8b4e91ee0b8",
       "names": [],
       "sources": []
@@ -23716,11 +23734,6 @@
     },
     {
       "digest": "570e85022434613394418ad33e77e9f1f7a05699b33d0b62eae0677a638c3833",
-      "names": [],
-      "sources": []
-    },
-    {
-      "digest": "576a2de8355eb09850963ff5953420b172e274d9283666eb7d889097db120796",
       "names": [],
       "sources": []
     },
@@ -23946,12 +23959,21 @@
       ]
     },
     {
+      "digest": "666d4fb06359d87a9880c3713dbd1fc12ff361c4aa6fdda4df378c2f949501eb",
+      "names": [
+        "packages/llm/llm/src/types.ts#TokenUsage"
+      ],
+      "sources": [
+        "packages/llm/llm/src/types.ts:175"
+      ]
+    },
+    {
       "digest": "66ba70f6f068da443f969a0b947a013c3addd776b9b60a0a393759c19825e9a2",
       "names": [
         "packages/llm/llm/src/types.ts#ToolSchema"
       ],
       "sources": [
-        "packages/llm/llm/src/types.ts:491"
+        "packages/llm/llm/src/types.ts:497"
       ]
     },
     {
@@ -24407,11 +24429,6 @@
       ]
     },
     {
-      "digest": "84bbfdce7d2eab5b0c53e72ff7406db856c8bfd621b965b72fd86598ba493bf7",
-      "names": [],
-      "sources": []
-    },
-    {
       "digest": "854db3efdfb0cd39d30953b28703e519c121f1115cebfffc40369fe86c406dd1",
       "names": [],
       "sources": []
@@ -24473,7 +24490,7 @@
       "digest": "88a610b831be6d92612a464be5c7d0b88ec24d97bd299837bf74bf7672183c9a",
       "names": [],
       "sources": [
-        "packages/llm/llm/src/types.ts:474"
+        "packages/llm/llm/src/types.ts:480"
       ]
     },
     {
@@ -24502,6 +24519,11 @@
     },
     {
       "digest": "8af841fc9b265ade3441caf9fe40dd24db24226befba48150e6d0eeccc1389c3",
+      "names": [],
+      "sources": []
+    },
+    {
+      "digest": "8b961d30a782fb96f870e59ca3291f28506d84faaa2af941dc48c8279661fe58",
       "names": [],
       "sources": []
     },
@@ -24631,7 +24653,7 @@
       "digest": "95080295115fbd83544520ba247b68a03790131f6a2eac323d388758cb542f65",
       "names": [],
       "sources": [
-        "packages/llm/llm/src/types.ts:472"
+        "packages/llm/llm/src/types.ts:478"
       ]
     },
     {
@@ -24677,11 +24699,6 @@
     },
     {
       "digest": "99135d8a3937977955eaac5f8f04f930dcd1562f8450a54a51cde9b921dd59a6",
-      "names": [],
-      "sources": []
-    },
-    {
-      "digest": "9947aa5938fe19a895298da412917acbf9ffb5093a73ab8baa257e6ae9e63a07",
       "names": [],
       "sources": []
     },
@@ -24824,7 +24841,7 @@
       "digest": "a2b49331716ba0a7078b026d145306a70eae64b7313c3e6204bd931e75ec3bb1",
       "names": [],
       "sources": [
-        "packages/llm/llm/src/types.ts:477"
+        "packages/llm/llm/src/types.ts:483"
       ]
     },
     {
@@ -24923,11 +24940,6 @@
     },
     {
       "digest": "a927d444c928ac0efd9dd8b2e7d7d04d711c264cb71578d81e0e2fd143ff669f",
-      "names": [],
-      "sources": []
-    },
-    {
-      "digest": "a99ec0993c62c058e50af9f68922202a3b54f5e259bc2abf1915a73381d2316d",
       "names": [],
       "sources": []
     },
@@ -25098,6 +25110,11 @@
       "sources": []
     },
     {
+      "digest": "b2200ff436821da1fac464f76fa7e4b90dd3b4def5a5aa906562850dde0b1314",
+      "names": [],
+      "sources": []
+    },
+    {
       "digest": "b222069eea2d768065161c1147b1f2c78c1b54328c84b3586ae5c8f91b8ed35e",
       "names": [],
       "sources": []
@@ -25120,6 +25137,11 @@
       "sources": [
         "packages/experimental/agent-team/src/types.ts:72"
       ]
+    },
+    {
+      "digest": "b33384cad1bb37fde7462b897a6147555998e990aeff8240758b606bee2ba568",
+      "names": [],
+      "sources": []
     },
     {
       "digest": "b3681c026a0b98e98b103f057dfd217fbe904129c090efd668253ec9aea7fece",
@@ -25506,7 +25528,7 @@
       "digest": "d4b739491689cc6bb13d07ffac1a32239875abda364c0d5edd8f74faf5e9c00d",
       "names": [],
       "sources": [
-        "packages/llm/llm/src/types.ts:475"
+        "packages/llm/llm/src/types.ts:481"
       ]
     },
     {
@@ -25579,6 +25601,15 @@
       "digest": "db06ef35b27a38425046b2228fa6bce9582abe140d781d363137eb2f4d233a1c",
       "names": [],
       "sources": []
+    },
+    {
+      "digest": "db1a09d97f92eb7e3e389eeb322f05ffa17a0b8e84f83217d1e1e1b0af2b8c47",
+      "names": [
+        "packages/llm/llm/src/assistant-stream.ts#AssistantStreamRecord"
+      ],
+      "sources": [
+        "packages/llm/llm/src/assistant-stream.ts:20"
+      ]
     },
     {
       "digest": "db6c5246911d47a7969f6b4cb47c7d0dbbde75c402710b22ace3672fa97bebe0",
@@ -25673,11 +25704,6 @@
     },
     {
       "digest": "e2d0367e5716bc188435e51718ebff8ce873190625fa93b1c5331102d98758fa",
-      "names": [],
-      "sources": []
-    },
-    {
-      "digest": "e2f9a41e0989f54ed8cee80f8db2bcf9d60a5c810dc9d45b83fa050b9dce7602",
       "names": [],
       "sources": []
     },
@@ -25911,13 +25937,6 @@
       ]
     },
     {
-      "digest": "f1a96afe7503ac1817de769cd0ba13d9b80111c7034c50106b3344ecc14cc515",
-      "names": [],
-      "sources": [
-        "packages/llm/llm/src/types.ts:476"
-      ]
-    },
-    {
       "digest": "f230c0b583e23b25ee0a61dbe4c05e95c1e2ae44b27939501eb9e03696f0c278",
       "names": [],
       "sources": []
@@ -25942,7 +25961,7 @@
         "packages/llm/llm/src/types.ts#SystemPromptUpdate"
       ],
       "sources": [
-        "packages/llm/llm/src/types.ts:414"
+        "packages/llm/llm/src/types.ts:420"
       ]
     },
     {
@@ -26051,6 +26070,11 @@
       ]
     },
     {
+      "digest": "fa7d2b13f9ecfd9aeaf85d3002346a570f7cb6cf9e414b801cbd8c447427fb4d",
+      "names": [],
+      "sources": []
+    },
+    {
       "digest": "fa87537f4a9c1e25602990a8bf686b383e9e00352ec8946e16ae24ba7c1625be",
       "names": [
         "packages/llm/llm/src/message.ts#AssistantMessage"
@@ -26126,15 +26150,6 @@
       "digest": "fe792a6cd430494503837e21e79f91677704ccdd9e870c679aabd7d43ed47ddd",
       "names": [],
       "sources": []
-    },
-    {
-      "digest": "fec5442b9ee4122e10514d81d5a43648003fe8bfb7ee2ba50c0cdbdd383ed394",
-      "names": [
-        "packages/llm/llm/src/types.ts#TokenUsage"
-      ],
-      "sources": [
-        "packages/llm/llm/src/types.ts:175"
-      ]
     },
     {
       "digest": "fee1caf8ab6a65c1bc981f5a1730164490f22a2a89ffa3d0b76f1f432c44c8b5",

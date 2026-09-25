@@ -1,0 +1,28 @@
+# Bilingual-pair consistency record for 2026-10-14-token-usage-cost-usd.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write docs/persistence-changes/2026-10-14-token-usage-cost-usd.md
+/:
+  en: 3d5a424ae7d7e46b
+  zh: c22a8e4a62d8cc1a
+/2026-10-14-token-usage-cost-usd:
+  en: d9f770a3466a45c3
+  zh: 7c8a1f6f96581abc
+/2026-10-14-token-usage-cost-usd/summary:
+  en: 81fa18c9124d5afc
+  zh: 1e564938b1d3ff06
+/2026-10-14-token-usage-cost-usd/table-of-contents:
+  en: 6cf314a069ceb451
+  zh: 9adff678e9ecab3b
+/2026-10-14-token-usage-cost-usd/declaration:
+  en: 6907136f28e48c90
+  zh: 02f8298485f3d8e7
+/2026-10-14-token-usage-cost-usd/compatibility:
+  en: ac229b9bb3a51a78
+  zh: da8b97c3ab3a2fbf
+/2026-10-14-token-usage-cost-usd/verification:
+  en: 8f0faa9bd357fa45
+  zh: 087eec583391d2d2
+/2026-10-14-token-usage-cost-usd/dev-note:
+  en: b75c8458928b72b9
+  zh: 003ba4e17b4b5269

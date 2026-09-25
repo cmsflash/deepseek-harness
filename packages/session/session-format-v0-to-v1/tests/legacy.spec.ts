@@ -263,6 +263,30 @@ describe('released v0 legacy normalization', () => {
     expect(() => migrate([descriptor({ ...continuable, version: 4 })])).toThrow(SessionFormatUnsupportedMigrationError)
   })
 
+  it('preserves the released billed cost member on every usage carrier', () => {
+    const usage = { inputTokens: 65430, outputTokens: 283, costUsd: 0.188056 }
+    const rows = [
+      { type: 'turn/start', seq: 0, time: 1, data: { turn: 1 } },
+      { type: 'step/start', seq: 1, time: 2, data: { turn: 1, step: 1 } },
+      { type: 'assistant/chunk', seq: 2, time: 3, data: { turn: 1, step: 1, chunk: { type: 'usage', usage } } },
+      { type: 'assistant/chunk', seq: 3, time: 4, data: { turn: 1, step: 1, chunk: { type: 'finish', reason: { kind: 'stop' } } } },
+      {
+        type: 'assistant/message', seq: 4, time: 5, surfaceOp: 'append', sourceEventSeqs: [2, 3],
+        data: {
+          turn: 1, step: 1, usage,
+          message: { id: 'a', role: 'assistant', content: [{ type: 'text', text: 'hi' }], source: { kind: 'model', provider: 'p', model: 'm' } },
+        },
+      },
+      { type: 'step/end', seq: 5, time: 6, data: { turn: 1, step: 1 } },
+      { type: 'turn/end', seq: 6, time: 7, data: { turn: 1, reason: { kind: 'completed' } } },
+    ]
+    expect(migrate(rows).events).toEqual(rows)
+    const negative = rows.map(row => row.seq === 4
+      ? { ...row, data: { ...row.data, usage: { ...usage, costUsd: -1 } } }
+      : row)
+    expect(() => migrate(negative)).toThrow(/costUsd must not be negative/)
+  })
+
   it('refuses a legacy replacement whose cited message has no imported identity', () => {
     expect(() => migrate([
       { type: 'turn/start', seq: 0, time: 1, data: { turn: 1 } },
