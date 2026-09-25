@@ -9,6 +9,7 @@
  */
 
 import { brandString } from '@deepseek-ai/dsh-brand'
+import { assertNever } from '@deepseek-ai/dsh-util-values'
 import { CONTEXT_WINDOW_EXCEEDED_CODE, EMPTY_RESPONSE_CODE, isContextWindowExceededError, isQuotaExceededError, LlmError, QUOTA_EXCEEDED_CODE } from '@deepseek-ai/dsh-llm'
 import type { FinishReason, StreamChunk, TokenUsage, ToolCallId } from '@deepseek-ai/dsh-llm'
 import { isContextOverflow } from '@earendil-works/pi-ai/utils/overflow'
@@ -124,6 +125,7 @@ export function mapStopReason(message: AssistantMessage, contextWindow?: number)
       const text = message.errorMessage ?? 'pi-ai stream error'
       return { kind: 'error', failure: { message: text, code: classifyPiAiError(text) } }
     }
+    default: return assertNever(message.stopReason)
   }
 }
 
@@ -225,9 +227,7 @@ export async function* toStreamChunks(
           ),
         }
         return
-      // no default: AssistantMessageEvent is pi-ai's closed union; a new
-      // event type should fail compilation here via tsc's exhaustiveness
-      // when one is added (switch covers all current variants).
+      default: assertNever(event)
     }
   }
   throw new LlmError('pi-ai event stream ended without done/error', 'STREAM_CLOSED')
