@@ -31,9 +31,8 @@ import type {
 } from '@earendil-works/pi-ai'
 
 /**
- * Pricing for a model the installed catalog does not describe. The harness
- * never reads pi-ai's cost metadata — `replay.ts` zeroes it and no consumer
- * reports spend — so this is the absence of a fact, not a configurable rate.
+ * Missing catalog rates leave usage unpriced; `mapUsage` omits a zero cost
+ * rather than reporting the call as free.
  */
 const NO_COST: ModelCost = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
 
@@ -202,6 +201,26 @@ export function catalogModels(provider: string): Map<string, Model<Api>> {
   if (!catalogProviders().has(provider)) return new Map()
   const models = getBuiltinModels(provider as BuiltinProvider) as Model<Api>[]
   return new Map(models.map(model => [model.id, model]))
+}
+
+/**
+ * Rates for a gateway model id that names its origin, such as
+ * `anthropic/claude-opus-5` served by a LiteLLM route.
+ *
+ * A gateway route is not itself a catalog provider, so its models carry no
+ * rates and every call would price at zero. The prefix identifies the model
+ * the gateway forwards to, and its published rates are what the gateway bills
+ * against. An unprefixed id, an unknown origin, or an unknown model yields
+ * nothing rather than a guess.
+ * @param id - configured model id, possibly `<origin>/<model>`.
+ * @returns the origin model's rates, or undefined when the id names none.
+ */
+export function originCost(id: string): ModelCost | undefined {
+  const slash = id.indexOf('/')
+  if (slash <= 0) return undefined
+  const origin = id.slice(0, slash)
+  if (!catalogProviders().has(origin)) return undefined
+  return catalogModels(origin).get(id.slice(slash + 1))?.cost
 }
 
 /**
@@ -933,7 +952,7 @@ export function resolveRouteModels(
       provider,
       baseUrl,
       input: declaredInput(entry.input) ?? base?.input ?? [...request.defaultInput],
-      cost: base?.cost ?? NO_COST,
+      cost: base?.cost ?? originCost(entry.id) ?? NO_COST,
       contextWindow,
       maxTokens,
       ...resolveModelReasoning(provider, entry, base),

@@ -417,9 +417,18 @@ function tokenUsageValue(value: SessionFormatJsonValue | undefined, label: strin
     value,
     label,
     ['inputTokens', 'outputTokens'],
-    ['totalTokens', 'cacheReadTokens', 'cacheWriteTokens', 'reasoningTokens'],
+    ['totalTokens', 'cacheReadTokens', 'cacheWriteTokens', 'reasoningTokens', 'costUsd'],
   )
-  for (const key of Object.keys(usage)) countValue(usage[key], `${label} ${key}`)
+  for (const key of Object.keys(usage)) {
+    // Released v0 writers priced calls in US dollars, so the one non-count member is a fractional amount.
+    if (key === 'costUsd') {
+      if (finiteNumberValue(usage[key], `${label} ${key}`) < 0) {
+        throw new SessionFormatError(`${label} ${key} must not be negative`)
+      }
+      continue
+    }
+    countValue(usage[key], `${label} ${key}`)
+  }
 }
 
 function contentBlocksValue(value: SessionFormatJsonValue | undefined, label: string, version: number): void {

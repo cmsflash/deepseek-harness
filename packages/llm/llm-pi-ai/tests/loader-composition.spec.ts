@@ -123,6 +123,45 @@ describe('llm-pi-ai real dormant composition', () => {
     expect(server.headers[0]?.authorization).toBe('Bearer key-from-store')
   })
 
+  it('reports Opus 5.5 gateway cost from installed origin rates through the loaded adapter', async () => {
+    const server = await mockServer([{ events: [
+      '{"choices":[{"delta":{"role":"assistant","content":"priced"},"index":0,"finish_reason":null}]}',
+      JSON.stringify({
+        choices: [{ delta: {}, index: 0, finish_reason: 'stop' }],
+        usage: {
+          prompt_tokens: 170,
+          completion_tokens: 20,
+          prompt_tokens_details: { cached_tokens: 30, cache_write_tokens: 40 },
+        },
+      }),
+      '[DONE]',
+    ] }])
+    const { ctx, settingsPath } = await loadComposition()
+    await writeFile(settingsPath, [
+      'llm-pi-ai:',
+      '  providers:',
+      '    gateway:',
+      '      apiKeyEnv: PI_COMPOSITION_KEY',
+      '      api: openai-completions',
+      `      baseURL: ${server.url}/v1`,
+      '      models:',
+      '        - id: anthropic/claude-opus-5-5',
+      '',
+    ].join('\n'))
+    await vi.waitFor(() => {
+      expect(ctx.llm.listProviders().map(provider => provider.id)).toEqual(['gateway'])
+    }, { timeout: 5000 })
+
+    const result = await assemble(ctx, { provider: 'gateway', model: 'anthropic/claude-opus-5-5', messages: [] })
+    expect(result.finish).toEqual({ kind: 'stop' })
+    expect(result.message.content).toEqual([{ type: 'text', text: 'priced' }])
+    expect(server.requests[0]).toMatchObject({ model: 'anthropic/claude-opus-5-5' })
+    expect(result.usage).toEqual({
+      inputTokens: 100, outputTokens: 20, cacheReadTokens: 30, cacheWriteTokens: 40,
+      totalTokens: 190, costUsd: (100 * 4 + 20 * 20 + 30 * 0.2 + 40 * 5) / 1_000_000,
+    })
+  })
+
   it('uses settings-only route headers for model discovery', async () => {
     vi.stubEnv('PI_COMPOSITION_KEY', '')
     const server = await mockServer([{ body: JSON.stringify({ data: [{ id: 'acme-private' }] }) }])

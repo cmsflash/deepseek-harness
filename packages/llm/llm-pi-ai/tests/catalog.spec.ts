@@ -188,6 +188,36 @@ describe('hand-declared providers', () => {
     expect(resolved.get('acme-gateway')?.configuredMaxTokens.get('sized')).toBe(512)
   })
 
+  it('prices a gateway model from the origin its id names', () => {
+    const resolved = resolveProfiles({
+      'acme-gateway': {
+        api: 'openai-completions',
+        baseURL: 'https://acme.test',
+        models: [
+          // A gateway route is no catalog provider, so without the prefix
+          // every call would price at zero.
+          { id: 'anthropic/claude-opus-5' },
+          { id: 'anthropic/claude-opus-5-5' },
+          { id: 'anthropic/no-such-model' },
+          { id: 'no-such-origin/model' },
+          { id: 'bare' },
+        ],
+      },
+    })
+    const costOf = (id: string): unknown =>
+      (resolved.get('acme-gateway')?.piProvider?.getModels() ?? []).find(m => m.id === id)?.cost
+
+    expect(costOf('anthropic/claude-opus-5'))
+      .toEqual({ input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 })
+    const opus = getBuiltinModels('anthropic').find(model => model.id === 'claude-opus-5-5')
+    expect(opus?.cost).toEqual({ input: 4, output: 20, cacheRead: 0.2, cacheWrite: 5 })
+    expect(costOf('anthropic/claude-opus-5-5')).toEqual(opus?.cost)
+    // An unknown model, origin, or unprefixed id stays unpriced rather than guessed.
+    for (const id of ['anthropic/no-such-model', 'no-such-origin/model', 'bare']) {
+      expect(costOf(id)).toEqual({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 })
+    }
+  })
+
   it('takes a model’s declared modalities, then the catalog’s, then the route’s', () => {
     const vision = getBuiltinModels('anthropic').find(model => model.input.includes('image'))
     if (vision === undefined) throw new Error('the installed catalog ships no anthropic vision model')
