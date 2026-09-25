@@ -1,0 +1,19 @@
+# Bilingual-pair consistency record for 2026-08-24-token-usage-carries-billed-cost.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/architecture/2026-08-24-token-usage-carries-billed-cost.md
+/agent-note-tokenusage-carries-the-call-s-billed-cost:
+  en: 799f30bd6c902ee7
+  zh: c434e7e4e8645df4
+/agent-note-tokenusage-carries-the-call-s-billed-cost/problem:
+  en: 874f112b7869cfd8
+  zh: 0a9c2afbd5c9e5f3
+/agent-note-tokenusage-carries-the-call-s-billed-cost/decision:
+  en: ace7f0e518597a01
+  zh: 1a80f65cc6231618
+/agent-note-tokenusage-carries-the-call-s-billed-cost/alternatives-considered:
+  en: 028f1a3639b0cc54
+  zh: 12abf292da16d79f
+/agent-note-tokenusage-carries-the-call-s-billed-cost/consequences:
+  en: 16e4898bca8aedee
+  zh: 6eccc5bc2fb2adc6
