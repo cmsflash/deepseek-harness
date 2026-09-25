@@ -636,6 +636,18 @@ describe('released event and payload inventory', () => {
         turn: 1, step: 0, message: assistantMessage, interrupted: true,
         usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 },
       }],
+      ['assistant/message', {
+        turn: 1, step: 0, message: assistantMessage,
+        usage: { inputTokens: 65430, outputTokens: 283, costUsd: 0.188056 },
+      }],
+      ['assistant/chunk', {
+        turn: 1, step: 0, chunk: { type: 'usage', usage: { inputTokens: 1, outputTokens: 1, costUsd: 0 } },
+      }],
+      ['compaction/summary', {
+        compactionId: 'c', summary: [textBlock],
+        shadowedRange: { start: 0, end: 1 }, shadowedSeqs: [0, 1], shadowedTokenCount: 2,
+        provider: 'p', model: 'm', usage: { inputTokens: 1, outputTokens: 1, costUsd: 4.83802875 },
+      }],
       ['compaction/summary', {
         compactionId: 'c', sourceCommandId: 'command', summary: [textBlock],
         shadowedRange: { start: 0, end: 1 }, shadowedSeqs: [0, 1], shadowedTokenCount: 2,
@@ -733,6 +745,10 @@ describe('released event and payload inventory', () => {
       ['schedule/change', { version: 1, operation: 'dispatch', id: 'x', acceptedAt: '2026-02-31T00:00:00.000Z' }],
       ['subagent/descriptor', { mode: 'continuable', version: 3, provider: 'p', label: 'x', agentProvider: 'p' }],
       ['subagent/descriptor', { mode: 'continuable', version: 3, provider: 'p', label: 'x', toolFilter: {} }],
+      ['assistant/message', { turn: 1, step: 0, message: assistantMessage, usage: { inputTokens: 1, outputTokens: 1, costUsd: -0.01 } }],
+      ['assistant/message', { turn: 1, step: 0, message: assistantMessage, usage: { inputTokens: 1, outputTokens: 1, costUsd: '0.01' } }],
+      ['assistant/message', { turn: 1, step: 0, message: assistantMessage, usage: { inputTokens: 1, outputTokens: 1, cost: 0.01 } }],
+      ['assistant/message', { turn: 1, step: 0, message: assistantMessage, usage: { inputTokens: 1.5, outputTokens: 1 } }],
       ['subagent/model-selection-policy', { allowedModels: [{ provider: 'p', model: 'm' }, { provider: 'p', model: 'm' }] }],
       ['subagent/model-selection-policy', { allowedModels: [] }],
       ['user/message', {
