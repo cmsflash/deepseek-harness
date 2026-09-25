@@ -10,6 +10,7 @@ import * as LlmPiAi from '@deepseek-ai/dsh-llm-pi-ai'
 import { PiAiAdapter } from '@deepseek-ai/dsh-llm-pi-ai'
 import { getBuiltinModels } from '@earendil-works/pi-ai/providers/all'
 import { AssistantMessageEventStream } from '@earendil-works/pi-ai/utils/event-stream'
+import { normalizeContext } from '@earendil-works/pi-ai/utils/transcript'
 import type { Api, Model, OpenAICompletionsCompat, Provider } from '@earendil-works/pi-ai'
 import { resolveProfiles } from '../src/config.ts'
 import { createModels, createProvider, getSupportedThinkingLevels } from '../src/models.ts'
@@ -196,6 +197,7 @@ describe('hand-declared providers', () => {
           // A gateway route is no catalog provider, so without the prefix
           // every call would price at zero.
           { id: 'anthropic/claude-opus-5' },
+          { id: 'anthropic/claude-opus-5-5' },
           { id: 'anthropic/no-such-model' },
           { id: 'no-such-origin/model' },
           { id: 'bare' },
@@ -207,6 +209,9 @@ describe('hand-declared providers', () => {
 
     expect(costOf('anthropic/claude-opus-5'))
       .toEqual({ input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 })
+    const opus = getBuiltinModels('anthropic').find(model => model.id === 'claude-opus-5-5')
+    expect(opus?.cost).toEqual({ input: 4, output: 20, cacheRead: 0.2, cacheWrite: 5 })
+    expect(costOf('anthropic/claude-opus-5-5')).toEqual(opus?.cost)
     // An unknown model, origin, or unprefixed id stays unpriced rather than guessed.
     for (const id of ['anthropic/no-such-model', 'no-such-origin/model', 'bare']) {
       expect(costOf(id)).toEqual({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 })
@@ -396,7 +401,7 @@ describe('hand-declared providers', () => {
       auth: { apiKey: { name: 'Local', resolve: () => Promise.resolve({ auth: {}, source: 'Local' }) } },
       api: { stream, streamSimple },
     })
-    const context = { messages: [] }
+    const context = normalizeContext({ messages: [] })
 
     expect(provider.stream(model, context)).toBe(direct)
     expect(provider.streamSimple(model, context)).toBe(simple)
@@ -579,7 +584,7 @@ describe('catalog routes with per-model configuration', () => {
     if (built === undefined) throw new Error('the deepseek route built no provider')
     const [model] = built.getModels()
     if (model === undefined) throw new Error('the deepseek route resolved no models')
-    const context = { messages: [{ role: 'user' as const, content: 'hi', timestamp: 0 }] }
+    const context = normalizeContext({ messages: [{ role: 'user', content: 'hi', timestamp: 0 }] })
 
     // `stream` is interface-required and unused by the harness adapter, which
     // only calls `streamSimple`; both must still reach the catalog provider.
@@ -1105,9 +1110,9 @@ describe('compat switches', () => {
   it('refuses a valueless compat key on a model entry too', () => {
     expect(() => resolveProfiles({
       deepseek: {
-        modelOverrides: { 'deepseek-v4-flash': { compat: { requiresReasoningContentOnAssistantMessages: null } } as never },
+        modelOverrides: { 'deepseek-flash': { compat: { requiresReasoningContentOnAssistantMessages: null } } as never },
       },
-    })).toThrow(/model "deepseek-v4-flash" sets compat "requiresReasoningContentOnAssistantMessages" with no value/)
+    })).toThrow(/model "deepseek-flash" sets compat "requiresReasoningContentOnAssistantMessages" with no value/)
   })
 
   it('serves the Responses compat type on every protocol pi-ai gives it to', () => {
@@ -1170,7 +1175,7 @@ describe('resolution snapshots', () => {
     const inFlight = (async () => {
       for await (const chunk of adapter.stream({
         provider: 'deepseek',
-        model: 'deepseek-v4-flash',
+        model: 'deepseek-flash',
         messages: [],
       })) chunks.push(chunk)
     })()
@@ -1199,7 +1204,7 @@ describe('resolution snapshots', () => {
     })
     const drain = async (): Promise<void> => {
       for await (const _chunk of adapter.stream({
-        provider: 'deepseek', model: 'deepseek-v4-flash', messages: [],
+        provider: 'deepseek', model: 'deepseek-flash', messages: [],
       })) { /* drain */ }
     }
 

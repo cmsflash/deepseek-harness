@@ -830,6 +830,37 @@ describe('toStreamChunks', () => {
     })
   })
 
+  it('keeps caller cancellation aborted despite overflow text and usage in an SDK error', async () => {
+    const controller = new AbortController()
+    controller.abort('cancelled')
+    const error = assistant({
+      stopReason: 'error', errorMessage: 'prompt is too long', usage: usage(101, 0),
+    })
+    const chunks = await collect(toStreamChunks(
+      feed({ type: 'error', reason: 'error', error }), 100, controller.signal,
+    ))
+    expect(chunks).toEqual([
+      { type: 'usage', usage: { inputTokens: 101, outputTokens: 0, totalTokens: 101 } },
+      { type: 'finish', reason: { kind: 'aborted', failure: { message: 'prompt is too long', code: 'ABORTED' } } },
+    ])
+    expect(error.stopReason).toBe('error')
+    const uncancelled = await collect(toStreamChunks(feed({ type: 'error', reason: 'error', error }), 100))
+    expect(uncancelled.at(-1)).toMatchObject({
+      type: 'finish', reason: { kind: 'error', failure: { code: CONTEXT_WINDOW_EXCEEDED_CODE } },
+    })
+  })
+
+  it('rejects a deferred terminal completion rather than treating it as a completed answer', async () => {
+    const message = assistant({ stopReason: 'deferred', content: [{ type: 'text', text: 'not final' }] })
+    const chunks = await collect(toStreamChunks(feed({ type: 'done', reason: 'deferred', message })))
+    expect(chunks.at(-1)).toMatchObject({
+      type: 'finish',
+      reason: { kind: 'error', failure: {
+        message: 'pi-ai deferred response for model "deepseek-v4-flash" is not supported', code: 'PI_AI_ERROR',
+      } },
+    })
+  })
+
   it('rejects a stream that ends without done or error', async () => {
     await expect(collect(toStreamChunks(feed({ type: 'start', partial: assistant() }))))
       .rejects.toThrow(/without done\/error/)
@@ -861,6 +892,15 @@ describe('mapStopReason / mapUsage', () => {
     ['aborted', { kind: 'aborted', failure: { message: 'pi-ai stream aborted', code: 'ABORTED' } }],
   ] as const)('maps %s', (stopReason, expected) => {
     expect(mapStopReason(assistant({ stopReason, content: [{ type: 'text', text: 'ok' }] }))).toEqual(expected)
+  })
+
+  it.each(['pending', 'deferred', 'aborted'] as const)('keeps %s classification when usage exceeds the window', (stopReason) => {
+    const message = assistant({ stopReason, errorMessage: 'prompt is too long', usage: usage(101, 0) })
+    expect(mapStopReason(message, 100)).toEqual(mapStopReason(message))
+    expect(mapStopReason(message, 100)).toMatchObject({
+      kind: stopReason === 'aborted' ? 'aborted' : 'error',
+      failure: { code: stopReason === 'aborted' ? 'ABORTED' : 'PI_AI_ERROR' },
+    })
   })
 
   it('classifies a completed stop with no content as an EMPTY_RESPONSE error', () => {

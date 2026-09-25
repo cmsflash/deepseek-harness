@@ -55,6 +55,28 @@ describe('pi-ai gateway compatibility declarations', () => {
       .toThrow(/which is not configurable here/)
   })
 
+  it.each([
+    ['openai-completions', 'supportsMidConvoSystemMessages'],
+    ['openai-completions', 'supportsMidConvoToolAdditions'],
+    ['openai-responses', 'supportsMidConvoSystemMessages'],
+    ['anthropic-messages', 'supportsMidConvoSystemMessages'],
+    ['anthropic-messages', 'supportsMidConvoToolChanges'],
+    ['anthropic-messages', 'sessionAffinityFormat'],
+  ])('withholds catalog-owned %s %s', (api, field) => {
+    expect(() => resolved({ [field]: field === 'sessionAffinityFormat' ? 'openrouter' : true }, api))
+      .toThrow(/which is not configurable here/)
+  })
+
+  it('withholds mid-conversation configuration on the native Mistral catalog route', () => {
+    const compat: Record<string, unknown> = { supportsMidConvoSystemMessages: true }
+    const config = Config({ providers: { mistral: { compat } } })
+    expect(() => resolveProfiles(config.providers)).toThrow(/which is not configurable here/)
+  })
+
+  it.each(['deferredToolsMode', 'supportsToolReferences'])('rejects removed upstream field %s', (field) => {
+    expect(() => resolved({ [field]: true })).toThrow(/which no wire protocol declares/)
+  })
+
   it('keeps generic additions absent unless configured', () => {
     expect(resolved({})).toBeUndefined()
   })
