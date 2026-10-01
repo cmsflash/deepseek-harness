@@ -248,6 +248,10 @@
   margin-inline-end: -1px;
 }
 
+.cost {
+  font-variant-numeric: tabular-nums;
+}
+
 .pinIndicator {
   display: inline-flex;
   flex: none;

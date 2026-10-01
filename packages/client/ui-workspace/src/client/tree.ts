@@ -11,6 +11,7 @@ import type {
   SessionStatusSnapshot,
 } from '@deepseek-ai/dsh-client-ui-session/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
+import type {} from '@deepseek-ai/dsh-token-meter/client'
 import { assertNever } from '@deepseek-ai/dsh-util-values'
 import { workspaceTitleOf } from '@deepseek-ai/dsh-util-workspace-path'
 
@@ -61,6 +62,11 @@ export interface SessionNode {
   updatedAt: number
   /** Session working directory; absent when the Host reports none or an empty path. */
   cwd?: string
+  /**
+   * Billed USD spend of this Session after its fork cut plus every subagent
+   * reached through loaded catalogs; unpriced attempts add zero.
+   */
+  costUsd: number
 }
 
 /** Session order selected by the Workspace browser. */
@@ -385,6 +391,40 @@ function runningChildCount(list: SessionListState, parentId: SessionId, statuses
   ) ?? 0
 }
 
+/**
+ * Billed spend of the attempts one Session made itself; unpriced attempts and
+ * rows without an `ownTokenUsage` value count as zero. `tokenUsage` is never
+ * substituted: a forked row's total includes its source's spend before the fork.
+ * @param summary - Session summary carrying its current projection values.
+ * @returns non-negative USD spend excluding any fork-inherited prefix.
+ */
+export function ownCostUsd(summary: Pick<SessionSummary, 'projectionValues'> | undefined): number {
+  return summary?.projectionValues?.ownTokenUsage?.costUsd ?? 0
+}
+
+/**
+ * A Session's own spend plus every subagent's reached through loaded parent
+ * catalogs. External catalog entries have no Session log and add nothing; a
+ * revisited Session adds nothing again.
+ * @param list - sessions list snapshot with per-Session projection stores.
+ * @param sessionId - root of the summed thread.
+ * @returns non-negative USD spend of the thread.
+ */
+export function threadCostUsd(list: SessionListState, sessionId: SessionId): number {
+  const seen = new Set<SessionId>()
+  const pending: SessionId[] = [sessionId]
+  let total = 0
+  for (let id = pending.pop(); id !== undefined; id = pending.pop()) {
+    if (seen.has(id)) continue
+    seen.add(id)
+    total += ownCostUsd(list.byId[id])
+    for (const child of list.projectionsBySession[id]?.values.subagentCatalog ?? []) {
+      if (child.mode !== 'external') pending.push(child.id)
+    }
+  }
+  return total
+}
+
 function sessionNode(
   s: SessionSummary,
   list: SessionListState,
@@ -405,6 +445,7 @@ function sessionNode(
     archived: archived.has(s.id),
     updatedAt: s.updatedAt,
     ...(s.cwd === undefined || s.cwd === '' ? {} : { cwd: s.cwd }),
+    costUsd: threadCostUsd(list, s.id),
     ...(pendingInteraction === undefined ? {} : { pendingInteraction }),
   }
 }

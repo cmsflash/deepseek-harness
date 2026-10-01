@@ -12,3 +12,7 @@
   - menuitem "Hide archived"
   - menuitem "All conversations (show archived)"
   - menuitem "Archived only"
+  - separator
+  - text: Show
+  - menuitem "Last active"
+  - menuitem "Total cost"

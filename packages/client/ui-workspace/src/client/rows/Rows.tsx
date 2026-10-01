@@ -25,6 +25,7 @@ import type { StateDotState } from '@deepseek-ai/dsh-client-ui-primitives'
 import { abbreviateHomePath } from '@deepseek-ai/dsh-util-workspace-path'
 import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client'
 import type { MenuOpenState, WorkspaceBrowserProps } from '../contract/slots.ts'
+import type { SessionRowDetail } from '../stores.ts'
 import type { GroupNode, SearchResultNode, SessionNode } from '../tree.ts'
 import css from './Rows.module.css'
 
@@ -146,6 +147,24 @@ function useTitleMarquee(title: RefObject<HTMLSpanElement | null>): { enter: () 
 function timeLabel(updatedAt: number, now: number, t: RowTranslate): string {
   const { unit, n } = relativeTime(updatedAt, now)
   return unit === 'now' ? t('time.now') : t(`time.${unit}`, { n })
+}
+
+/**
+ * Compact US-dollar spend for the row's trailing cell: whole dollars from $10,
+ * thousands as K from $1,000, and cents below $10 except for exactly zero.
+ * @param usd - non-negative finite amount.
+ * @param t - Workspace-browser translation seat.
+ * @returns locale-owned currency text such as `$0`, `$0.42`, `$17`, or `$4.5K`.
+ */
+function costLabel(usd: number, t: RowTranslate): string {
+  const cents = Math.round(usd * 100)
+  if (cents === 0) return t('cost.usd', { amount: '0' })
+  if (cents < 1_000) return t('cost.usd', { amount: (cents / 100).toFixed(2) })
+  const dollars = Math.round(usd)
+  if (dollars < 1_000) return t('cost.usd', { amount: String(dollars) })
+  const thousands = dollars / 1_000
+  const value = thousands >= 100 ? String(Math.round(thousands)) : String(Math.round(thousands * 10) / 10)
+  return t('cost.usd', { amount: t('number.thousand', { value }) })
 }
 
 /** Hover-card variant: distances wrap in the ago template; the now bucket stays bare (no "now ago"). */
@@ -481,8 +500,8 @@ function PinnedIndicator({ t }: { t: RowTranslate }) {
 }
 
 /**
- * Hover-card body: full title, display working directory, relative time, the Session's own scheduled-task
- * section, and every relevant live status. The task section sits above the
+ * Hover-card body: full title, display working directory, relative time, thread spend, the Session's own
+ * scheduled-task section, and every relevant live status. The task section sits above the
  * status lines so they stay the card's trailing status line.
  */
 function SessionHoverContent({ node, cwd, now, renderSlot, t }: {
@@ -501,9 +520,10 @@ function SessionHoverContent({ node, cwd, now, renderSlot, t }: {
     <div className={css.hoverContent}>
       <div className={css.hoverTitle}>{displayTitle(node, t)}</div>
       {cwd !== undefined && <div className={css.hoverPath}>{cwd}</div>}
-      {/* Same placeholder rule as the row's trailing cell: no timestamp
-          before the first prompt. */}
+      {/* Same placeholder rule as the row's trailing cell: no timestamp or
+          spend before the first prompt. */}
       {!node.blank && <div className={css.hoverTime}>{hoverTimeLabel(node.updatedAt, now, t)}</div>}
+      {!node.blank && <div className={css.hoverTime}>{t('hover.cost', { amount: costLabel(node.costUsd, t) })}</div>}
       {renderSlot('sidebar.session.row.hover', { sessionId: node.id })}
       {statuses.map(status => (
         <div className={css.hoverStatus} key={status.label}>
@@ -593,8 +613,8 @@ export function SearchResultItem({
 
 /**
  * One top-level 32px session row: leading 16px cell (status dot, or the
- * leading seat while the row's primary state is idle), title, relative time or
- * compact pending label, and the row actions menu. A row that owns a state dot
+ * leading seat while the row's primary state is idle), title, the selected
+ * trailing figure or compact pending label, and the row actions menu. A row that owns a state dot
  * keeps that cell and renders no seat, so an ambient automation mark never
  * appears beside the row's own state dot. An archived row keeps the cell blank:
  * neither marker renders there, and its live status stays on the hover card.
@@ -603,6 +623,7 @@ export function SearchResultItem({
  * @param props.node - derived session node.
  * @param props.currentId - selected session id (row highlight).
  * @param props.now - epoch ms for relative-time formatting.
+ * @param props.detail - trailing figure: relative time (default) or thread spend.
  * @param props.onOpen - open a session by id.
  * @param props.onRenameRequest - open the rename dialog from a title double-click (id + current title);
  * called only after a single press on the title since the window last lost focus.
@@ -619,11 +640,12 @@ export function SearchResultItem({
  * @returns the session row.
  */
 export function SessionNodeItem({
-  node, currentId, now, onOpen, onRenameRequest, renderSlot, onReveal, drag, home, useSessionAccess, t,
+  node, currentId, now, detail = 'updated', onOpen, onRenameRequest, renderSlot, onReveal, drag, home, useSessionAccess, t,
 }: {
   node: SessionNode
   currentId: string | undefined
   now: number
+  detail?: SessionRowDetail | undefined
   onOpen: (id: SessionNode['id']) => void
   /** Open the rename dialog from a title double-click (id + current title); see the function JSDoc for the press precondition. */
   onRenameRequest: (id: SessionNode['id'], currentTitle: string) => void
@@ -755,10 +777,10 @@ export function SessionNodeItem({
       {!row.blank && (
         <span className={css.rowResting}>
           <span
-            className={css.time}
+            className={clsx(css.time, primaryStatus.trailingLabel === undefined && detail === 'cost' && css.cost)}
             aria-hidden={primaryStatus.trailingLabel === undefined ? undefined : true}
           >
-            {primaryStatus.trailingLabel ?? timeLabel(row.updatedAt, now, t)}
+            {primaryStatus.trailingLabel ?? (detail === 'cost' ? costLabel(row.costUsd, t) : timeLabel(row.updatedAt, now, t))}
           </span>
           {renderSlot('sidebar.session.row.trailing', { sessionId: node.id })}
           {row.pinned && !row.archived && <PinnedIndicator t={t} />}

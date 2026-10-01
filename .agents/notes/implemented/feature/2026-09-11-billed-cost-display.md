@@ -18,7 +18,7 @@ Three displays read the fields. The session usage pill under the Composer append
 
 **Hide the figure when any attempt is unpriced.** An absent pill segment reads as a missing feature, not as a withheld total, and most DeepSeek-routed sessions would never show cost at all. The count on the dialog row carries the same caveat without hiding the number.
 
-**Sidebar or workspace totals.** Session rows are deliberately sparse, and spend across a workspace is an aggregate over a catalog rather than a row decoration; that is a separate view.
+**Sidebar or workspace totals.** Spend across a workspace is an aggregate over a catalog rather than a row decoration; that is a separate view. A Session row can show its own thread's total instead of its update time ([thread spend](2026-09-30-sidebar-thread-spend.md)).
 
 ## Consequences
 

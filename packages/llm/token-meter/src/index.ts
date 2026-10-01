@@ -31,7 +31,11 @@ import type {
   TokenMeterConfig,
 } from './types.ts'
 import { contextBreakdownProjectionDefinition } from './breakdown-projection.ts'
-import { contextPressureProjectionDefinition, tokenUsageProjectionDefinition } from './usage-projection.ts'
+import {
+  contextPressureProjectionDefinition,
+  ownTokenUsageProjectionDefinition,
+  tokenUsageProjectionDefinition,
+} from './usage-projection.ts'
 import type { ContextPressureState } from './usage-projection.ts'
 import { estimateMessage, estimateToolsTokens } from './estimate.ts'
 import { advanceMeasurement, measurementProjectionDefinition } from './measurement-projection.ts'
@@ -104,6 +108,7 @@ export class TokenMeter extends Service {
     const ctx = this.ctx
     this.measurementProjectionHandle = await ctx.sessionProjections.register(measurementProjectionDefinition)
     await ctx.sessionProjections.register(tokenUsageProjectionDefinition)
+    await ctx.sessionProjections.register(ownTokenUsageProjectionDefinition)
     this.contextPressureProjectionHandle = await ctx.sessionProjections.register(contextPressureProjectionDefinition)
     await ctx.sessionProjections.register(contextBreakdownProjectionDefinition)
 
