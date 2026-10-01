@@ -367,6 +367,78 @@ describe('tokenUsage session projection', () => {
   })
 })
 
+const owned = (ctx: Context, session: Session): TokenUsageProjection => {
+  const value = ctx.sessionProjections.snapshot(session).values.ownTokenUsage
+  if (value === undefined) throw new Error('ownTokenUsage projection is not registered')
+  return value
+}
+
+/** Run one complete priced turn so the log can be forked after it. */
+function pricedTurn(session: Session, turn: number, usage: TokenUsage): void {
+  session.append('turn/start', { turn })
+  startStep(session, turn, 1)
+  finalUsage(session, usage, turn, 1)
+  session.append('turn/end', { turn, reason: { kind: 'completed' } })
+}
+
+describe('ownTokenUsage session projection', () => {
+  it('matches tokenUsage for a Session that inherited nothing', async () => {
+    const { ctx, session } = await harness()
+    pricedTurn(session, 1, { inputTokens: 10, outputTokens: 2, costUsd: 0.25 })
+    expect(owned(ctx, session)).toEqual(projected(ctx, session))
+  })
+
+  it('excludes usage the fork inherited and counts the fork\'s own attempts', async () => {
+    const { ctx, session: source } = await harness()
+    pricedTurn(source, 1, { inputTokens: 10, outputTokens: 2, costUsd: 4 })
+    const fork = ctx.sessions.fork(source)
+    expect(projected(ctx, fork)).toMatchObject({ costUsd: 4, unpricedCalls: 0 })
+    expect(owned(ctx, fork)).toEqual(ZERO)
+
+    pricedTurn(fork, 2, { inputTokens: 3, outputTokens: 1, costUsd: 0.5 })
+    startStep(fork, 2, 2)
+    finalUsage(fork, { inputTokens: 1, outputTokens: 1 }, 2, 2)
+    expect(owned(ctx, fork)).toEqual({
+      uncachedInputTokens: 4,
+      outputTokens: 2,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      costUsd: 0.5,
+      unpricedCalls: 1,
+    })
+    expect(projected(ctx, fork)).toMatchObject({ costUsd: 4.5, unpricedCalls: 1 })
+  })
+
+  it('pushes no change for an event that adds no usage', async () => {
+    const { ctx, session: source } = await harness()
+    pricedTurn(source, 1, { inputTokens: 10, outputTokens: 2, costUsd: 1 })
+    const fork = ctx.sessions.fork(source)
+    expect(owned(ctx, fork)).toEqual(ZERO)
+    const changed: string[] = []
+    ctx.sessionProjections.onChanged((_session, key) => { changed.push(key) })
+    fork.append('turn/start', { turn: 2 })
+    expect(changed).not.toContain('ownTokenUsage')
+  })
+
+  it('restores the fork cut from a JSON checkpoint', async () => {
+    const { ctx, session: source, meterFiber } = await harness()
+    pricedTurn(source, 1, { inputTokens: 10, outputTokens: 2, costUsd: 4 })
+    const fork = ctx.sessions.fork(source)
+    pricedTurn(fork, 2, { inputTokens: 3, outputTokens: 1, costUsd: 0.5 })
+    const checkpoint = JSON.parse(JSON.stringify(
+      ctx.sessionProjections.checkpoint(fork),
+    )) as ReturnType<typeof ctx.sessionProjections.checkpoint>
+    expect(checkpoint.ownTokenUsage?.ver).toBe(1)
+
+    await meterFiber.dispose()
+    expect(ctx.sessionProjections.snapshot(fork).values).not.toHaveProperty('ownTokenUsage')
+
+    await ctx.plugin(TokenMeter)
+    expect(ctx.sessionProjections.viewCheckpoint(checkpoint).ownTokenUsage)
+      .toMatchObject({ costUsd: 0.5, unpricedCalls: 0 })
+  })
+})
+
 const pressure = (ctx: Context, session: Session): ContextPressureProjection => {
   const value = ctx.sessionProjections.snapshot(session).values.contextPressure
   if (value === undefined) throw new Error('contextPressure projection is not registered')

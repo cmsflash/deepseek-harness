@@ -400,9 +400,9 @@ describe('WorkspaceBrowser', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '视图选项' }))
     expect(screen.getByText('分组方式')).toBeTruthy() // the menu heading label
-    expect(screen.getByRole('separator')).toBeTruthy()
+    expect(screen.getAllByRole('separator')).toHaveLength(2)
     expect(screen.getAllByRole('menuitem').map(item => item.textContent)).toEqual([
-      '按工作区', '按工作区树', '单列表', '手动排序', '最近更新',
+      '按工作区', '按工作区树', '单列表', '手动排序', '最近更新', '最近活动', '总费用',
     ])
     expect(screen.getByRole('menuitem', { name: '按工作区' }).querySelector('svg')).toBeTruthy()
     expect(screen.getByRole('menuitem', { name: '手动排序' }).querySelector('svg')).toBeTruthy()
@@ -426,6 +426,43 @@ describe('WorkspaceBrowser', () => {
     fireEvent.keyDown(document, { key: 'Escape' })
     expect(screen.queryByRole('menu')).toBeNull()
     expect(b.store.getSnapshot().groupBy).toBe('workspace')
+  })
+
+  it('switches the trailing row figure between last activity and total cost, and persists it', () => {
+    const usage = (costUsd: number) => ({
+      uncachedInputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, costUsd, unpricedCalls: 1,
+    })
+    const now = Date.now()
+    const sessions = hook(sessionState([
+      summary('priced', now, { projectionValues: { ownTokenUsage: usage(12.4) } }),
+      summary('unpriced', now - 1, { projectionValues: { ownTokenUsage: usage(0) } }),
+      summary('unknown', now - 2),
+    ]))
+    const workspaces = hook(workspaceState([workspace('alpha', ['priced', 'unpriced', 'unknown'])]))
+    const b = mount({ useSessions: sessions, useWorkspaces: workspaces })
+    fireEvent.click(screen.getByText('alpha'))
+    const trailing = () => screen.getAllByRole('treeitem').slice(1).map(row => row.lastElementChild?.previousElementSibling?.textContent)
+    expect(trailing()).toEqual(['刚刚', '刚刚', '刚刚'])
+
+    fireEvent.click(screen.getByRole('button', { name: '视图选项' }))
+    expect(screen.getByRole('menuitem', { name: '最近活动' }).querySelector('svg')).toBeTruthy()
+    fireEvent.click(screen.getByRole('menuitem', { name: '总费用' }))
+    expect(b.store.getSnapshot().rowDetail).toBe('cost')
+    expect(trailing()).toEqual(['$12', '$0', '$0'])
+    expect(JSON.parse(localStorage.getItem('dsh.workspace.view.v5') ?? '{}')).toMatchObject({ rowDetail: 'cost' })
+
+    const flatTrailing = () => screen.getAllByRole('treeitem')
+      .map(row => row.lastElementChild?.previousElementSibling?.textContent)
+    fireEvent.click(screen.getByRole('button', { name: '视图选项' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: '单列表' }))
+    expect(flatTrailing()).toEqual(['$12', '$0', '$0'])
+    b.view.unmount()
+    mount({ useSessions: sessions, useWorkspaces: workspaces })
+    expect(flatTrailing()).toEqual(['$12', '$0', '$0'])
+    fireEvent.click(screen.getByRole('button', { name: '视图选项' }))
+    expect(screen.getByRole('menuitem', { name: '总费用' }).querySelector('svg')).toBeTruthy()
+    fireEvent.click(screen.getByRole('menuitem', { name: '最近活动' }))
+    expect(flatTrailing()).toEqual(['刚刚', '刚刚', '刚刚'])
   })
 
   it('keeps Workspaces as siblings by default and restores the selected tree grouping', () => {

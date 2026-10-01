@@ -224,6 +224,34 @@ describe('deriveGroups', () => {
     ).items.map(node => [node.id, node.hasActiveSchedule])).toEqual(expected)
   })
 
+  it('adds every subagent descendant\'s own spend to its visible row and not to forks', () => {
+    const usage = (costUsd: number) => ({
+      uncachedInputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, costUsd, unpricedCalls: 2,
+    })
+    const parent = { ...summary('parent', 3), projectionValues: { ownTokenUsage: usage(1.5) } }
+    const child = {
+      ...summary('child', 4), parentId: parent.id, origin: 'subagent' as const,
+      projectionValues: { ownTokenUsage: usage(0.25) },
+    }
+    const grandchild = {
+      ...summary('grandchild', 5), parentId: child.id, origin: 'subagent' as const,
+      projectionValues: { ownTokenUsage: usage(0.25) },
+    }
+    const fork = {
+      ...summary('fork', 2), parentId: parent.id,
+      projectionValues: { ownTokenUsage: usage(4), tokenUsage: usage(5.5) },
+    }
+    const unknown = summary('unknown', 1)
+    const sessions = list(parent, child, grandchild, fork, unknown)
+    const expected = [[parent.id, 2], [fork.id, 4], [unknown.id, 0]]
+
+    expect(deriveGroups(
+      sessions, [workspace('first', ['parent', 'fork', 'unknown'])], noArchive, noAttention, view(['first']),
+    )[0]!.sessions.map(node => [node.id, node.costUsd])).toEqual(expected)
+    expect(deriveFlat(sessions, visibleSessionIds(sessions, noArchive), noAttention)
+      .map(node => [node.id, node.costUsd])).toEqual(expected)
+  })
+
   it('hides subagent-origin sessions without hiding ordinary forks', () => {
     const parent = summary('parent', 1)
     const subagent = {

@@ -232,9 +232,9 @@ describe('the shipped Web composition', () => {
     })
     try {
       // A subset assertion: `tasks`, `goal`, and the rest register into the
-      // same process-wide table, and this is about the meter's three units.
+      // same process-wide table, and this is about the meter's four units.
       expect(Object.keys(projections.snapshot(handle.agent.session).values))
-        .toEqual(expect.arrayContaining(['contextBreakdown', 'contextPressure', 'tokenUsage']))
+        .toEqual(expect.arrayContaining(['contextBreakdown', 'contextPressure', 'ownTokenUsage', 'tokenUsage']))
     } finally {
       await handle.dispose()
     }

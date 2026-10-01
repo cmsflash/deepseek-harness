@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-09-11-billed-cost-display.md
-2026-09-11-billed-cost-display.md: 7e15280d9fe5979a2156df56daf6288c06c65e12
-2026-09-11-billed-cost-display.zh.md: 00089f857a355049c583cba7506b33b19a177556
+2026-09-11-billed-cost-display.md: b8f7ed55e84e25d44e5ae0d0a2fbc40556ff7b76
+2026-09-11-billed-cost-display.zh.md: 1fd89358ca58d75e326c0c1f9177726706c8894a
