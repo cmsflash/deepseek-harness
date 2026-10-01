@@ -231,6 +231,10 @@
   color: var(--dsw-alias-label-tertiary);
 }
 
+.cost {
+  font-variant-numeric: tabular-nums;
+}
+
 .pinIndicator {
   display: inline-flex;
   flex: none;

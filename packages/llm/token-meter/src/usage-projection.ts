@@ -5,7 +5,7 @@
 import { z } from 'zod'
 import { lastAssistantStreamChunk, type TokenUsage } from '@deepseek-ai/dsh-llm'
 import type {} from '@deepseek-ai/dsh-llm-retry/types'
-import { SessionSeq } from '@deepseek-ai/dsh-session'
+import { SessionLogOffset, SessionSeq } from '@deepseek-ai/dsh-session'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import type { ProjectionDefinition } from '@deepseek-ai/dsh-session-projection'
 import type { ContextPressureProjection, TokenUsageProjection } from './projection.ts'
@@ -74,6 +74,12 @@ const tokenUsageStateSchema = z.object({
 
 type TokenUsageState = z.infer<typeof tokenUsageStateSchema>
 
+const ownTokenUsageStateSchema = tokenUsageStateSchema.extend({
+  inheritedEventCount: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).transform(SessionLogOffset),
+}).strict()
+
+type OwnTokenUsageState = z.infer<typeof ownTokenUsageStateSchema>
+
 const pressureSchema: z.ZodType<ContextPressureProjection> = z.object({
   pressureTokens: z.number().int().nonnegative().optional(),
   projectedTokens: z.number().int().nonnegative().optional(),
@@ -98,6 +104,7 @@ function usageOf(event: SessionEvent): TokenUsage | undefined {
 declare module '@deepseek-ai/dsh-session-projection/types' {
   interface SessionProjectionStateMap {
     tokenUsage: TokenUsageState
+    ownTokenUsage: OwnTokenUsageState
     contextPressure: ContextPressureState
   }
 }
@@ -118,47 +125,73 @@ const contextPressureStateSchema = z.object({
 type ContextPressureState = z.infer<typeof contextPressureStateSchema>
 
 /**
- * Token-meter's session projection unit.
- *
- * Each v2 Assistant settlement contributes the last usage sample embedded in
- * its stream. `llm/retry-started` closes the replacement slot so the retried
- * attempt adds to the total. Billed cost sums alongside the token buckets; an
- * attempt without a price adds zero and increments `unpricedCalls`.
+ * Token-meter's usage projection unit over the complete durable log. Billed
+ * cost sums alongside the token buckets; an attempt without a price adds zero
+ * and increments `unpricedCalls`.
  */
 export const tokenUsageProjectionDefinition = {
   key: 'tokenUsage',
   stateVersion: 3,
   stateSchema: tokenUsageStateSchema,
   init: () => ({ totals: zeroBuckets(), last: null }),
-  apply: (state, event) => {
-    if (event.type === 'llm/retry-started') {
-      return state.last?.turn === event.data.turn && state.last.step === event.data.step
-        ? { ...state, last: null }
-        : state
-    }
-    if (event.type !== 'assistant/message' && event.type !== 'assistant/attempt') {
-      return state
-    }
-    const sample = usageOf(event)
-    if (sample === undefined) return state
-    const { turn, step } = event.data
-    const usage: TokenUsage = sample
-
-    const buckets = bucketsFrom(usage)
-    const previous = state.last !== null
-      && state.last.turn === turn
-      && state.last.step === step
-      ? state.last.buckets
-      : undefined
-    if (previous !== undefined && bucketsEqual(previous, buckets)) return state
-
-    return {
-      totals: addReplacing(state.totals, previous, buckets),
-      last: { turn, step, buckets },
-    }
-  },
+  apply: applyUsage,
   wire: { viewSchema: projectionSchema, view: state => state.totals },
 } satisfies ProjectionDefinition<'tokenUsage', TokenUsageState>
+
+/**
+ * Token-meter's own-usage projection unit: the `tokenUsage` fold restricted
+ * to events at or after the Session's exact fork cut, so a fork reports only
+ * the attempts it made after branching.
+ */
+export const ownTokenUsageProjectionDefinition = {
+  key: 'ownTokenUsage',
+  stateVersion: 1,
+  stateSchema: ownTokenUsageStateSchema,
+  init: (_header, inheritedEventCount) => ({ totals: zeroBuckets(), last: null, inheritedEventCount }),
+  apply: (state, event) => {
+    if (event.seq < state.inheritedEventCount) return state
+    const next = applyUsage(state, event)
+    return next === state ? state : { ...next, inheritedEventCount: state.inheritedEventCount }
+  },
+  wire: { viewSchema: projectionSchema, view: state => state.totals },
+} satisfies ProjectionDefinition<'ownTokenUsage', OwnTokenUsageState>
+
+/**
+ * Advance one usage fold by a committed event. Each v2 Assistant settlement
+ * contributes the last usage sample embedded in its stream, replacing an
+ * earlier sample from the same attempt; `llm/retry-started` closes that
+ * replacement slot so the retried attempt adds to the total.
+ * @param state - totals and the replacement slot before the event.
+ * @param event - next committed Session event.
+ * @returns the same reference when the event changes nothing, else the advanced fold.
+ */
+function applyUsage(state: TokenUsageState, event: SessionEvent): TokenUsageState {
+  if (event.type === 'llm/retry-started') {
+    return state.last?.turn === event.data.turn && state.last.step === event.data.step
+      ? { ...state, last: null }
+      : state
+  }
+  if (event.type !== 'assistant/message' && event.type !== 'assistant/attempt') {
+    return state
+  }
+  const sample = usageOf(event)
+  if (sample === undefined) return state
+  const { turn, step } = event.data
+  const usage: TokenUsage = sample
+
+  const buckets = bucketsFrom(usage)
+  const previous = state.last !== null
+    && state.last.turn === turn
+    && state.last.step === step
+    ? state.last.buckets
+    : undefined
+  if (previous !== undefined && bucketsEqual(previous, buckets)) return state
+
+  return {
+    totals: addReplacing(state.totals, previous, buckets),
+    last: { turn, step, buckets },
+  }
+}
 
 /**
  * Token-meter's context-occupancy projection unit.

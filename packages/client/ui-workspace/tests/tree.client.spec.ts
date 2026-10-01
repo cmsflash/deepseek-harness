@@ -322,6 +322,49 @@ describe('deriveGroups', () => {
     expect(search.items[0]?.completed).toBe(true)
   })
 
+  it('adds each cataloged subagent\'s own spend to its visible row and not to forks', () => {
+    const usage = (costUsd: number) => ({
+      uncachedInputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, costUsd, unpricedCalls: 2,
+    })
+    const parent = { ...summary('parent', 3), projectionValues: { ownTokenUsage: usage(1.5) } }
+    const child = {
+      ...summary('child', 4), parentId: parent.id, origin: 'subagent' as const,
+      projectionValues: { ownTokenUsage: usage(0.25) },
+    }
+    const grandchild = {
+      ...summary('grandchild', 5), parentId: child.id, origin: 'subagent' as const,
+      projectionValues: { ownTokenUsage: usage(0.25) },
+    }
+    const uncataloged = {
+      ...summary('uncataloged', 6), parentId: parent.id, origin: 'subagent' as const,
+      projectionValues: { ownTokenUsage: usage(100) },
+    }
+    const fork = {
+      ...summary('fork', 2), parentId: parent.id,
+      projectionValues: { ownTokenUsage: usage(4), tokenUsage: usage(5.5) },
+    }
+    const unknown = summary('unknown', 1)
+    // A cold fork whose cached record predates `ownTokenUsage`: its complete-log
+    // total includes the source's spend before the fork, so it counts nothing.
+    const coldFork = { ...summary('cold-fork', 0), parentId: parent.id, projectionValues: { tokenUsage: usage(7) } }
+    const sessions = {
+      ...list(parent, child, grandchild, uncataloged, fork, unknown, coldFork),
+      projectionsBySession: {
+        [parent.id]: catalog('child', 'child'),
+        [child.id]: catalog('grandchild'),
+      },
+    }
+    // A child listed under the parent but absent from its catalog is not a
+    // member: catalog membership, not `parentId`, decides what a thread owns.
+    const expected = [[parent.id, 2], [fork.id, 4], [unknown.id, 0], [coldFork.id, 0]]
+
+    expect(deriveGroups(
+      sessions, [workspace('first', ['parent', 'fork', 'unknown', 'cold-fork'])], noRows, noAttention, view(['first']),
+    )[0]!.sessions.map(node => [node.id, node.costUsd])).toEqual(expected)
+    expect(deriveFlat(sessions, visibleSessionIds(sessions, noArchive, 'default'), noRows, noAttention)
+      .map(node => [node.id, node.costUsd])).toEqual(expected)
+  })
+
   it('hides subagent-origin sessions and reads direct running counts from catalogs', () => {
     const parent = summary('parent', 1)
     const subagent = {

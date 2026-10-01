@@ -21,7 +21,7 @@ import {
   IconChevronsUpDownOutlineRegular, IconClockOutlineRegular, IconCloseFillRegular,
   IconFlatListOutlineRegular, IconFolderCloseRegular, IconProjectAddOutlineRegular,
   IconQueueOutlineRegular, IconSearchOutlineRegular, IconSlidersTwoOutlineRegular,
-  IconWorkspaceTreeOutlineRegular, Menu, Modal, Toast, Tooltip,
+  IconDatabaseOutlineRegular, IconWorkspaceTreeOutlineRegular, Menu, Modal, Toast, Tooltip,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type {
   SessionListState, SessionSearchResultItem,
@@ -38,7 +38,7 @@ import {
 } from '../tree.ts'
 import { ProjectRowItem, SearchResultItem, SessionNodeItem } from './Rows.tsx'
 import { AnimatedRows } from './AnimatedRows.tsx'
-import { FLAT_SESSION_ORDER_KEY, type SessionGroupBy } from '../stores.ts'
+import { FLAT_SESSION_ORDER_KEY, type SessionGroupBy, type SessionRowDetail } from '../stores.ts'
 import { WorkspacePickFlow } from '../WorkspacePicker.tsx'
 import css from './WorkspaceBrowser.module.css'
 
@@ -102,14 +102,18 @@ function useNativeDragAcceptance(active: boolean): void {
   }, [active])
 }
 
-/** Grouping, ordering, and archived-filter menu; own open state so it resets with the wide chrome. */
-function ViewOptionsMenu({ groupBy, orderBy, archivedFilter, onGroupPick, onOrderPick, onArchivedFilterPick, t }: {
+/** Grouping, ordering, archived-filter, and row-detail menu; own open state so it resets with the wide chrome. */
+function ViewOptionsMenu({
+  groupBy, orderBy, archivedFilter, rowDetail, onGroupPick, onOrderPick, onArchivedFilterPick, onRowDetailPick, t,
+}: {
   groupBy: SessionGroupBy
   orderBy: SessionOrderBy
   archivedFilter: ArchivedFilter
+  rowDetail: SessionRowDetail
   onGroupPick: (mode: SessionGroupBy) => void
   onOrderPick: (mode: SessionOrderBy) => void
   onArchivedFilterPick: (filter: ArchivedFilter) => void
+  onRowDetailPick: (detail: SessionRowDetail) => void
   t: WorkspaceBrowserProps['t']
 }) {
   const [open, setOpen] = useState(false)
@@ -131,11 +135,16 @@ function ViewOptionsMenu({ groupBy, orderBy, archivedFilter, onGroupPick, onOrde
         { id: 'hide-archived', label: t('viewOptions.hideArchived'), icon: <IconArchiveOffOutlineRegular /> },
         { id: 'show-archived', label: t('viewOptions.showArchived'), icon: <IconQueueOutlineRegular /> },
         { id: 'only-archived', label: t('viewOptions.onlyArchived'), icon: <IconArchiveCheckOutlineRegular /> },
+        { type: 'separator' as const, id: 'row-detail-separator' },
+        { type: 'label' as const, id: 'row-detail', text: t('rowDetail.label') },
+        { id: 'detail-updated', label: t('rowDetail.updated'), icon: <IconClockOutlineRegular /> },
+        { id: 'detail-cost', label: t('rowDetail.cost'), icon: <IconDatabaseOutlineRegular /> },
       ]}
       selectedIds={[
         groupBy,
         orderBy,
         { default: 'hide-archived', show: 'show-archived', only: 'only-archived' }[archivedFilter],
+        `detail-${rowDetail}`,
       ]}
       onSelect={(id) => {
         if (id === 'workspace' || id === 'workspace-tree' || id === 'flat') onGroupPick(id)
@@ -143,6 +152,8 @@ function ViewOptionsMenu({ groupBy, orderBy, archivedFilter, onGroupPick, onOrde
         else if (id === 'hide-archived') onArchivedFilterPick('default')
         else if (id === 'show-archived') onArchivedFilterPick('show')
         else if (id === 'only-archived') onArchivedFilterPick('only')
+        else if (id === 'detail-updated') onRowDetailPick('updated')
+        else if (id === 'detail-cost') onRowDetailPick('cost')
         setOpen(false)
       }}
       align="end"
@@ -229,6 +240,8 @@ type SessionTreeProps = Pick<
   list: SessionListState
   /** Host account home for POSIX hover-path abbreviation. */
   home?: string | undefined
+  /** Trailing figure shown on every Session row. */
+  rowDetail: SessionRowDetail
   /** Workspaces in Host group order with browser-projected Session order. */
   workspaces: readonly WorkspaceView[]
   /** Browser-projected order for Sessions outside every Workspace. */
@@ -286,7 +299,7 @@ function SessionTree({
   renderSlot,
   insertWorkspaceBefore,
   nestWorkspaces, groupExpansion, setGroupExpanded,
-  setSessionOrder, home, t,
+  setSessionOrder, home, rowDetail, t,
   revealSessionId, onSessionRevealed, shortcuts,
 }: SessionTreeProps) {
   const panelActive = usePanelInfo(info => info.activePanelId !== null)
@@ -567,6 +580,7 @@ function SessionTree({
               node={node}
               currentId={current}
               now={now}
+              detail={rowDetail}
               onOpen={open}
               onRenameRequest={onSessionRenameRequest}
               renderSlot={renderSlot}
@@ -628,10 +642,11 @@ function SessionTree({
 /** The flat "In one list" body: every session is one draggable top-level row. */
 function FlatList({
   list, sessionIds, rowState, onLeaveArchivedOnly, useSessionStatus, open, onSessionRenameRequest,
-  usePanelInfo, setSessionOrder, workspaceReady, animationResetKey,
+  usePanelInfo, setSessionOrder, rowDetail, workspaceReady, animationResetKey,
   revealSessionId, onSessionRevealed, renderSlot, t,
 }: Pick<
   SessionTreeProps,
+  | 'rowDetail'
   | 'useSessionStatus'
   | 'open'
   | 'onSessionRenameRequest'
@@ -691,6 +706,7 @@ function FlatList({
               node={node}
               currentId={currentId}
               now={now}
+              detail={rowDetail}
               onOpen={open}
               onRenameRequest={onSessionRenameRequest}
               renderSlot={renderSlot}
@@ -895,6 +911,8 @@ export function WorkspaceBrowser({
   // Persisted view blobs written before the archived filter existed rehydrate
   // without the field; they read as the default hide-archived view.
   const archivedFilter = useStore(s => s.archivedFilter ?? 'default')
+  // Persisted view blobs written before the row-detail option existed read as Last active.
+  const rowDetail = useStore(s => s.rowDetail ?? 'updated')
   const groupExpansion = useStore(s => s.groupExpansion)
   const sessionOrderByAccount = useStore(s => s.sessionOrderByAccount)
   // Archived sessions are not openable: the row stays visible under the
@@ -1290,6 +1308,8 @@ export function WorkspaceBrowser({
               onGroupPick={actions.setGroupBy}
               onOrderPick={(mode) => { actions.setOrderBy(mode, activeSessionOrders) }}
               onArchivedFilterPick={actions.setArchivedFilter}
+              rowDetail={rowDetail}
+              onRowDetailPick={actions.setRowDetail}
               t={t}
             />
           )}
@@ -1385,6 +1405,7 @@ export function WorkspaceBrowser({
                 onSessionRenameRequest={requestSessionRename}
                 renderSlot={renderSlot}
                 setSessionOrder={saveSessionOrder}
+                rowDetail={rowDetail}
                 revealSessionId={revealSessionId}
                 onSessionRevealed={acknowledgeSessionReveal}
                 t={t}
@@ -1408,6 +1429,7 @@ export function WorkspaceBrowser({
                 setSessionOrder={saveSessionOrder}
                 rowState={rowState}
                 onLeaveArchivedOnly={leaveArchivedOnly}
+                rowDetail={rowDetail}
                 startSession={startSession}
                 open={guardedOpen}
                 insertWorkspaceBefore={insertWorkspaceBefore}
