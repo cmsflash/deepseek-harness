@@ -17,6 +17,7 @@ import {
 import type { StateDotState } from '@deepseek-ai/dsh-client-ui-primitives'
 import { abbreviateHomePath } from '@deepseek-ai/dsh-util-workspace-path'
 import type { WorkspaceBrowserProps } from '../contract/slots.ts'
+import type { SessionRowDetail } from '../stores.ts'
 import type { GroupNode, SearchResultNode, SessionNode } from '../tree.ts'
 import css from './Rows.module.css'
 
@@ -56,6 +57,24 @@ function revealClippedTitle(title: HTMLSpanElement | null, revealed: boolean): v
 function timeLabel(updatedAt: number, now: number, t: RowTranslate): string {
   const { unit, n } = relativeTime(updatedAt, now)
   return unit === 'now' ? t('time.now') : t(`time.${unit}`, { n })
+}
+
+/**
+ * Compact US-dollar spend for the row's trailing cell: whole dollars from $10,
+ * thousands as K from $1,000, and cents below $10 except for exactly zero.
+ * @param usd - non-negative finite amount.
+ * @param t - Workspace-browser translation seat.
+ * @returns locale-owned currency text such as `$0`, `$0.42`, `$17`, or `$4.5K`.
+ */
+function costLabel(usd: number, t: RowTranslate): string {
+  const cents = Math.round(usd * 100)
+  if (cents === 0) return t('cost.usd', { amount: '0' })
+  if (cents < 1_000) return t('cost.usd', { amount: (cents / 100).toFixed(2) })
+  const dollars = Math.round(usd)
+  if (dollars < 1_000) return t('cost.usd', { amount: String(dollars) })
+  const thousands = dollars / 1_000
+  const value = thousands >= 100 ? String(Math.round(thousands)) : String(Math.round(thousands * 10) / 10)
+  return t('cost.usd', { amount: t('number.thousand', { value }) })
 }
 
 /** Hover-card variant: distances wrap in the ago template; the now bucket stays bare (no "now ago"). */
@@ -330,15 +349,16 @@ function ActiveScheduleIndicator({ t, search = false }: { t: RowTranslate; searc
   )
 }
 
-/** Hover-card body: full title, relative time, and every relevant live status. */
+/** Hover-card body: full title, relative time, thread spend, and every relevant live status. */
 function SessionHoverContent({ node, now, t }: { node: SessionNode; now: number; t: RowTranslate }) {
   const statuses = sessionStatuses(node, t)
   return (
     <div className={css.hoverContent}>
       <div className={css.hoverTitle}>{displayTitle(node, t)}</div>
-      {/* Same placeholder rule as the row's trailing cell: no timestamp
-          before the first prompt. */}
+      {/* Same placeholder rule as the row's trailing cell: no timestamp or
+          spend before the first prompt. */}
       {!node.blank && <div className={css.hoverTime}>{hoverTimeLabel(node.updatedAt, now, t)}</div>}
+      {!node.blank && <div className={css.hoverTime}>{t('hover.cost', { amount: costLabel(node.costUsd, t) })}</div>}
       {statuses.map(status => (
         <div className={css.hoverStatus} key={status.label}>
           <StateDot state={status.state} />
@@ -397,10 +417,12 @@ export function SearchResultItem({ result, currentId, onOpen, t }: {
 
 /**
  * One top-level 34px session row: status dot (pending user interaction outranks
- * own or descendant activity), title, relative time, and the row actions menu.
+ * own or descendant activity), title, the selected trailing figure, and the row
+ * actions menu.
  * @param props.node - derived session node.
  * @param props.currentId - selected session id (row highlight).
  * @param props.now - epoch ms for relative-time formatting.
+ * @param props.detail - trailing figure: relative time (default) or thread spend.
  * @param props.onOpen - open a session by id.
  * @param props.onRename - open the session rename dialog (id + current title).
  * @param props.onFork - fork a session at its last completed turn.
@@ -412,11 +434,12 @@ export function SearchResultItem({ result, currentId, onOpen, t }: {
  * @returns the session row.
  */
 export function SessionNodeItem({
-  node, currentId, now, onOpen, onRename, onFork, onArchive, onReveal, drag, flat = false, t,
+  node, currentId, now, detail = 'updated', onOpen, onRename, onFork, onArchive, onReveal, drag, flat = false, t,
 }: {
   node: SessionNode
   currentId: string | undefined
   now: number
+  detail?: SessionRowDetail | undefined
   onOpen: (id: SessionNode['id']) => void
   /** Open the browser-owned session rename dialog (row menu action). */
   onRename: (id: SessionNode['id'], currentTitle: string) => void
@@ -506,10 +529,14 @@ export function SessionNodeItem({
       <span ref={titleRef} className={css.title}>{title}</span>
       {row.hasActiveSchedule && <ActiveScheduleIndicator t={t} />}
       {/* A blank New Session row is a provisional placeholder: nothing has
-          happened in it yet, so a "now" timestamp and the row verbs
-          (rename/fork/archive) would all act on content that does not
+          happened in it yet, so a "now" timestamp, a spend figure, and the row
+          verbs (rename/fork/archive) would all act on content that does not
           exist — both trailing cells stay off until the first prompt. */}
-      {!row.blank && <span className={css.time}>{timeLabel(row.updatedAt, now, t)}</span>}
+      {!row.blank && (
+        <span className={clsx(css.time, detail === 'cost' && css.cost)}>
+          {detail === 'cost' ? costLabel(row.costUsd, t) : timeLabel(row.updatedAt, now, t)}
+        </span>
+      )}
       {!row.blank && (
         <span className={css.rowActions}>
           <Menu

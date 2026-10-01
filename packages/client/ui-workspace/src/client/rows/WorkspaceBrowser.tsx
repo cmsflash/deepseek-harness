@@ -27,7 +27,7 @@ import {
   pinCurrentBlank, reconcileManualOrder, UNGROUPED_KEY, visibleSessionIds,
 } from '../tree.ts'
 import { ProjectRowItem, SearchResultItem, SessionNodeItem } from './Rows.tsx'
-import { FLAT_SESSION_ORDER_KEY, type SessionGroupBy } from '../stores.ts'
+import { FLAT_SESSION_ORDER_KEY, type SessionGroupBy, type SessionRowDetail } from '../stores.ts'
 import { WorkspacePickFlow } from '../WorkspacePicker.tsx'
 import css from './WorkspaceBrowser.module.css'
 
@@ -96,12 +96,14 @@ function useNativeDragAcceptance(active: boolean): void {
   }, [active])
 }
 
-/** Grouping and ordering menu; own open state so it resets with the wide chrome. */
-function ViewOptionsMenu({ groupBy, orderBy, onGroupPick, onOrderPick, t }: {
+/** Grouping, ordering, and row-detail menu; own open state so it resets with the wide chrome. */
+function ViewOptionsMenu({ groupBy, orderBy, rowDetail, onGroupPick, onOrderPick, onRowDetailPick, t }: {
   groupBy: SessionGroupBy
   orderBy: SessionOrderBy
+  rowDetail: SessionRowDetail
   onGroupPick: (mode: SessionGroupBy) => void
   onOrderPick: (mode: SessionOrderBy) => void
+  onRowDetailPick: (detail: SessionRowDetail) => void
   t: WorkspaceBrowserProps['t']
 }) {
   const [open, setOpen] = useState(false)
@@ -118,11 +120,17 @@ function ViewOptionsMenu({ groupBy, orderBy, onGroupPick, onOrderPick, t }: {
         { type: 'label' as const, id: 'order-by', text: t('orderBy.label') },
         { id: 'manual', label: t('orderBy.manual') },
         { id: 'updated', label: t('orderBy.updated') },
+        { type: 'separator' as const, id: 'row-detail-separator' },
+        { type: 'label' as const, id: 'row-detail', text: t('rowDetail.label') },
+        { id: 'detail-updated', label: t('rowDetail.updated') },
+        { id: 'detail-cost', label: t('rowDetail.cost') },
       ]}
-      selectedIds={[groupBy, orderBy]}
+      selectedIds={[groupBy, orderBy, `detail-${rowDetail}`]}
       onSelect={(id) => {
         if (id === 'workspace' || id === 'workspace-tree' || id === 'flat') onGroupPick(id)
         else if (id === 'manual' || id === 'updated') onOrderPick(id)
+        else if (id === 'detail-updated') onRowDetailPick('updated')
+        else if (id === 'detail-cost') onRowDetailPick('cost')
         setOpen(false)
       }}
       align="end"
@@ -176,6 +184,8 @@ type SessionTreeProps = Pick<
   list: SessionListState
   /** Host account home for POSIX hover-path abbreviation. */
   home?: string | undefined
+  /** Trailing figure shown on every Session row. */
+  rowDetail: SessionRowDetail
   /** Workspaces in Host group order with browser-projected Session order. */
   workspaces: readonly WorkspaceView[]
   /** Browser-projected order for Sessions outside every Workspace. */
@@ -214,7 +224,7 @@ function SessionTree({
   onRenameRequest, onDeleteRequest, onSessionRename, onSessionArchive,
   insertWorkspaceBefore,
   nestWorkspaces, groupExpansion, setGroupExpanded,
-  setSessionOrder, home, t,
+  setSessionOrder, home, rowDetail, t,
   revealSessionId, onSessionRevealed,
 }: SessionTreeProps) {
   const panelActive = usePanelInfo(info => info.activePanelId !== null)
@@ -518,6 +528,7 @@ function SessionTree({
               node={node}
               currentId={current}
               now={now}
+              detail={rowDetail}
               onOpen={open}
               onRename={onSessionRename}
               onFork={forkSession}
@@ -567,10 +578,11 @@ function SessionTree({
 /** The flat "In one list" body: every session is one draggable top-level row. */
 function FlatList({
   list, sessionIds, useSessionStatus, open, forkSession, onSessionRename, onSessionArchive,
-  usePanelInfo, setSessionOrder,
+  usePanelInfo, setSessionOrder, rowDetail,
   revealSessionId, onSessionRevealed, t,
 }: Pick<
   SessionTreeProps,
+  | 'rowDetail'
   | 'useSessionStatus'
   | 'open'
   | 'forkSession'
@@ -631,6 +643,7 @@ function FlatList({
               node={node}
               currentId={currentId}
               now={now}
+              detail={rowDetail}
               onOpen={open}
               onRename={onSessionRename}
               onFork={forkSession}
@@ -798,6 +811,7 @@ export function WorkspaceBrowser({
   const directoryFlowAvailable = useDirectoryFlow(occupied => occupied)
   const groupBy = useStore(s => s.groupBy)
   const orderBy = useStore(s => s.orderBy)
+  const rowDetail = useStore(s => s.rowDetail ?? 'updated')
   const groupExpansion = useStore(s => s.groupExpansion)
   const sessionOrderByAccount = useStore(s => s.sessionOrderByAccount)
   const workspaceReady = workspacePhase === 'ready' && workspaceStreamState !== 'loading'
@@ -1187,7 +1201,9 @@ export function WorkspaceBrowser({
               groupBy={groupBy}
               orderBy={orderBy}
               onGroupPick={(mode) => { actions.setGroupBy(mode) }}
+              rowDetail={rowDetail}
               onOrderPick={(mode) => { actions.setOrderBy(mode, activeSessionOrders) }}
+              onRowDetailPick={(detail) => { actions.setRowDetail(detail) }}
               t={t}
             />
           )}
@@ -1275,6 +1291,7 @@ export function WorkspaceBrowser({
                 open={open} forkSession={forkSession}
                 onSessionRename={onSessionRename} onSessionArchive={onSessionArchive}
                 setSessionOrder={saveSessionOrder}
+                rowDetail={rowDetail}
                 revealSessionId={revealSessionId}
                 onSessionRevealed={acknowledgeSessionReveal}
                 t={t}
@@ -1295,6 +1312,7 @@ export function WorkspaceBrowser({
                 groupExpansion={groupExpansion}
                 setGroupExpanded={actions.setGroupExpanded}
                 setSessionOrder={saveSessionOrder}
+                rowDetail={rowDetail}
                 archivedSessionIds={archivedSessionIds}
                 startSession={startSession}
                 open={open}

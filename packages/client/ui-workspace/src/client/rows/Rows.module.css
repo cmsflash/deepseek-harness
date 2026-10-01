@@ -229,6 +229,10 @@
   color: var(--dsw-alias-label-tertiary);
 }
 
+.cost {
+  font-variant-numeric: tabular-nums;
+}
+
 .scheduleIndicator {
   display: inline-flex;
   flex: none;

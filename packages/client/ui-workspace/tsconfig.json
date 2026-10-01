@@ -45,6 +45,9 @@
       "path": "../../schedule/schedule"
     },
     {
+      "path": "../../llm/token-meter"
+    },
+    {
       "path": "../ui-sidebar"
     },
     {

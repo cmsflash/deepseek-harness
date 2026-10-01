@@ -11,3 +11,9 @@
   - menuitem "Last updated":
     - text: Last updated
     - img
+  - separator
+  - text: Show
+  - menuitem "Last active":
+    - text: Last active
+    - img
+  - menuitem "Total cost"

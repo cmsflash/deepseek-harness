@@ -24,7 +24,7 @@ The Turn footer receives accounting through [turn-end history metadata](../archi
 
 **A dollar figure on the collapsed-steps row.** The row summarizes process, not billing, and already carries six figures; the Turn's cost is one click away in its tail pill. Adding it would require a fourth fold change in `StepDigest` and its merge rule.
 
-**Sidebar or workspace totals.** Session rows are deliberately sparse, and spend across a workspace is an aggregate over a catalog rather than a row decoration; that is a separate view.
+**Sidebar or workspace totals.** Spend across a workspace is an aggregate over a catalog rather than a row decoration; that is a separate view. A Session row can show its own thread's total instead of its update time ([thread spend](2026-09-30-sidebar-thread-spend.md)).
 
 ## Consequences
 

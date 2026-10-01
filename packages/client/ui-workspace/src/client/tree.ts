@@ -14,7 +14,7 @@ import type {} from '@deepseek-ai/dsh-schedule/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import { workspaceTitleOf } from '@deepseek-ai/dsh-util-workspace-path'
 import {
-  indexSubagentDescendants, type SubagentDescendantSummary,
+  indexSubagentDescendants, ownCostUsd, type SubagentDescendantSummary,
 } from './subagent-lineage.ts'
 
 /** Group key for Sessions outside every Workspace. */
@@ -60,6 +60,8 @@ export interface SessionNode {
   /** The current list projection contains at least one active Schedule record. */
   hasActiveSchedule: boolean
   updatedAt: number
+  /** Billed USD spend of this Session after its fork cut plus every subagent descendant; unpriced attempts add zero. */
+  costUsd: number
 }
 
 /** Session order selected by the Workspace browser. */
@@ -328,6 +330,7 @@ function sessionNode(
     completed: status?.completionUnread === true,
     hasActiveSchedule: hasActiveSchedule(s),
     updatedAt: s.updatedAt,
+    costUsd: ownCostUsd(s) + (descendants.get(s.id)?.costUsd ?? 0),
     ...(pendingInteraction === undefined ? {} : { pendingInteraction }),
   }
 }
