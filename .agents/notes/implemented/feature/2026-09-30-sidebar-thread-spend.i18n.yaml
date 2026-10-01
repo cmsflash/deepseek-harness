@@ -1,0 +1,19 @@
+# Bilingual-pair consistency record for 2026-09-30-sidebar-thread-spend.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-09-30-sidebar-thread-spend.md
+/agent-note-thread-spend-as-the-session-row-s-trailing-figure:
+  en: 9944e5babf2fd598
+  zh: c1220bfd3dff3399
+/agent-note-thread-spend-as-the-session-row-s-trailing-figure/problem:
+  en: 733eaa57b9bb1f77
+  zh: d33f19cb612e01b0
+/agent-note-thread-spend-as-the-session-row-s-trailing-figure/decision:
+  en: 01aa82fa858910b7
+  zh: cbc4fce4d4aaf945
+/agent-note-thread-spend-as-the-session-row-s-trailing-figure/alternatives-considered:
+  en: 1574d2eff862819e
+  zh: 122d18ce6fed4424
+/agent-note-thread-spend-as-the-session-row-s-trailing-figure/consequences:
+  en: d9c06198ce83ee0a
+  zh: cda272d26d6aeed6

@@ -82,7 +82,8 @@
     "clsx": "^2.0.0",
     "react": "^18.2.0",
     "@deepseek-ai/dsh-client-shortcuts": "workspace:*",
-    "@deepseek-ai/dsh-client-product-analytics": "workspace:*"
+    "@deepseek-ai/dsh-client-product-analytics": "workspace:*",
+    "@deepseek-ai/dsh-token-meter": "workspace:*"
   },
   "files": [
     "locale/*.json",

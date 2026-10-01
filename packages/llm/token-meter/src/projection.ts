@@ -76,6 +76,12 @@ declare module '@deepseek-ai/dsh-session-projection/types' {
   interface SessionProjectionMap {
     /** Provider-reported usage accumulated across the complete durable log. */
     tokenUsage: TokenUsageProjection
+    /**
+     * Provider-reported usage of the attempts this Session made itself: the
+     * fork-inherited prefix is excluded, so summing it across a fork tree
+     * counts every attempt once. Equals `tokenUsage` for an unseeded Session.
+     */
+    ownTokenUsage: TokenUsageProjection
     /** Newest request pressure paired with the newest known route capacity. */
     contextPressure: ContextPressureProjection
     /** Heuristic system/tools/message composition of the next request. */
