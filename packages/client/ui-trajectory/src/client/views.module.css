@@ -13,6 +13,52 @@
   background: var(--dsw-alias-bg-layer-1);
 }
 
+/* Full-detail recovery status shown in place of the timeline and ledger. */
+.stepDetail {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 24px;
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xxs-12);
+}
+
+.stepDetailLoading {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.stepDetailSpinner {
+  width: 10px;
+  height: 10px;
+  box-sizing: border-box;
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-top-color: var(--dsw-alias-state-business-primary);
+  border-radius: 50%;
+  corner-shape: round;
+  animation: step-detail-spin 700ms linear infinite;
+}
+
+.stepDetailError {
+  color: var(--dsw-alias-state-error-primary);
+  text-align: center;
+}
+
+@keyframes step-detail-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stepDetailSpinner {
+    animation: none;
+  }
+}
+
 .ledger {
   position: relative;
   z-index: 0;

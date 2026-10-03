@@ -1,0 +1,11 @@
+version: 1
+scenario: collapsed-metrics
+profile: web
+composition: default
+recording: authored
+header:
+  class: default
+session:
+  source: ../../session/fs-write/session.v3.jsonl
+workspace:
+  final: true

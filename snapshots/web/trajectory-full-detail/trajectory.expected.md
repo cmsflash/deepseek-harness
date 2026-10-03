@@ -1,0 +1,34 @@
+- table:
+  - rowgroup:
+    - row "SYSTEM, Initial System Prompt":
+      - cell "SYSTEM"
+      - cell "Initial System Prompt"
+    - 'row "USER, Use the read tool twice in one assistant message: read a.txt and b.txt. Then reply with the single word DONE and stop."':
+      - cell "Turn 1 USER": USER
+      - 'cell "Use the read tool twice in one assistant message: read a.txt and b.txt. Then reply with the single word DONE and stop."'
+    - row "Request 1, ASSISTANT, The user wants me to read a.txt and b.txt, then reply with \"DONE\". Let me do both reads in parallel.":
+      - 'cell "Request #1 ASSISTANT"':
+        - 'button "Request #1"'
+        - text: ASSISTANT
+      - cell "The user wants me to read a.txt and b.txt, then reply with \"DONE\". Let me do both reads in parallel."
+    - 'row "TOOL, read {\"file_path\": \"a.txt\"}"':
+      - cell "TOOL"
+      - 'cell "read{\"file_path\": \"a.txt\"} → <path>{{cwd}}/workspace/a.txt</path> <type>file</type> <content> 1: alpha (End of file - total 1 lines) </content>"'
+    - 'row "TOOL, read {\"file_path\": \"b.txt\"}"':
+      - cell "TOOL"
+      - 'cell "read{\"file_path\": \"b.txt\"} → <path>{{cwd}}/workspace/b.txt</path> <type>file</type> <content> 1: beta (End of file - total 1 lines) </content>"'
+    - row "Request 2, ASSISTANT, DONE":
+      - 'cell "Request #2 ASSISTANT"':
+        - 'button "Request #2"'
+        - text: ASSISTANT
+      - cell "DONE"
+    - row "SYSTEM, System Prompt Updated":
+      - cell "SYSTEM"
+      - cell "System Prompt Updated"
+    - row "Request 3, ASSISTANT, no content":
+      - 'cell "Request #3"':
+        - 'button "Request #3"'
+      - cell
+    - row "USER, Resume with the updated prompt, then cancel.":
+      - cell "Turn 2 USER": USER
+      - cell "Resume with the updated prompt, then cancel."

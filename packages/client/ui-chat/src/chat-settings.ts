@@ -8,8 +8,12 @@ export const CHAT_SETTINGS_NAMESPACE = 'ui-chat'
 /** Field carrying the work-details presentation mode. */
 export const TRANSCRIPT_VIEW_FIELD = 'transcriptView'
 
-/** Work-details presentation modes a user can choose. */
-export const TRANSCRIPT_VIEW_MODES = ['compact', 'standard', 'detailed', 'verbose'] as const
+/**
+ * Work-details presentation modes a user can choose. `collapsed` renders the
+ * process rows flat like `verbose` and folds each response's settled steps
+ * behind one summary row while the Turn is still running.
+ */
+export const TRANSCRIPT_VIEW_MODES = ['compact', 'standard', 'detailed', 'verbose', 'collapsed'] as const
 
 /** Work-details presentation mode. */
 export type TranscriptViewMode = typeof TRANSCRIPT_VIEW_MODES[number]

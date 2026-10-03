@@ -53,7 +53,12 @@ export function apply(ctx: Context): void {
       const target = ctx.uiConversation.binding(binding).target('trajectory')
       source = {
         getSnapshot: () => target.getSnapshot() ?? EMPTY_TRAJECTORY_SNAPSHOT,
-        subscribe: listener => target.subscribe(listener),
+        // Every ledger reader needs whole steps, so subscribing is the demand;
+        // a failed recovery is soft and lands in the Session snapshot.
+        subscribe: (listener) => {
+          void binding.session.requireFullHistory()
+          return target.subscribe(listener)
+        },
       }
       trajectorySources.set(binding, source)
     }
@@ -102,6 +107,7 @@ export function apply(ctx: Context): void {
           await session.loadOlder()
           return trajectory.getSnapshot() !== before
         },
+        requireFullHistory: () => session.requireFullHistory(),
         loadImage: Object.assign(
           (attachment: ImageAttachmentRef) => ctx.uiConversation.imageUrl(sessionId, attachment),
           { peek: (attachment: ImageAttachmentRef) => ctx.uiConversation.peekImageUrl(sessionId, attachment) },

@@ -3,20 +3,26 @@ import { act, cleanup, render } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
 import { bindSnapshotSelector } from '@deepseek-ai/dsh-client-test-runtime'
-import type { TranscriptViewMode } from '../src/chat-settings.ts'
+import { TRANSCRIPT_VIEW_MODES, type TranscriptViewMode } from '../src/chat-settings.ts'
 import { COLLAPSE_TIMINGS, derivePresentationPolicy, presentationPolicyFor, type ChatPresentationPolicy, type CollapseTiming } from '../src/client/presentation-policy.ts'
 
 afterEach(cleanup)
 
 describe('Chat presentation policy', () => {
   it.each([
-    ['compact', true, 'collapsed', false, false],
-    ['standard', true, 'collapsed', true, true],
-    ['detailed', true, 'history', true, true],
-    ['verbose', false, 'none', true, false],
-  ] as const)('maps %s to stable presentation capabilities', (mode, foldCompletedTurns, stepGrouping, settledReasoningPreview, liveProcessDetail) => {
+    ['compact', true, 'collapsed', false, false, false],
+    ['standard', true, 'collapsed', true, true, false],
+    ['detailed', true, 'history', true, true, false],
+    ['verbose', false, 'none', true, false, false],
+    ['collapsed', false, 'none', true, false, true],
+  ] as const)('maps %s to stable presentation capabilities', (
+    mode, foldCompletedTurns, stepGrouping, settledReasoningPreview, liveProcessDetail, foldSettledSteps,
+  ) => {
     const policy = presentationPolicyFor(mode)
-    expect(policy).toEqual({ mode, collapseTiming: 'completion', foldCompletedTurns, stepGrouping, settledReasoningPreview, liveProcessDetail })
+    expect(policy).toEqual({
+      mode, collapseTiming: 'completion', foldCompletedTurns, stepGrouping, settledReasoningPreview, liveProcessDetail,
+      foldSettledSteps,
+    })
     expect(presentationPolicyFor(mode)).toBe(policy)
     expect(presentationPolicyFor(mode, 'completion')).toBe(policy)
     const deferred = presentationPolicyFor(mode, 'next-input')
@@ -25,14 +31,14 @@ describe('Chat presentation policy', () => {
     expect(deferred).not.toBe(policy)
   })
 
-  it('keeps all eight mode and timing policies distinct and stable', () => {
+  it('keeps all ten mode and timing policies distinct and stable', () => {
     const policies = new Set<ChatPresentationPolicy>()
-    for (const mode of ['compact', 'standard', 'detailed', 'verbose'] as const) {
+    for (const mode of TRANSCRIPT_VIEW_MODES) {
       for (const timing of COLLAPSE_TIMINGS) {
         policies.add(presentationPolicyFor(mode, timing))
       }
     }
-    expect(policies.size).toBe(8)
+    expect(policies.size).toBe(10)
   })
 
   it('forwards both preferences and removes both subscriptions on disposal', () => {

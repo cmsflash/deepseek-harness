@@ -342,6 +342,20 @@ export async function openSettings(page: Page, locale: 'en' | 'zh'): Promise<voi
 }
 
 /**
+ * Choose a Work details mode through the English Settings dialog and close it.
+ * @param page - page whose Settings dialog is reachable from its shell.
+ * @param current - label of the currently selected mode.
+ * @param next - label of the mode to select.
+ */
+export async function selectWorkDetails(page: Page, current: string, next: string): Promise<void> {
+  await openSettings(page, 'en')
+  await page.getByRole('dialog', { name: 'Settings' }).getByText('Work details', { exact: true }).locator('../..')
+    .getByRole('button', { name: current, exact: true }).click()
+  await page.getByRole('menuitem', { name: next, exact: true }).click()
+  await page.keyboard.press('Escape')
+}
+
+/**
  * Whether a panel's box is exactly the viewport right of the left sidebar column,
  * sampled together so a settling sidebar width cannot race the comparison.
  * @param page - page hosting the AppFrame.

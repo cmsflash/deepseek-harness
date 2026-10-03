@@ -101,6 +101,7 @@ describe('goal command input projection', () => {
     })
     const match = {
       ...run,
+      record: run,
       role: 'start' as const,
       location: { kind: 'session' as const },
     }
@@ -115,7 +116,7 @@ describe('goal command input projection', () => {
 
     const done = entry(4, 'command/done', { commandId: 'command-goal', kind: 'success' })
     expect(() => goalCommandInputDefinition.start({} as never, {
-      ...done, role: 'start', location: { kind: 'session' },
+      ...done, record: done, role: 'start', location: { kind: 'session' },
     } as never, {} as never)).toThrow('goal-command-input start requires command/run')
   })
 

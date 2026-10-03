@@ -23,6 +23,8 @@ export interface ChatPresentationPolicy {
   readonly liveProcessDetail: boolean
   /** Whether a settled reasoning row previews its first line beside the Think title. */
   readonly settledReasoningPreview: boolean
+  /** Whether each response's settled steps fold behind one summary row, including while its Turn runs. */
+  readonly foldSettledSteps: boolean
 }
 
 const POLICIES: Readonly<Record<TranscriptViewMode, Omit<ChatPresentationPolicy, 'collapseTiming'>>> = {
@@ -32,6 +34,7 @@ const POLICIES: Readonly<Record<TranscriptViewMode, Omit<ChatPresentationPolicy,
     stepGrouping: 'collapsed',
     liveProcessDetail: false,
     settledReasoningPreview: false,
+    foldSettledSteps: false,
   },
   standard: {
     mode: 'standard',
@@ -39,6 +42,7 @@ const POLICIES: Readonly<Record<TranscriptViewMode, Omit<ChatPresentationPolicy,
     stepGrouping: 'collapsed',
     liveProcessDetail: true,
     settledReasoningPreview: true,
+    foldSettledSteps: false,
   },
   detailed: {
     mode: 'detailed',
@@ -46,6 +50,7 @@ const POLICIES: Readonly<Record<TranscriptViewMode, Omit<ChatPresentationPolicy,
     stepGrouping: 'history',
     liveProcessDetail: true,
     settledReasoningPreview: true,
+    foldSettledSteps: false,
   },
   verbose: {
     mode: 'verbose',
@@ -53,6 +58,15 @@ const POLICIES: Readonly<Record<TranscriptViewMode, Omit<ChatPresentationPolicy,
     stepGrouping: 'none',
     liveProcessDetail: false,
     settledReasoningPreview: true,
+    foldSettledSteps: false,
+  },
+  collapsed: {
+    mode: 'collapsed',
+    foldCompletedTurns: false,
+    stepGrouping: 'none',
+    liveProcessDetail: false,
+    settledReasoningPreview: true,
+    foldSettledSteps: true,
   },
 }
 
@@ -62,6 +76,7 @@ function withTiming(collapseTiming: CollapseTiming): Readonly<Record<TranscriptV
     standard: { ...POLICIES.standard, collapseTiming },
     detailed: { ...POLICIES.detailed, collapseTiming },
     verbose: { ...POLICIES.verbose, collapseTiming },
+    collapsed: { ...POLICIES.collapsed, collapseTiming },
   }
 }
 

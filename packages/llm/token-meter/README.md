@@ -52,7 +52,10 @@ Image offload reprices existing node identities while preserving prior usage anc
 
 `contextBreakdown` classifies the last nonempty surviving `system/message` in surface order as `systemTokens`; empty dormant nodes contribute nothing, and no nonempty system means zero. `messageTokens` includes every other visible node, including superseded prompts. Their sum always equals `measure().nodes[].heuristicTokens`, including after unmetered replacements, compaction, and per-node prompt clearing. `toolsTokens` follows the latest `request/header`. All three use the fixed heuristic, not route image pricing or file-handle projection; they are approximate composition, not billing or `projectedTokens`.
 
-`deriveTurnTokenUsage(events)` folds one complete turn into exact per-attempt and whole-turn usage for browser consumers. It returns no result when lifecycle evidence is missing, counts are unsafe, or exact totals conflict; each corresponding aggregate appears only when every participating attempt reports its optional cache, reasoning, or route value.
+<a id="turn-accounting"></a>
+### Turn accounting
+
+The environment-neutral `/turn-usage` export provides `TurnUsageAccumulator` and `deriveTurnTokenUsage(events)`. An accumulator accepts one complete turn incrementally; the batch helper uses the same fold. Both return no result before a valid end, for a turn with no model attempts, or when lifecycle evidence is missing, counts are unsafe, exact totals conflict, or aggregate cost is non-finite. Optional cache, reasoning, and route values appear only when every attempt supplies them. Each retry contributes separately; missing price contributes zero and increments `unpricedCalls`, while an explicit zero price does not. The accumulator retains running totals, the active attempt, and distinct routes rather than completed attempts or event bodies.
 
 ### Composition
 
