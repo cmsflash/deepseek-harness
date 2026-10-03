@@ -8,13 +8,15 @@ import css from './CollapsedStepsRow.module.css'
 
 /** Props of one collapsed-steps summary row. */
 export interface CollapsedStepsRowProps {
-  /** Turn owning the hidden steps. */
+  /** Backend turn owning the hidden steps. */
   turn: number
+  /** Step of the human input starting this response group. */
+  startStep: number
   /** Node keys this row hides, passed to contributors so they fold the same set. */
   keys: readonly string[]
   metrics: CollapsedStepMetrics
   expanded: boolean
-  /** Whether this turn's withheld steps are being read back right now. */
+  /** Whether this group's withheld steps are being read back right now. */
   loading: boolean
   onToggle: () => void
   /** Contributed figures, rendered after every built-in one. */
@@ -24,24 +26,23 @@ export interface CollapsedStepsRowProps {
 }
 
 /**
- * One row standing in for a turn's settled steps: the work they did, and the
- * control that reveals them. Expansion is all-or-nothing for the turn, so the
- * disclosure control is the only affordance and needs no per-step state.
+ * One row standing in for a response group's settled steps: the work they
+ * did, and the control that reveals them. Expansion is all-or-nothing for the
+ * group, so the disclosure control is the only affordance and needs no
+ * per-step state.
  *
  * The control and the figures are siblings rather than nested, so a
  * contributed figure may carry its own interactive content without landing
  * inside a button.
  */
 export const CollapsedStepsRow = memo(function CollapsedStepsRow({
-  turn, keys, metrics, expanded, loading, onToggle, renderSlot, t,
+  turn, startStep, keys, metrics, expanded, loading, onToggle, renderSlot, t,
 }: CollapsedStepsRowProps) {
   const parts: ReactNode[] = []
   if (metrics.elapsedMs > 0) {
     parts.push(<span key="elapsed" className={css.metric}>{formatDuration(metrics.elapsedMs, t)}</span>)
   }
-  // A turn whose intermediate work is entirely tool calls settles no assistant
-  // node before its last step, so the step count would read zero and mislead;
-  // the call count already describes what is hidden.
+  // A group hiding only context records no model call; "0 steps" would mislead.
   if (metrics.steps > 0) {
     parts.push(<span key="steps" className={css.metric}>{t('collapse.steps', { count: metrics.steps })}</span>)
   }
@@ -81,9 +82,9 @@ export const CollapsedStepsRow = memo(function CollapsedStepsRow({
   if (metrics.files > 0) {
     parts.push(<span key="files" className={css.metric}>{t('collapse.files', { count: metrics.files })}</span>)
   }
-  const owner: CollapsedMetricOwnerProps = { turn, keys, steps: metrics.steps, calls: metrics.calls }
+  const owner: CollapsedMetricOwnerProps = { turn, startStep, keys, steps: metrics.steps, calls: metrics.calls }
   return (
-    <div className={css.row} data-collapsed-turn={turn}>
+    <div className={css.row} data-collapsed-turn={turn} data-collapsed-group={`${String(turn)}:${String(startStep)}`}>
       <button
         type="button"
         className={css.disclosure}

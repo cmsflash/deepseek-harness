@@ -17,6 +17,7 @@ const t = makeTranslate(zh, commonZh) as CollapsedStepsRowProps['t']
 function row(overrides: Partial<CollapsedStepsRowProps> = {}) {
   const props: CollapsedStepsRowProps = {
     turn: 3,
+    startStep: 1,
     keys: ['hidden-1', 'hidden-2'],
     metrics: { steps: 12, calls: 15, contextInjections: 0, files: 2, added: 40, removed: 7, elapsedMs: 0, inputTokens: 0, outputTokens: 0 },
     expanded: false,
@@ -134,7 +135,7 @@ describe('CollapsedStepsRow', () => {
       metrics: { steps: 4, calls: 9, contextInjections: 0, files: 0, added: 0, removed: 0, elapsedMs: 0, inputTokens: 0, outputTokens: 0 },
       renderSlot: ((_key: string, owner: unknown) => { seen = owner; return null }) as unknown as CollapsedStepsRowProps['renderSlot'],
     })
-    expect(seen).toEqual({ turn: 7, keys: ['hidden-1', 'hidden-2'], steps: 4, calls: 9 })
+    expect(seen).toEqual({ turn: 7, startStep: 1, keys: ['hidden-1', 'hidden-2'], steps: 4, calls: 9 })
   })
 
   it('exposes its disclosure state and reports each toggle', () => {
@@ -150,7 +151,8 @@ describe('CollapsedStepsRow', () => {
   })
 
   it('carries its turn for the surrounding flow', () => {
-    const { view } = row({ turn: 9 })
+    const { view } = row({ turn: 9, startStep: 4 })
     expect(view.container.querySelector('[data-collapsed-turn="9"]')).not.toBeNull()
+    expect(view.container.querySelector('[data-collapsed-group="9:4"]')).not.toBeNull()
   })
 })

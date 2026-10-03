@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 /**
- * ChatView's step-collapse behavior: the preference gates it entirely, a
- * turn's settled steps fold behind one row, and the disclosure restores them
- * through the same node seat that renders every other row.
+ * ChatView's step-collapse behavior: the preference gates it entirely, each
+ * response group's settled steps fold behind one row, and each disclosure
+ * restores its rows through the same node seat that renders every other row.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render } from '@testing-library/react'
@@ -17,13 +17,14 @@ import { ChatView } from '../src/client/chat/ChatView.tsx'
 import type { ChatViewSlotProps } from '../src/client/contract/slots.ts'
 import { createChatStore } from '../src/client/stores.ts'
 import { zh } from '../src/client/locale.ts'
+import { timelineOf } from './step-collapse-fixtures.client.ts'
 
 afterEach(cleanup)
 
 const EMPTY_KEYS: readonly string[] = []
 
-/** One assistant step node placed at an exact turn/step coordinate. */
-function stepNode(key: string, turn: number, step: number): ChatConversationViewNode {
+/** One settled assistant step node placed at an exact turn/step coordinate. */
+function stepNode(key: string, turn: number, step: number, text?: string): ChatConversationViewNode {
   return {
     key,
     kind: 'assistant-step',
@@ -32,7 +33,11 @@ function stepNode(key: string, turn: number, step: number): ChatConversationView
     anchorSeq: 0,
     visibility: 'visible',
     location: { kind: 'step', turn: { turn }, step: { step } },
-    data: {},
+    data: {
+      status: 'settled',
+      blocks: text === undefined ? [] : [{ kind: 'text', text }],
+      finalNode: { timing: { stepStartTime: null, completedTime: 0 } },
+    },
   } as unknown as ChatConversationViewNode
 }
 
@@ -50,7 +55,7 @@ function snapshot(nodes: readonly ChatConversationViewNode[]): ChatSnapshot {
     },
     locations: { getTurn: () => EMPTY_KEYS, getStep: () => EMPTY_KEYS },
     navigation: { items: () => [] },
-    timeline: { turnOrder: [], turns: new Map() },
+    timeline: timelineOf(nodes),
     legacy: {
       nodes: [], turnTimings: new Map(), turnEnds: new Map(), partial: null, runningCalls: [],
     },
@@ -121,10 +126,10 @@ function mount(
   return render(<ChatView {...props} />)
 }
 
-/** Rendered flow identity: node keys in order, with collapse markers named. */
+/** Rendered flow identity: node keys in order, with collapse markers named by group. */
 function flow(view: ReturnType<typeof render>): string[] {
-  return [...view.container.querySelectorAll('[data-node-key],[data-collapsed-turn]')]
-    .map(el => el.getAttribute('data-node-key') ?? `collapsed:${String(el.getAttribute('data-collapsed-turn'))}`)
+  return [...view.container.querySelectorAll('[data-node-key],[data-collapsed-group]')]
+    .map(el => el.getAttribute('data-node-key') ?? `collapsed:${String(el.getAttribute('data-collapsed-group'))}`)
 }
 
 const THREE_STEPS = [stepNode('s1', 1, 1), stepNode('s2', 1, 2), stepNode('s3', 1, 3)]
@@ -138,7 +143,7 @@ describe('ChatView step collapse', () => {
 
   it('keeps only the last step visible in the collapsed mode', () => {
     const view = mount(THREE_STEPS, 'collapsed')
-    expect(flow(view)).toEqual(['collapsed:1', 's3'])
+    expect(flow(view)).toEqual(['collapsed:1:1', 's3'])
   })
 
   it('restores the hidden steps in place when the row is opened, and folds them again', () => {
@@ -146,10 +151,10 @@ describe('ChatView step collapse', () => {
     const toggle = () => { fireEvent.click(view.getByRole('button')) }
 
     toggle()
-    expect(flow(view)).toEqual(['collapsed:1', 's1', 's2', 's3'])
+    expect(flow(view)).toEqual(['collapsed:1:1', 's1', 's2', 's3'])
 
     toggle()
-    expect(flow(view)).toEqual(['collapsed:1', 's3'])
+    expect(flow(view)).toEqual(['collapsed:1:1', 's3'])
   })
 
   it('counts and restores context injections without hiding the prompt or live answer', () => {
@@ -162,16 +167,16 @@ describe('ChatView step collapse', () => {
     const expandTurn = vi.fn()
     const view = mount(nodes, 'collapsed', { expandTurn })
     const button = view.getByRole('button', { name: '2 次上下文注入' })
-    expect(flow(view)).toEqual(['ask', 'collapsed:1', 'answer'])
+    expect(flow(view)).toEqual(['ask', 'collapsed:1:1', 'answer'])
     expect(button.getAttribute('aria-expanded')).toBe('false')
 
     fireEvent.click(button)
-    expect(flow(view)).toEqual(['ask', 'collapsed:1', 'ctx1', 'ctx2', 'answer'])
+    expect(flow(view)).toEqual(['ask', 'collapsed:1:1', 'ctx1', 'ctx2', 'answer'])
     expect(button.getAttribute('aria-expanded')).toBe('true')
     expect(expandTurn).not.toHaveBeenCalled()
 
     fireEvent.click(button)
-    expect(flow(view)).toEqual(['ask', 'collapsed:1', 'answer'])
+    expect(flow(view)).toEqual(['ask', 'collapsed:1:1', 'answer'])
     expect(button.getAttribute('aria-expanded')).toBe('false')
   })
 
@@ -185,7 +190,7 @@ describe('ChatView step collapse', () => {
       },
     })
     // s3 is the visible last step and must not appear.
-    expect(seen).toMatchObject({ turn: 1, keys: ['s1', 's2'] })
+    expect(seen).toEqual({ turn: 1, startStep: 1, keys: ['s1', 's2'], steps: 2, calls: 0 })
   })
 
   it('leaves a single-step turn untouched', () => {
@@ -206,7 +211,7 @@ describe('ChatView step collapse', () => {
       session: { stepDigests: digests, stepAccounts: digests },
       expandTurn,
     })
-    expect(flow(view)).toEqual(['collapsed:1', 's2'])
+    expect(flow(view)).toEqual(['collapsed:1:1', 's2'])
     // The row reports the withheld step's own figures, not a fold of loaded nodes.
     expect(view.container.textContent).toContain('2')
 
@@ -225,9 +230,9 @@ describe('ChatView step collapse', () => {
     const view = mount([stepNode('s1', 1, 1), stepNode('s2', 1, 2)], 'collapsed', {
       session: { stepDigests: new Map(), stepAccounts: accounts },
     })
-    expect(flow(view)).toEqual(['collapsed:1', 's2'])
+    expect(flow(view)).toEqual(['collapsed:1:1', 's2'])
     fireEvent.click(view.getByRole('button'))
-    expect(flow(view)).toEqual(['collapsed:1', 's1', 's2'])
+    expect(flow(view)).toEqual(['collapsed:1:1', 's1', 's2'])
   })
 
   it('announces an in-flight expansion on the row', () => {
@@ -239,6 +244,36 @@ describe('ChatView step collapse', () => {
     const view = mount([stepNode('s2', 1, 2)], 'collapsed', {
       session: { stepDigests: digests, stepAccounts: digests, expandingTurns: new Set([1]) },
     })
+    // The fetch loads the whole turn, so only the group the reader opened reports it.
+    expect(view.queryByRole('status')).toBeNull()
+    fireEvent.click(view.getByRole('button'))
     expect(view.getByRole('status').textContent).toBe(commonZh.loading)
+  })
+
+  it('keeps both answers of a steered turn visible and opens only the selected group', () => {
+    const nodes = [
+      { ...stepNode('ask', 1, 1), kind: 'user' },
+      stepNode('work1', 1, 1),
+      stepNode('answer1', 1, 2, 'first answer'),
+      { ...stepNode('follow-up', 1, 3), kind: 'steering' },
+      stepNode('work2', 1, 3),
+      stepNode('answer2', 1, 4, 'second answer'),
+    ] as ChatConversationViewNode[]
+    const expandTurn = vi.fn()
+    const view = mount(nodes, 'collapsed', { expandTurn })
+    const first = view.container.querySelector('[data-collapsed-group="1:1"] button') as HTMLButtonElement
+    const second = view.container.querySelector('[data-collapsed-group="1:3"] button') as HTMLButtonElement
+    expect(flow(view)).toEqual(['ask', 'collapsed:1:1', 'answer1', 'follow-up', 'collapsed:1:3', 'answer2'])
+
+    fireEvent.click(first)
+    expect(first.getAttribute('aria-expanded')).toBe('true')
+    expect(second.getAttribute('aria-expanded')).toBe('false')
+    expect(flow(view)).toEqual(['ask', 'collapsed:1:1', 'work1', 'answer1', 'follow-up', 'collapsed:1:3', 'answer2'])
+
+    fireEvent.click(second)
+    fireEvent.click(first)
+    expect(flow(view)).toEqual(['ask', 'collapsed:1:1', 'answer1', 'follow-up', 'collapsed:1:3', 'work2', 'answer2'])
+    // Nothing was withheld, so no group fetched.
+    expect(expandTurn).not.toHaveBeenCalled()
   })
 })

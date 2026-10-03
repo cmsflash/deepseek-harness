@@ -13,8 +13,8 @@ export const TRANSCRIPT_VIEW_FIELD = 'transcriptView'
  *
  * `normal` renders every row. `compact` folds a completed Turn's process rows
  * behind one control once the Turn ends with a final answer. `collapsed`
- * folds each Turn's settled steps behind one summary row while the Turn is
- * still running, keeping only its latest step rendered.
+ * folds each response's settled steps behind one summary row while the Turn
+ * is still running, keeping its latest step and its answer rendered.
  */
 export const TRANSCRIPT_VIEW_MODES = ['normal', 'compact', 'collapsed'] as const
 

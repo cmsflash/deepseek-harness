@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/architecture/2026-09-01-collapsed-step-digest-paging.md
-2026-09-01-collapsed-step-digest-paging.md: ec1ed9846baa773f2e15785fd1a9c9a72eb22c92
-2026-09-01-collapsed-step-digest-paging.zh.md: 898eb36dc7e3079ca5a526d9f43a87aa85180c1b
+2026-09-01-collapsed-step-digest-paging.md: 68e70d686230f3f3a6446ee351e0fb25f1438ce0
+2026-09-01-collapsed-step-digest-paging.zh.md: 0c193f68fc545ced2c5ef360f97b75f1b01bd588

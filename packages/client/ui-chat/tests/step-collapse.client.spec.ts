@@ -1,12 +1,42 @@
 /**
- * Step-collapse fold: each turn keeps only its last step visible, earlier
- * steps fold into one marker per turn, and expansion restores them in place.
+ * Step-collapse fold: each human input starts a response group within its
+ * turn; each group keeps its last step and its answer visible, earlier steps
+ * fold into that group's marker, and expansion restores them in place.
  */
 import { describe, expect, it } from 'vitest'
 import type { ChatConversationViewNode, ChatNodeStore, ToolCallBlock } from '@deepseek-ai/dsh-client-ui-chat/client'
-import { collapseSettledSteps } from '../src/client/chat/step-collapse.ts'
+import type { ConversationTimelineSnapshot } from '@deepseek-ai/dsh-client-ui-conversation/client'
+import type { StepDigestsByTurn } from '@deepseek-ai/dsh-api-session-controller/client'
+import { collapseSettledSteps as fold } from '../src/client/chat/step-collapse.ts'
+import { timelineOf } from './step-collapse-fixtures.client.ts'
 
-const EMPTY: ReadonlySet<number> = new Set()
+const EMPTY: ReadonlySet<string> = new Set()
+
+/** The fold over a store whose timeline publishes each assistant node's data. */
+function collapseSettledSteps(
+  order: readonly string[],
+  nodes: ChatNodeStore,
+  expanded: ReadonlySet<string>,
+  digests?: StepDigestsByTurn,
+  accounts?: StepDigestsByTurn,
+  timeline: ConversationTimelineSnapshot = timelineOf(nodes.values()),
+) {
+  return fold(order, nodes, expanded, timeline, digests, accounts)
+}
+
+/** A settled assistant step payload, as the Assistant Definition publishes it. */
+function settledAssistant(options: { text?: string; usage?: unknown; stepStartTime?: number | null; completedTime?: number } = {}) {
+  return {
+    status: 'settled',
+    blocks: options.text === undefined ? [] : [{ kind: 'text', text: options.text }],
+    time: 0,
+    ...options.usage === undefined ? {} : { usage: options.usage },
+    finalNode: { timing: { stepStartTime: options.stepStartTime ?? null, completedTime: options.completedTime ?? 0 } },
+  }
+}
+
+const label = (row: ReturnType<typeof collapseSettledSteps>[number]): string =>
+  row.kind === 'node' ? row.key : `collapsed:${row.key}`
 
 function node(options: {
   key: string
@@ -29,7 +59,7 @@ function node(options: {
     anchorSeq: 0,
     visibility: 'visible',
     location,
-    data: options.data,
+    data: options.data ?? ((options.kind ?? 'assistant-step') === 'assistant-step' ? settledAssistant() : undefined),
   } as unknown as ChatConversationViewNode
 }
 
@@ -109,8 +139,8 @@ describe('collapseSettledSteps', () => {
       node({ key: 'tail', kind: 'turn-tail', turn: 1 }),
     ]
     const rows = collapseSettledSteps(['ask', 's1', 's2', 'tail'], store(nodes), EMPTY)
-    expect(rows.map(row => (row.kind === 'node' ? row.key : `collapsed:${String(row.turn)}`)))
-      .toEqual(['ask', 'collapsed:1', 's2', 'tail'])
+    expect(rows.map(row => (label(row))))
+      .toEqual(['ask', 'collapsed:1:1', 's2', 'tail'])
   })
 
   it('keeps assistant rows without resolved step coordinates visible', () => {
@@ -128,8 +158,8 @@ describe('collapseSettledSteps', () => {
       node({ key: 'b2', turn: 2, step: 2 }),
     ]
     const rows = collapseSettledSteps(['a1', 'a2', 'b1', 'b2'], store(nodes), EMPTY)
-    expect(rows.map(row => (row.kind === 'node' ? row.key : `collapsed:${String(row.turn)}`)))
-      .toEqual(['collapsed:1', 'a2', 'collapsed:2', 'b2'])
+    expect(rows.map(row => (label(row))))
+      .toEqual(['collapsed:1:1', 'a2', 'collapsed:2:1', 'b2'])
   })
 
   it('restores the hidden rows in place when the turn is expanded, keeping the marker', () => {
@@ -138,9 +168,9 @@ describe('collapseSettledSteps', () => {
       node({ key: 's2', turn: 1, step: 2 }),
       node({ key: 's3', turn: 1, step: 3 }),
     ]
-    const rows = collapseSettledSteps(['s1', 's2', 's3'], store(nodes), new Set([1]))
-    expect(rows.map(row => (row.kind === 'node' ? row.key : `collapsed:${String(row.turn)}`)))
-      .toEqual(['collapsed:1', 's1', 's2', 's3'])
+    const rows = collapseSettledSteps(['s1', 's2', 's3'], store(nodes), new Set(['1:1']))
+    expect(rows.map(row => (label(row))))
+      .toEqual(['collapsed:1:1', 's1', 's2', 's3'])
   })
 
   it('expands one turn without disturbing another', () => {
@@ -150,9 +180,9 @@ describe('collapseSettledSteps', () => {
       node({ key: 'b1', turn: 2, step: 1 }),
       node({ key: 'b2', turn: 2, step: 2 }),
     ]
-    const rows = collapseSettledSteps(['a1', 'a2', 'b1', 'b2'], store(nodes), new Set([2]))
-    expect(rows.map(row => (row.kind === 'node' ? row.key : `collapsed:${String(row.turn)}`)))
-      .toEqual(['collapsed:1', 'a2', 'collapsed:2', 'b1', 'b2'])
+    const rows = collapseSettledSteps(['a1', 'a2', 'b1', 'b2'], store(nodes), new Set(['2:1']))
+    expect(rows.map(row => (label(row))))
+      .toEqual(['collapsed:1:1', 'a2', 'collapsed:2:1', 'b1', 'b2'])
   })
 
   it('folds tool calls, nested subcalls, and diff lines into the marker metrics', () => {
@@ -228,24 +258,154 @@ describe('collapseSettledSteps', () => {
       .toMatchObject({ files: 1, added: 2, removed: 2 })
   })
 
-  it('folds context injections while keeping human messages and the last step visible', () => {
+  it('folds each response group\'s context separately, keeping the answer before a steer visible', () => {
     const nodes = [
       node({ key: 'system', kind: 'system-prompt', turn: 1, step: 1 }),
       node({ key: 'ask', kind: 'user', turn: 1, step: 1 }),
       node({ key: 'ctx1', kind: 'context', turn: 1, step: 1 }),
       toolNode('t1', 1, 1),
-      node({ key: 'a1', turn: 1, step: 1 }),
+      node({ key: 'a1', turn: 1, step: 1, data: settledAssistant({ text: 'first answer' }) }),
       node({ key: 'steer', kind: 'steering', turn: 1, step: 2 }),
       node({ key: 'ctx2', kind: 'context', turn: 1, step: 2 }),
       node({ key: 'a2', turn: 1, step: 2 }),
       node({ key: 'tail', kind: 'turn-tail', turn: 1 }),
     ]
     const rows = collapseSettledSteps(nodes.map(entry => entry.key), store(nodes), EMPTY)
-    expect(rows.map(row => row.kind === 'node' ? row.key : `collapsed:${String(row.turn)}`))
-      .toEqual(['system', 'ask', 'collapsed:1', 'steer', 'a2', 'tail'])
-    expect(rows[2]).toMatchObject({
-      keys: ['ctx1', 't1', 'a1', 'ctx2'],
-      metrics: { steps: 1, calls: 1, contextInjections: 2 },
+    expect(rows.map(row => label(row)))
+      .toEqual(['system', 'ask', 'collapsed:1:1', 't1', 'a1', 'steer', 'collapsed:1:2', 'a2', 'tail'])
+    expect(rows[2]).toMatchObject({ startStep: 1, keys: ['ctx1'], metrics: { steps: 0, contextInjections: 1 } })
+    expect(rows[6]).toMatchObject({ startStep: 2, keys: ['ctx2'], metrics: { steps: 0, contextInjections: 1 } })
+  })
+
+  describe('a turn steered after it answered', () => {
+    const steered = () => [
+      node({ key: 'ask', kind: 'user', turn: 1, step: 1 }),
+      toolNode('t1', 1, 1),
+      node({ key: 'a2', turn: 1, step: 2, data: settledAssistant({ text: 'first answer', usage: { inputTokens: 20, outputTokens: 2 } }) }),
+      node({ key: 'steer', kind: 'steering', turn: 1, step: 3 }),
+      toolNode('t3', 1, 3),
+      toolNode('t4', 1, 4),
+      node({ key: 'a5', turn: 1, step: 5, data: settledAssistant({ text: 'second answer' }) }),
+      node({ key: 'tail', kind: 'turn-tail', turn: 1 }),
+    ]
+    // Steps 1, 3, and 4 called tools without prose, so they render no assistant row.
+    const toolOnly = new Map([
+      ['1:1', settledAssistant({ usage: { inputTokens: 10, outputTokens: 1 }, stepStartTime: 0, completedTime: 100 })],
+      ['1:3', settledAssistant({ usage: { inputTokens: 30, outputTokens: 3 } })],
+      ['1:4', settledAssistant({ usage: { inputTokens: 40, outputTokens: 4 } })],
+    ])
+
+    it('keeps both answers visible with one disclosure per human input', () => {
+      const nodes = steered()
+      const rows = collapseSettledSteps(
+        nodes.map(entry => entry.key), store(nodes), EMPTY, undefined, undefined, timelineOf(nodes, toolOnly),
+      )
+      expect(rows.map(label))
+        .toEqual(['ask', 'collapsed:1:1', 'a2', 'steer', 'collapsed:1:3', 'a5', 'tail'])
+      // Tool-only model calls count although they render no assistant row.
+      expect(rows[1]).toMatchObject({
+        turn: 1, startStep: 1, keys: ['t1'], metrics: { steps: 1, calls: 1, elapsedMs: 100, inputTokens: 10, outputTokens: 1 },
+      })
+      expect(rows[4]).toMatchObject({
+        turn: 1, startStep: 3, keys: ['t3', 't4'], metrics: { steps: 2, calls: 2, inputTokens: 70, outputTokens: 7 },
+      })
+    })
+
+    it('opens only the selected group, in place', () => {
+      const nodes = steered()
+      const order = nodes.map(entry => entry.key)
+      const timeline = timelineOf(nodes, toolOnly)
+      const closed = collapseSettledSteps(order, store(nodes), EMPTY, undefined, undefined, timeline)
+      const second = collapseSettledSteps(order, store(nodes), new Set(['1:3']), undefined, undefined, timeline)
+      expect(second.map(label))
+        .toEqual(['ask', 'collapsed:1:1', 'a2', 'steer', 'collapsed:1:3', 't3', 't4', 'a5', 'tail'])
+      expect(second[4]).toEqual(closed[4])
+      const both = collapseSettledSteps(order, store(nodes), new Set(['1:1', '1:3']), undefined, undefined, timeline)
+      expect(both.map(label))
+        .toEqual(['ask', 'collapsed:1:1', 't1', 'a2', 'steer', 'collapsed:1:3', 't3', 't4', 'a5', 'tail'])
+    })
+
+    it('keeps the earlier answer visible when later work is tool-only and still running', () => {
+      const nodes = steered().slice(0, 6)
+      const rows = collapseSettledSteps(nodes.map(entry => entry.key), store(nodes), EMPTY)
+      expect(rows.map(label)).toEqual(['ask', 'collapsed:1:1', 'a2', 'steer', 'collapsed:1:3', 't4'])
+    })
+
+    it('keeps the answer and its group\'s last tool step when the answer is not the last step', () => {
+      const nodes = [
+        node({ key: 'ask', kind: 'user', turn: 1, step: 1 }),
+        toolNode('t1', 1, 1),
+        node({ key: 'a2', turn: 1, step: 2, data: settledAssistant({ text: 'answer' }) }),
+        toolNode('t3', 1, 3),
+        node({ key: 'steer', kind: 'steering', turn: 1, step: 4 }),
+        node({ key: 'a4', turn: 1, step: 4, data: settledAssistant({ text: 'done' }) }),
+      ]
+      const rows = collapseSettledSteps(nodes.map(entry => entry.key), store(nodes), EMPTY)
+      expect(rows.map(label)).toEqual(['ask', 'collapsed:1:1', 'a2', 't3', 'steer', 'a4'])
+    })
+
+    it('places a human input logged before its step started in the next step\'s group', () => {
+      const nodes = [
+        node({ key: 'ask', kind: 'user', turn: 1, step: 1 }),
+        toolNode('t1', 1, 1),
+        node({ key: 'a2', turn: 1, step: 2, data: settledAssistant({ text: 'answer' }) }),
+        { ...node({ key: 'steer', kind: 'steering', turn: 1 }), anchorSeq: 25 },
+        toolNode('t3', 1, 3),
+        node({ key: 'a4', turn: 1, step: 4, data: settledAssistant({ text: 'done' }) }),
+      ]
+      const rows = collapseSettledSteps(nodes.map(entry => entry.key), store(nodes), EMPTY)
+      expect(rows.map(label)).toEqual(['ask', 'collapsed:1:1', 'a2', 'steer', 'collapsed:1:3', 'a4'])
+    })
+
+    it('starts a new group at a human input after the turn\'s last started step', () => {
+      const nodes = [
+        node({ key: 'ask', kind: 'user', turn: 1, step: 1 }),
+        toolNode('t1', 1, 1),
+        node({ key: 'a2', turn: 1, step: 2, data: settledAssistant({ text: 'answer' }) }),
+        { ...node({ key: 'steer', kind: 'steering', turn: 1 }), anchorSeq: 99 },
+      ]
+      const rows = collapseSettledSteps(nodes.map(entry => entry.key), store(nodes), EMPTY)
+      expect(rows.map(label)).toEqual(['ask', 'collapsed:1:1', 'a2', 'steer'])
+    })
+
+    it('does not split a group at injected context', () => {
+      const nodes = [
+        node({ key: 'ask', kind: 'user', turn: 1, step: 1 }),
+        node({ key: 'a1', turn: 1, step: 1, data: settledAssistant({ text: 'interim' }) }),
+        node({ key: 'ctx', kind: 'context', turn: 1, step: 2 }),
+        node({ key: 'a2', turn: 1, step: 2, data: settledAssistant({ text: 'done' }) }),
+      ]
+      const rows = collapseSettledSteps(nodes.map(entry => entry.key), store(nodes), EMPTY)
+      expect(rows.map(label)).toEqual(['ask', 'collapsed:1:1', 'a2'])
+      expect(rows[1]).toMatchObject({ keys: ['a1', 'ctx'], metrics: { steps: 1, contextInjections: 1 } })
+    })
+
+    it('reads withheld steps around a steer from their own group\'s accounts', () => {
+      const nodes = [
+        node({ key: 'ask', kind: 'user', turn: 1, step: 1 }),
+        node({ key: 'a2', turn: 1, step: 2, data: settledAssistant({ text: 'first answer' }) }),
+        node({ key: 'steer', kind: 'steering', turn: 1, step: 3 }),
+        node({ key: 'a5', turn: 1, step: 5, data: settledAssistant({ text: 'second answer' }) }),
+      ]
+      const withheld = new Map([[1, [account(1, 1), account(1, 3, { inputTokens: 300 }), account(1, 4, { inputTokens: 400 })]]])
+      const order = nodes.map(entry => entry.key)
+      const closed = collapseSettledSteps(order, store(nodes), EMPTY, withheld)
+      expect(closed.map(label)).toEqual(['ask', 'collapsed:1:1', 'a2', 'steer', 'collapsed:1:3', 'a5'])
+      expect(closed[1]).toMatchObject({ keys: [], withheld: true, metrics: { steps: 1, calls: 2, inputTokens: 1000 } })
+      expect(closed[4]).toMatchObject({ keys: [], withheld: true, metrics: { steps: 2, calls: 4, inputTokens: 700 } })
+
+      // Expansion loads the whole turn; only the opened group reveals its rows.
+      const loaded = [
+        nodes[0] as ChatConversationViewNode, toolNode('t1', 1, 1), nodes[1] as ChatConversationViewNode,
+        nodes[2] as ChatConversationViewNode, toolNode('t3', 1, 3), toolNode('t4', 1, 4), nodes[3] as ChatConversationViewNode,
+      ]
+      const opened = collapseSettledSteps(
+        loaded.map(entry => entry.key), store(loaded), new Set(['1:3']), new Map(), withheld,
+      )
+      expect(opened.map(label))
+        .toEqual(['ask', 'collapsed:1:1', 'a2', 'steer', 'collapsed:1:3', 't3', 't4', 'a5'])
+      expect((opened[1] as { metrics: unknown }).metrics).toEqual((closed[1] as { metrics: unknown }).metrics)
+      expect((opened[4] as { metrics: unknown }).metrics).toEqual((closed[4] as { metrics: unknown }).metrics)
     })
   })
 
@@ -262,9 +422,9 @@ describe('collapseSettledSteps', () => {
       { kind: 'collapsed', turn: 1, keys: ['ctx'], metrics: { contextInjections: 1, steps: 0, calls: 0 } },
       { kind: 'node', key: 'answer' },
     ])
-    const opened = collapseSettledSteps(order, store(nodes), new Set([1]))
-    expect(opened.map(row => row.kind === 'node' ? row.key : `collapsed:${String(row.turn)}`))
-      .toEqual(['ask', 'collapsed:1', 'ctx', 'answer'])
+    const opened = collapseSettledSteps(order, store(nodes), new Set(['1:1']))
+    expect(opened.map(row => label(row)))
+      .toEqual(['ask', 'collapsed:1:1', 'ctx', 'answer'])
     expect(opened[1]).toEqual(closed[1])
   })
 
@@ -317,15 +477,12 @@ describe('collapseSettledSteps', () => {
     const step = (key: string, stepNo: number, data: unknown) =>
       node({ key, kind: 'assistant-step', turn: 1, step: stepNo, data })
     const nodes = [
-      step('a1', 1, {
+      step('a1', 1, settledAssistant({
         usage: { inputTokens: 10, cacheReadTokens: 90, cacheWriteTokens: 5, outputTokens: 7 },
-        finalNode: { timing: { stepStartTime: 1_000, completedTime: 3_000 } },
-      }),
-      step('a2', 2, {
-        usage: { inputTokens: 20, outputTokens: 3 },
-        finalNode: { timing: { stepStartTime: 3_000, completedTime: 4_500 } },
-      }),
-      step('a3', 3, {}),
+        stepStartTime: 1_000, completedTime: 3_000,
+      })),
+      step('a2', 2, settledAssistant({ usage: { inputTokens: 20, outputTokens: 3 }, stepStartTime: 3_000, completedTime: 4_500 })),
+      step('a3', 3, settledAssistant()),
     ]
     const rows = collapseSettledSteps(['a1', 'a2', 'a3'], store(nodes), EMPTY)
     expect((rows[0] as { metrics: unknown }).metrics).toMatchObject({
@@ -335,11 +492,9 @@ describe('collapseSettledSteps', () => {
 
   it('leaves time and tokens at zero when the provider reported neither', () => {
     const nodes = [
-      node({ key: 'a1', kind: 'assistant-step', turn: 1, step: 1, data: { usage: 'nope' } }),
+      node({ key: 'a1', kind: 'assistant-step', turn: 1, step: 1, data: { ...settledAssistant(), usage: 'nope' } }),
       // A step whose start left the loaded window contributes no wall time.
-      node({ key: 'a2', kind: 'assistant-step', turn: 1, step: 2, data: {
-        finalNode: { timing: { stepStartTime: null, completedTime: 9_000 } },
-      } }),
+      node({ key: 'a2', kind: 'assistant-step', turn: 1, step: 2, data: settledAssistant({ completedTime: 9_000 }) }),
       node({ key: 'a3', kind: 'assistant-step', turn: 1, step: 3 }),
     ]
     const rows = collapseSettledSteps(['a1', 'a2', 'a3'], store(nodes), EMPTY)
@@ -417,8 +572,8 @@ describe('collapseSettledSteps with withheld steps', () => {
     const digests = new Map([[1, [account(1, 1)]]])
     const rows = collapseSettledSteps(['ask', 'a1', 'a2'], store(nodes), EMPTY, digests)
 
-    expect(rows.map(row => (row.kind === 'node' ? row.key : `collapsed:${String(row.turn)}`)))
-      .toEqual(['ask', 'collapsed:1', 'a2'])
+    expect(rows.map(row => (label(row))))
+      .toEqual(['ask', 'collapsed:1:1', 'a2'])
   })
 
   it('keeps the marker in place when the reader opens it', () => {
@@ -431,22 +586,22 @@ describe('collapseSettledSteps with withheld steps', () => {
     const closed = collapseSettledSteps(['ask', 'a1', 'a2'], store(nodes), EMPTY, withheld)
     // Expansion clears the withheld marker but keeps the account, which is
     // what stops the row from moving to a different anchor.
-    const opened = collapseSettledSteps(['ask', 'a1', 'a2'], store(nodes), new Set([1]), new Map(), withheld)
+    const opened = collapseSettledSteps(['ask', 'a1', 'a2'], store(nodes), new Set(['1:1']), new Map(), withheld)
 
     expect(closed.findIndex(row => row.kind === 'collapsed'))
       .toBe(opened.findIndex(row => row.kind === 'collapsed'))
-    expect(opened.map(row => (row.kind === 'node' ? row.key : `collapsed:${String(row.turn)}`)))
-      .toEqual(['ask', 'collapsed:1', 'a1', 'a2'])
+    expect(opened.map(row => (label(row))))
+      .toEqual(['ask', 'collapsed:1:1', 'a1', 'a2'])
   })
 
   it('reports the same figures before and after expansion', () => {
     const nodes = [
-      node({ key: 'a1', turn: 1, step: 1, data: { usage: { inputTokens: 1000, outputTokens: 50 } } }),
+      node({ key: 'a1', turn: 1, step: 1, data: settledAssistant({ usage: { inputTokens: 1000, outputTokens: 50 } }) }),
       node({ key: 'a2', turn: 1, step: 2 }),
     ]
     const withheld = new Map([[1, [account(1, 1)]]])
     const closed = collapseSettledSteps(['a1', 'a2'], store(nodes), EMPTY, withheld)
-    const opened = collapseSettledSteps(['a1', 'a2'], store(nodes), new Set([1]), new Map(), withheld)
+    const opened = collapseSettledSteps(['a1', 'a2'], store(nodes), new Set(['1:1']), new Map(), withheld)
 
     const metricsOf = (rows: readonly { kind: string }[]) =>
       (rows.find(row => row.kind === 'collapsed') as { metrics: unknown } | undefined)?.metrics
@@ -466,7 +621,7 @@ describe('collapseSettledSteps with withheld steps', () => {
     const cold = collapseSettledSteps(coldNodes.map(entry => entry.key), store(coldNodes), EMPTY, withheld)
     const loadedNodes = [ask, ctx1, node({ key: 'a1', turn: 1, step: 1 }), ctx2, answer]
     const opened = collapseSettledSteps(
-      loadedNodes.map(entry => entry.key), store(loadedNodes), new Set([1]), new Map(), withheld,
+      loadedNodes.map(entry => entry.key), store(loadedNodes), new Set(['1:1']), new Map(), withheld,
     )
     expect(cold[1]).toMatchObject({
       kind: 'collapsed', keys: ['ctx1', 'ctx2'], metrics: { contextInjections: 2, steps: 1, calls: 2 },
@@ -474,19 +629,19 @@ describe('collapseSettledSteps with withheld steps', () => {
     expect(opened[1]).toMatchObject({
       kind: 'collapsed', keys: ['ctx1', 'a1', 'ctx2'], metrics: { contextInjections: 2, steps: 1, calls: 2 },
     })
-    expect(opened.map(row => row.kind === 'node' ? row.key : `collapsed:${String(row.turn)}`))
-      .toEqual(['ask', 'collapsed:1', 'ctx1', 'a1', 'ctx2', 'a2'])
+    expect(opened.map(row => label(row)))
+      .toEqual(['ask', 'collapsed:1:1', 'ctx1', 'a1', 'ctx2', 'a2'])
   })
 
   it('counts an accounted step once even when its nodes are loaded', () => {
     // Both the account and the materialized node describe step 1; folding
     // both would double the turn's reported cost.
     const nodes = [
-      node({ key: 'a1', turn: 1, step: 1, data: { usage: { inputTokens: 1000, outputTokens: 50 } } }),
+      node({ key: 'a1', turn: 1, step: 1, data: settledAssistant({ usage: { inputTokens: 1000, outputTokens: 50 } }) }),
       node({ key: 'a2', turn: 1, step: 2 }),
     ]
     const accounts = new Map([[1, [account(1, 1)]]])
-    const rows = collapseSettledSteps(['a1', 'a2'], store(nodes), new Set([1]), new Map(), accounts)
+    const rows = collapseSettledSteps(['a1', 'a2'], store(nodes), new Set(['1:1']), new Map(), accounts)
     const marker = rows.find(row => row.kind === 'collapsed') as { metrics: { steps: number; inputTokens: number } }
 
     expect(marker.metrics.steps).toBe(1)
@@ -497,7 +652,7 @@ describe('collapseSettledSteps with withheld steps', () => {
     const nodes = [node({ key: 'a1', turn: 1, step: 1 }), node({ key: 'a2', turn: 1, step: 2 })]
     const withheld = new Map([[1, [account(1, 1)]]])
     const closed = collapseSettledSteps(['a1', 'a2'], store(nodes), EMPTY, withheld)
-    const opened = collapseSettledSteps(['a1', 'a2'], store(nodes), new Set([1]), new Map(), withheld)
+    const opened = collapseSettledSteps(['a1', 'a2'], store(nodes), new Set(['1:1']), new Map(), withheld)
 
     expect((closed.find(row => row.kind === 'collapsed') as { withheld: boolean }).withheld).toBe(true)
     expect((opened.find(row => row.kind === 'collapsed') as { withheld: boolean }).withheld).toBe(false)

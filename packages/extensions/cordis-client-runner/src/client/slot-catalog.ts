@@ -176,7 +176,7 @@ export const CLIENT_SLOT_API: readonly ClientSlotEntry[] = [
     ],
     replaceRisk: 'none',
     example: 'return {\n  inject: [\'slots\'],\n  apply(ctx) {\n    ctx.slots.inject(\'conversation.chat.assistant-actions\', () => ctx.slots.register(\n      { name: \'conversation.chat.assistant-actions\', id: \'my-entry\', order: 100, label: \'My entry\' },\n      () => React.createElement(\'div\', null, \'hello\'),\n    ))\n  },\n}',
-    source: 'packages/client/ui-chat/src/client/contract/slots.ts:248',
+    source: 'packages/client/ui-chat/src/client/contract/slots.ts:249',
   },
   {
     key: 'conversation.chat.collapsedMetric',
@@ -205,7 +205,7 @@ export const CLIENT_SLOT_API: readonly ClientSlotEntry[] = [
       },
     ],
     ownerProps: [
-      '/**\n * Owner currency of one contributed collapsed-row figure: which turn\'s hidden\n * steps the row stands for, and the counts it already folded.\n */\nexport interface CollapsedMetricOwnerProps {\n  /** Turn owning the hidden steps. */\n  turn: number\n  /**\n   * Node keys this row hides, in render order.\n   *\n   * Every built-in figure sums these keys alone, so a contributor that folds\n   * the same set states the same scope. Reading the whole turn instead counts\n   * the still-visible last step, which no other figure on the line includes\n   * and expanding the row cannot account for.\n   */\n  keys: readonly string[]\n  /** Hidden model calls; zero when the group\'s work was entirely tool calls. */\n  steps: number\n  /** Hidden settled tool calls, counting nested subcalls. */\n  calls: number\n}',
+      '/**\n * Owner currency of one contributed collapsed-row figure: which response\n * group\'s hidden steps the row stands for, and the counts it already folded.\n */\nexport interface CollapsedMetricOwnerProps {\n  /** Backend turn owning the hidden steps. */\n  turn: number\n  /** Step of the human input starting this response group; 1 for the turn\'s opening group. */\n  startStep: number\n  /**\n   * Materialized node keys this row hides, in render order.\n   *\n   * Withheld steps and tool-only model calls are counted in `steps` and\n   * `calls` without a key. Reading the whole turn instead counts other\n   * response groups and the answers they keep visible.\n   */\n  keys: readonly string[]\n  /** Hidden model calls, including requests that rendered no assistant row. */\n  steps: number\n  /** Hidden settled tool calls, counting nested subcalls. */\n  calls: number\n}',
     ],
     ownerPropsReferences: [],
     standardProps: [
@@ -232,7 +232,7 @@ export const CLIENT_SLOT_API: readonly ClientSlotEntry[] = [
     occupants: [],
     replaceRisk: 'none',
     example: 'return {\n  inject: [\'slots\'],\n  apply(ctx) {\n    ctx.slots.inject(\'conversation.chat.collapsedMetric\', () => ctx.slots.register(\n      { name: \'conversation.chat.collapsedMetric\', id: \'my-entry\', order: 100, label: \'My entry\' },\n      () => React.createElement(\'div\', null, \'hello\'),\n    ))\n  },\n}',
-    source: 'packages/client/ui-chat/src/client/contract/slots.ts:258',
+    source: 'packages/client/ui-chat/src/client/contract/slots.ts:259',
   },
   {
     key: 'conversation.chat.commandview',
@@ -280,7 +280,7 @@ export const CLIENT_SLOT_API: readonly ClientSlotEntry[] = [
     occupants: [],
     replaceRisk: 'none',
     example: 'return {\n  inject: [\'slots\'],\n  apply(ctx) {\n    ctx.slots.inject(\'conversation.chat.commandview\', () => ctx.slots.register(\n      { name: \'conversation.chat.commandview\', key: \'<one key the owner dispatches>\' },\n      () => React.createElement(\'div\', null, \'hello\'),\n    ))\n  },\n}',
-    source: 'packages/client/ui-chat/src/client/contract/slots.ts:236',
+    source: 'packages/client/ui-chat/src/client/contract/slots.ts:237',
   },
   {
     key: 'conversation.chat.node',
@@ -349,7 +349,7 @@ export const CLIENT_SLOT_API: readonly ClientSlotEntry[] = [
     ],
     replaceRisk: 'shadows-shipped-ui',
     example: 'return {\n  inject: [\'slots\'],\n  apply(ctx) {\n    ctx.slots.inject(\'conversation.chat.node\', () => ctx.slots.register(\n      { name: \'conversation.chat.node\', key: \'<one key the owner dispatches>\' },\n      () => React.createElement(\'div\', null, \'hello\'),\n    ))\n  },\n}',
-    source: 'packages/client/ui-chat/src/client/contract/slots.ts:217',
+    source: 'packages/client/ui-chat/src/client/contract/slots.ts:218',
   },
   {
     key: 'conversation.chat.turnTail',
@@ -410,7 +410,7 @@ export const CLIENT_SLOT_API: readonly ClientSlotEntry[] = [
     ],
     replaceRisk: 'none',
     example: 'return {\n  inject: [\'slots\'],\n  apply(ctx) {\n    ctx.slots.inject(\'conversation.chat.turnTail\', () => ctx.slots.register(\n      { name: \'conversation.chat.turnTail\', id: \'my-entry\', order: 100, label: \'My entry\' },\n      () => React.createElement(\'div\', null, \'hello\'),\n    ))\n  },\n}',
-    source: 'packages/client/ui-chat/src/client/contract/slots.ts:242',
+    source: 'packages/client/ui-chat/src/client/contract/slots.ts:243',
   },
   {
     key: 'conversation.composer',
@@ -1118,7 +1118,7 @@ export const CLIENT_SLOT_API: readonly ClientSlotEntry[] = [
     ],
     replaceRisk: 'shadows-shipped-ui',
     example: 'return {\n  inject: [\'slots\'],\n  apply(ctx) {\n    ctx.slots.inject(\'conversation.message.images\', () => ctx.slots.register(\n      { name: \'conversation.message.images\' },\n      () => React.createElement(\'div\', null, \'hello\'),\n    ))\n  },\n}',
-    source: 'packages/client/ui-chat/src/client/contract/slots.ts:230',
+    source: 'packages/client/ui-chat/src/client/contract/slots.ts:231',
   },
   {
     key: 'conversation.plan-review.actions',

@@ -69,14 +69,44 @@ function step(turn: number, index: number, options: {
   return events
 }
 
+/** A user-role message as the loop logs it: a human prompt or steer, or injected context. */
+function userMessage(source: 'user' | 'plugin', text = 'ask'): SessionEvent {
+  return event('user/message', {
+    role: 'user',
+    content: [{ type: 'text', text }],
+    source: source === 'user' ? { kind: 'user' } : { kind: 'plugin', plugin: 'notices' },
+  })
+}
+
 /** Wrap steps in a turn, with the prompting user message that opens it. */
 function turn(number: number, steps: SessionEvent[][]): SessionEvent[] {
   return [
     event('turn/start', { turn: number }),
-    event('user/message', { message: { content: [{ type: 'text', text: 'ask' }] } }),
+    userMessage('user'),
     ...steps.flat(),
     event('turn/end', { turn: number, reason: { kind: 'completed' } }),
   ]
+}
+
+/**
+ * One step that claims a user-role message, logged right after its
+ * `step/start` exactly as the loop orders a steer or injected notice.
+ */
+function claimingStep(turnNumber: number, index: number, source: 'user' | 'plugin', options: Parameters<typeof step>[2] = {}): SessionEvent[] {
+  const [start, ...rest] = step(turnNumber, index, options)
+  const claimed = userMessage(source, source === 'user' ? 'steer' : 'notice')
+  // Renumber so seq order stays log order with the claimed message after step/start.
+  const events = [start as SessionEvent, claimed, ...rest]
+  const seqs = events.map(item => item.seq).sort((left, right) => left - right)
+  return events.map((item, at) => ({ ...item, seq: seqs[at] }) as SessionEvent)
+}
+
+/** Text of every assistant message a served page carries. */
+function servedTexts(events: readonly SessionEvent[]): string[] {
+  return events
+    .filter(item => item.type === 'assistant/message')
+    .map(item => (item.data as { message: { content: { text?: string }[] } }).message.content[0]?.text)
+    .filter((text): text is string => text !== undefined)
 }
 
 function types(result: readonly SessionEvent[]): string[] {
@@ -195,6 +225,99 @@ describe('collapseSteps', () => {
     const retainedScope = [...log]
     const { events: served } = collapseSteps([stray], retainedScope)
     expect(served).toEqual([stray])
+  })
+
+  describe('human messages steered into a running turn', () => {
+    it('retains the answer a steer ended: its last assistant step and its last text-carrying step', () => {
+      seq = 0
+      const log = turn(1, [
+        step(1, 1, { tool: true }),
+        step(1, 2, { text: 'first answer', tool: true }),
+        step(1, 3, { tool: true }),
+        claimingStep(1, 4, 'user', { tool: true }),
+        step(1, 5, { text: 'second answer' }),
+      ])
+      const { events: served, digests } = collapseSteps(log, log)
+
+      expect(digests.map(digest => digest.step)).toEqual([1, 4])
+      expect(servedTexts(served)).toEqual(['first answer', 'second answer'])
+    })
+
+    it('retains one answer per steer when the human steers more than once', () => {
+      seq = 0
+      const log = turn(1, [
+        step(1, 1, { tool: true }),
+        step(1, 2, { text: 'one', tool: true }),
+        claimingStep(1, 3, 'user', { tool: true }),
+        step(1, 4, { text: 'two', tool: true }),
+        claimingStep(1, 5, 'user', { tool: true }),
+        step(1, 6, { text: 'three' }),
+      ])
+      const { events: served, digests } = collapseSteps(log, log)
+
+      expect(digests.map(digest => digest.step)).toEqual([1, 3, 5])
+      expect(servedTexts(served)).toEqual(['one', 'two', 'three'])
+    })
+
+    it('treats injected context as no answer boundary', () => {
+      seq = 0
+      const log = turn(1, [
+        step(1, 1, { tool: true }),
+        step(1, 2, { text: 'interim', tool: true }),
+        claimingStep(1, 3, 'plugin', { tool: true }),
+        step(1, 4, { text: 'done' }),
+      ])
+
+      expect(collapseSteps(log, log).digests.map(digest => digest.step)).toEqual([1, 2, 3])
+    })
+
+    it('retains nothing extra for a human message before any model call of its turn', () => {
+      seq = 0
+      const log = [
+        ...turn(1, [step(1, 1, { tool: true }), step(1, 2, { text: 'a' })]),
+        ...turn(2, [claimingStep(2, 1, 'user', { tool: true }), step(2, 2, { text: 'b' })]),
+      ]
+
+      expect(collapseSteps(log, log).digests.map(digest => `${String(digest.turn)}:${String(digest.step)}`))
+        .toEqual(['1:1', '2:1'])
+    })
+
+    it('keeps the earlier answer whole on a page that ends before the steer', () => {
+      seq = 0
+      const log = turn(1, [
+        step(1, 1, { tool: true }),
+        step(1, 2, { text: 'first answer', tool: true }),
+        claimingStep(1, 3, 'user', { tool: true }),
+        step(1, 4, { text: 'second answer' }),
+      ])
+      const cut = log.findIndex(item => item.type === 'step/start' && (item.data as { step: number }).step === 3)
+      const { events: served, digests } = collapseSteps(log.slice(0, cut), log)
+
+      expect(digests.map(digest => digest.step)).toEqual([1])
+      expect(servedTexts(served)).toEqual(['first answer'])
+    })
+
+    it('expands to exactly what the page withheld across steered answers', () => {
+      seq = 0
+      const log = turn(1, [
+        step(1, 1, { tool: true }),
+        step(1, 2, { text: 'one', tool: true }),
+        claimingStep(1, 3, 'plugin', { tool: true }),
+        claimingStep(1, 4, 'user', { tool: true }),
+        step(1, 5, { text: 'two', tool: true }),
+        claimingStep(1, 6, 'user', { tool: true }),
+        step(1, 7, { text: 'three' }),
+      ])
+      const { events: served, digests } = collapseSteps(log, log)
+      const expanded = elidedEventsOfTurn(log, 1)
+
+      // Step 3 is the last model call before the steer at step 4, so it stays whole.
+      expect(digests.map(digest => digest.step)).toEqual([1, 4, 6])
+      expect(expanded.some(item => item.type === 'user/message')).toBe(false)
+      expect(expanded).toHaveLength(digests.reduce((sum, digest) => sum + digest.elided, 0))
+      expect([...served, ...expanded].sort((left, right) => left.seq - right.seq))
+        .toEqual([...log].sort((left, right) => left.seq - right.seq))
+    })
   })
 
   it('never elides an event that carries no step coordinate', () => {

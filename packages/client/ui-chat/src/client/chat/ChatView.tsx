@@ -205,24 +205,25 @@ function TurnStatus({ startTime, t }: {
 
 type ChatNodeListProps = Omit<ComponentProps<typeof ChatNodeSeat>, 'nodeKey'> & {
   readonly flow: readonly ChatFlowRow[]
-  readonly expandedTurns: ReadonlySet<number>
+  readonly expandedGroups: ReadonlySet<string>
   readonly expandingTurns: ReadonlySet<number>
-  readonly toggleTurn: (turn: number, withheld: boolean) => void
+  readonly toggleGroup: (group: string, turn: number, withheld: boolean) => void
 }
 
 const ChatNodeList = memo(function ChatNodeList({
-  flow, expandedTurns, expandingTurns, toggleTurn, ...seatProps
+  flow, expandedGroups, expandingTurns, toggleGroup, ...seatProps
 }: ChatNodeListProps) {
   return flow.map(row => (row.kind === 'collapsed'
     ? (
       <CollapsedStepsRow
-        key={`collapsed:${String(row.turn)}`}
+        key={`collapsed:${row.key}`}
         turn={row.turn}
+        startStep={row.startStep}
         keys={row.keys}
         metrics={row.metrics}
-        expanded={expandedTurns.has(row.turn)}
-        loading={expandingTurns.has(row.turn)}
-        onToggle={() => { toggleTurn(row.turn, row.withheld) }}
+        expanded={expandedGroups.has(row.key)}
+        loading={expandedGroups.has(row.key) && expandingTurns.has(row.turn)}
+        onToggle={() => { toggleGroup(row.key, row.turn, row.withheld) }}
         renderSlot={seatProps.renderSlot}
         t={seatProps.t}
       />
@@ -266,26 +267,26 @@ export function ChatView({
   const stepDigests = useSession(s => s.stepDigests)
   const stepAccounts = useSession(s => s.stepAccounts)
   const expandingTurns = useSession(s => s.expandingTurns)
-  // Reader-owned disclosure: only this view knows which turns the reader
-  // opened, and the choice is deliberately not persisted — a fresh mount
-  // starts collapsed again, matching the preference's intent.
-  const [expandedTurns, setExpandedTurns] = useState<ReadonlySet<number>>(() => new Set())
-  const toggleTurn = useCallback((turn: number, withheld: boolean) => {
-    // Withheld steps are fetched before they can render, and the disclosure
-    // opens either way: the row reports its own loading state rather than
-    // staying shut until events land.
+  // Reader-owned disclosure: only this view knows which response groups the
+  // reader opened, and the choice is deliberately not persisted — a fresh
+  // mount starts collapsed again, matching the preference's intent.
+  const [expandedGroups, setExpandedGroups] = useState<ReadonlySet<string>>(() => new Set())
+  const toggleGroup = useCallback((group: string, turn: number, withheld: boolean) => {
+    // Withheld steps are fetched for the whole backend turn before they can
+    // render, and the disclosure opens either way: the row reports its own
+    // loading state rather than staying shut until events land.
     if (withheld) void expandTurn(turn)
-    setExpandedTurns((current) => {
+    setExpandedGroups((current) => {
       const next = new Set(current)
-      if (!next.delete(turn)) next.add(turn)
+      if (!next.delete(group)) next.add(group)
       return next
     })
   }, [expandTurn])
   const flow = useMemo<readonly ChatFlowRow[]>(
     () => (collapseSteps
-      ? collapseSettledSteps(order, nodeStore, expandedTurns, stepDigests, stepAccounts)
+      ? collapseSettledSteps(order, nodeStore, expandedGroups, timeline, stepDigests, stepAccounts)
       : order.map(key => ({ kind: 'node', key }) as const)),
-    [collapseSteps, order, nodeStore, expandedTurns, stepDigests, stepAccounts],
+    [collapseSteps, order, nodeStore, expandedGroups, timeline, stepDigests, stepAccounts],
   )
   const inspectCall = useCallback((callId: string) => {
     openView('trajectory', callId)
@@ -829,9 +830,9 @@ export function ChatView({
           <MarkdownDelegateProvider openExternalLink={openExternalLink} openFile={requestOpenFile}>
             <ChatNodeList
               flow={flow}
-              expandedTurns={expandedTurns}
+              expandedGroups={expandedGroups}
               expandingTurns={expandingTurns}
-              toggleTurn={toggleTurn}
+              toggleGroup={toggleGroup}
               useChatNode={useChatNode}
               useChatNodeProcess={useChatNodeProcess}
               historyIncomplete={hasMore}

@@ -49,22 +49,23 @@ export interface AssistantActionOwnerProps {
 }
 
 /**
- * Owner currency of one contributed collapsed-row figure: which turn's hidden
- * steps the row stands for, and the counts it already folded.
+ * Owner currency of one contributed collapsed-row figure: which response
+ * group's hidden steps the row stands for, and the counts it already folded.
  */
 export interface CollapsedMetricOwnerProps {
-  /** Turn owning the hidden steps. */
+  /** Backend turn owning the hidden steps. */
   turn: number
+  /** Step of the human input starting this response group; 1 for the turn's opening group. */
+  startStep: number
   /**
-   * Node keys this row hides, in render order.
+   * Materialized node keys this row hides, in render order.
    *
-   * Every built-in figure sums these keys alone, so a contributor that folds
-   * the same set states the same scope. Reading the whole turn instead counts
-   * the still-visible last step, which no other figure on the line includes
-   * and expanding the row cannot account for.
+   * Withheld steps and tool-only model calls are counted in `steps` and
+   * `calls` without a key. Reading the whole turn instead counts other
+   * response groups and the answers they keep visible.
    */
   keys: readonly string[]
-  /** Hidden model calls; zero when the group's work was entirely tool calls. */
+  /** Hidden model calls, including requests that rendered no assistant row. */
   steps: number
   /** Hidden settled tool calls, counting nested subcalls. */
   calls: number

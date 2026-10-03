@@ -1,31 +1,29 @@
-// Per-turn summaries hide earlier assistant/tool steps and turn-owned context
-// injections. The latest assistant/tool step and human messages stay visible.
+// Response-group summaries: each human input starts a group within its turn.
+// A group keeps its highest assistant/tool step and its latest text visible;
+// earlier steps and turn-owned context injections fold behind one summary row.
 //
-// The fold reads the already-published order and node store, so it adds no
-// engine state and no per-node subscription.
+// The fold reads the already-published order, node store, and timeline, so it
+// adds no engine state and no per-node subscription.
 
 import type { StepDigest } from '@deepseek-ai/dsh-api-remotes/client'
 import type { StepDigestsByTurn } from '@deepseek-ai/dsh-api-session-controller/client'
-import type { ConversationLocation, ToolCallBlock } from '@deepseek-ai/dsh-client-ui-conversation/client'
+import type {
+  ConversationLocation, ConversationTimelineSnapshot, ToolCallBlock,
+} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import { appliedFileDiffs, fileDiffLineDelta } from '@deepseek-ai/dsh-tools/presentation'
-import type { ChatConversationViewNode, ToolChatData } from '../contract/chat-nodes.ts'
+import type { AssistantChatData, ChatConversationViewNode, ToolChatData } from '../contract/chat-nodes.ts'
 import type { ChatNodeStore } from '../contract/snapshot.ts'
 
 /** A window whose pages carried every step serves no digests. */
 const EMPTY_DIGESTS: StepDigestsByTurn = new Map()
 
-/** Identity of one step within its turn. */
-function stepKey(turn: number, step: number): string {
-  return `${String(turn)}:${String(step)}`
-}
-
 /** Metrics summarizing the settled steps hidden behind one summary row. */
 export interface CollapsedStepMetrics {
-  /** Collapsed model calls (one per hidden step). */
+  /** Hidden model calls, including requests that rendered no assistant row. */
   steps: number
   /** Settled tool calls across those steps, counting nested subcalls. */
   calls: number
-  /** Turn-owned context rows, including injections beside the visible last step. */
+  /** Turn-owned context rows of this response group, including those beside its visible steps. */
   contextInjections: number
   /** Distinct file paths their applied diffs touched, across every hidden step. */
   files: number
@@ -43,17 +41,20 @@ export type ChatFlowRow =
   | { readonly kind: 'node'; readonly key: string }
   | {
     readonly kind: 'collapsed'
-    /** Turn owning the hidden steps; also the expansion identity. */
+    /** Backend turn owning the hidden steps; the unit a withheld-step fetch loads. */
     readonly turn: number
+    /** Step of the human input starting this response group; 1 for the turn's opening group. */
+    readonly startStep: number
+    /** `turn:startStep`, the disclosure identity. */
+    readonly key: string
     /** Hidden node keys, in render order, revealed on expand. */
     readonly keys: readonly string[]
     readonly metrics: CollapsedStepMetrics
     /**
-     * Whether this turn still holds steps the window never loaded.
+     * Whether this group still holds steps the window never loaded.
      *
      * A collapsed history page withholds those steps' events, so expanding
-     * reads them back before the rows can render. A row without withheld
-     * steps expands from material already in the window.
+     * reads its turn back before the rows can render.
      */
     readonly withheld: boolean
   }
@@ -69,11 +70,6 @@ interface UsageLike {
   outputTokens?: unknown
   cacheReadTokens?: unknown
   cacheWriteTokens?: unknown
-}
-
-interface AssistantLike {
-  usage?: unknown
-  finalNode?: { timing?: { stepStartTime: number | null; completedTime: number } }
 }
 
 /**
@@ -107,27 +103,30 @@ function foldTool(tool: ToolCallBlock, metrics: CollapsedStepMetrics, paths: Set
   for (const child of tool.subCalls) foldTool(child, metrics, paths)
 }
 
-/** Only assistant and tool rows determine which step remains visible. */
+/** Only assistant and tool rows determine which steps remain visible. */
 const STEP_WORK_KINDS: ReadonlySet<string> = new Set(['assistant-step', 'tool-call'])
+/** Human inputs, each starting a response group. */
+const INPUT_KINDS: ReadonlySet<string> = new Set(['user', 'steering'])
 
 function count(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0
 }
 
 /**
- * Add one settled step's wall time and provider-reported tokens.
+ * Add one recorded model call: its count, wall time, and provider tokens.
  *
- * `usage` is typed `unknown` on the client because it is the provider's own
- * payload, so each field is read defensively; a step whose provider reported
- * nothing contributes zeros. Wall time needs both boundaries, and `stepStartTime`
- * is null once the step's start leaves the loaded window.
+ * Only a durable `assistant/message` records timing, matching the host's
+ * per-step count; a still-streaming step or a chunk-only interruption adds
+ * nothing. `usage` is the provider's own payload, so each field is read
+ * defensively, and `stepStartTime` is null once the step's start leaves the
+ * loaded window.
  */
-function foldAssistant(data: AssistantLike | undefined, metrics: CollapsedStepMetrics): void {
-  const timing = data?.finalNode?.timing
-  if (timing !== undefined && timing.stepStartTime !== null) {
-    metrics.elapsedMs += Math.max(0, timing.completedTime - timing.stepStartTime)
-  }
-  const usage = data?.usage
+function foldAssistant(data: AssistantChatData, metrics: CollapsedStepMetrics): void {
+  const timing = data.finalNode?.timing
+  if (timing === undefined) return
+  metrics.steps += 1
+  if (timing.stepStartTime !== null) metrics.elapsedMs += Math.max(0, timing.completedTime - timing.stepStartTime)
+  const usage = data.usage
   if (typeof usage !== 'object' || usage === null) return
   const fields = usage as UsageLike
   // Harness TokenUsage keeps the three prompt-side buckets disjoint.
@@ -135,42 +134,59 @@ function foldAssistant(data: AssistantLike | undefined, metrics: CollapsedStepMe
   metrics.outputTokens += count(fields.outputTokens)
 }
 
-/**
- * Accumulate one hidden node's contribution.
- *
- * A step is counted per assistant node, which the engine emits once per model
- * call whether that call produced prose, tool calls, or both.
- */
-function foldNode(node: ChatConversationViewNode, metrics: CollapsedStepMetrics, paths: Set<string>): void {
-  if (node.kind === 'context') {
-    metrics.contextInjections += 1
-    return
-  }
-  if (node.kind === 'assistant-step') {
-    metrics.steps += 1
-    foldAssistant(node.data as AssistantLike | undefined, metrics)
-    return
-  }
-  foldTool((node.data as ToolChatData).root, metrics, paths)
+function carriesText(node: ChatConversationViewNode): boolean {
+  if (node.kind !== 'assistant-step') return false
+  const data = node.data as AssistantChatData | undefined
+  return data?.blocks.some(block => block.kind === 'text' && block.text.trim() !== '') === true
+}
+
+function emptyMetrics(): CollapsedStepMetrics {
+  return { steps: 0, calls: 0, contextInjections: 0, files: 0, added: 0, removed: 0, elapsedMs: 0, inputTokens: 0, outputTokens: 0 }
+}
+
+interface Group {
+  readonly key: string
+  readonly turn: number
+  readonly start: number
+  /** Highest loaded step with assistant/tool rows: the group's current or final step. */
+  lastStep: number | undefined
+  /** Step of the group's latest text-carrying assistant row: its answer. */
+  lastText: number | undefined
+  readonly accounts: Map<number, StepDigest>
+  withheld: boolean
+  readonly keys: string[]
+  readonly paths: Set<string>
+  readonly metrics: CollapsedStepMetrics
+  /** Row the marker precedes; without one the marker follows {@link Group.tail}. */
+  anchor: string | undefined
+  tail: string | undefined
 }
 
 /**
- * Group the rendered order so each turn keeps only its last step visible.
+ * Split the rendered order into response groups and fold each group's settled
+ * intermediate steps behind one summary row.
  *
- * Earlier assistant/tool rows and every turn-owned context injection collapse.
- * Human messages and the turn tail stay visible. A single-step turn with context
- * injections still gets a summary; context without a resolved turn stays visible.
- * An expanded turn contributes its hidden keys as ordinary rows, so expansion
- * renders through the same seat as everything else.
- * A collapsed history page serves a step's boundaries and withholds its
- * interior, so `accounts` — the host's per-step figures — is what the row
- * reports. Those figures describe the whole step, so they stay correct after
- * expansion loads it, and the row reads identically open or closed. A step an
- * account covers is skipped when folding loaded nodes, so the two sources
- * never count the same work twice.
+ * A backend turn can consume steered human input after it has answered, so a
+ * turn is partitioned at every `user` or `steering` row, at the step that
+ * claimed it; context injections do not partition. Each group keeps its
+ * highest assistant/tool step and its latest text-carrying step visible, which
+ * keeps an answer given before a steer readable. Earlier assistant/tool rows
+ * and every turn-owned context row fold into the group's own marker; a group
+ * that hides nothing renders no marker. An expanded group contributes its
+ * hidden keys as ordinary rows after its marker, so expansion renders through
+ * the same seat as everything else.
+ *
+ * A collapsed history page withholds a step's interior and reports it through
+ * `accounts`, the host's per-step figures, which stay correct after expansion
+ * loads that step. An accounted step is therefore always hidden and never
+ * folded again from loaded data, so the row reads identically open or closed.
+ * Model calls, time, and tokens of loaded steps come from `timeline`'s
+ * step-scoped assistant data, which includes requests whose assistant row is
+ * hidden because they produced only tool calls.
  * @param order - the snapshot's visible node keys, in render order.
  * @param store - live node reader for those keys.
- * @param expanded - turns the reader has expanded.
+ * @param expanded - group keys (`turn:startStep`) the reader has expanded.
+ * @param timeline - the snapshot's turn and step facts.
  * @param digests - per-turn digests of steps still withheld (drives the fetch-on-open marker).
  * @param accounts - every per-step account received, expanded turns included; defaults to `digests`.
  * @returns the flow rows to render, in order.
@@ -178,121 +194,149 @@ function foldNode(node: ChatConversationViewNode, metrics: CollapsedStepMetrics,
 export function collapseSettledSteps(
   order: readonly string[],
   store: ChatNodeStore,
-  expanded: ReadonlySet<number>,
+  expanded: ReadonlySet<string>,
+  timeline: ConversationTimelineSnapshot,
   digests: StepDigestsByTurn = EMPTY_DIGESTS,
   accounts: StepDigestsByTurn = digests,
 ): readonly ChatFlowRow[] {
-  // Steps an account already describes: their loaded nodes must not be folded
-  // a second time once expansion brings them into the window.
-  const accountedSteps = new Set<string>()
-  for (const [turn, entries] of accounts) {
-    for (const entry of entries) accountedSteps.add(stepKey(turn, entry.step))
-  }
-
-  const lastStep = new Map<number, number>()
+  const nodes: ChatConversationViewNode[] = []
   for (const key of order) {
     const node = store.get(key)
-    if (node === undefined) continue
-    if (!STEP_WORK_KINDS.has(node.kind)) continue
-    const { turn, step } = coordinates(node.location)
+    if (node !== undefined) nodes.push(node)
+  }
+  const position = new Map(nodes.map((node, index) => [node.key, index]))
+
+  // A row logged before any step of its turn started carries only a turn
+  // Location; it belongs to the next step that turn starts.
+  const stepOf = (node: ChatConversationViewNode): { turn?: number; step?: number } => {
+    const at = coordinates(node.location)
+    if (at.turn === undefined || at.step !== undefined) return at
+    const steps = timeline.turns.get(at.turn)?.steps ?? []
+    const next = steps.find(step => step.start !== undefined && step.start.seq > node.anchorSeq)
+    return { turn: at.turn, step: next?.step ?? (steps.at(-1)?.step ?? 0) + 1 }
+  }
+
+  const starts = new Map<number, number[]>()
+  for (const node of nodes) {
+    if (!INPUT_KINDS.has(node.kind)) continue
+    const { turn, step } = stepOf(node)
     if (turn === undefined || step === undefined) continue
-    const seen = lastStep.get(turn)
-    if (seen === undefined || step > seen) lastStep.set(turn, step)
+    const list = starts.get(turn) ?? [1]
+    if (!list.includes(step)) list.push(step)
+    starts.set(turn, list)
+  }
+  for (const list of starts.values()) list.sort((left, right) => left - right)
+
+  const groups = new Map<string, Group>()
+  const groupOf = (turn: number, step: number): Group => {
+    let start = 1
+    for (const candidate of starts.get(turn) ?? []) if (candidate <= step) start = candidate
+    const key = `${String(turn)}:${String(start)}`
+    let group = groups.get(key)
+    if (group === undefined) {
+      group = {
+        key, turn, start, lastStep: undefined, lastText: undefined, accounts: new Map(), withheld: false,
+        keys: [], paths: new Set(), metrics: emptyMetrics(), anchor: undefined, tail: undefined,
+      }
+      groups.set(key, group)
+    }
+    return group
   }
 
-  // Stable anchors keep summaries in place across expansion. A context row
-  // anchors its turn even when no earlier assistant/tool step is hidden.
-  const anchors = new Map<number, string>()
-  for (const key of order) {
-    const node = store.get(key)
-    if (node === undefined) continue
-    const { turn, step } = coordinates(node.location)
-    if (turn === undefined || anchors.has(turn)) continue
-    if (node.kind !== 'context') {
-      if (!STEP_WORK_KINDS.has(node.kind) || step === undefined) continue
-      if (!accounts.has(turn) && step === lastStep.get(turn)) continue
+  const owners = new Map<string, { readonly group: Group; readonly step: number }>()
+  for (const node of nodes) {
+    if (node.kind !== 'context' && !INPUT_KINDS.has(node.kind) && !STEP_WORK_KINDS.has(node.kind)) continue
+    const { turn, step } = stepOf(node)
+    if (turn === undefined || step === undefined) continue
+    const group = groupOf(turn, step)
+    owners.set(node.key, { group, step })
+    group.tail = node.key
+    if (!STEP_WORK_KINDS.has(node.kind)) continue
+    if (group.lastStep === undefined || step > group.lastStep) group.lastStep = step
+    if (carriesText(node) && (group.lastText === undefined || step > group.lastText)) group.lastText = step
+  }
+  for (const [turn, entries] of accounts) {
+    for (const account of entries) groupOf(turn, account.step).accounts.set(account.step, account)
+  }
+  for (const [turn, entries] of digests) {
+    for (const digest of entries) groupOf(turn, digest.step).withheld = true
+  }
+
+  const hiddenStep = (group: Group, step: number): boolean =>
+    group.accounts.has(step) || (step !== group.lastStep && step !== group.lastText)
+  const hidden = (node: ChatConversationViewNode): boolean => {
+    const owner = owners.get(node.key)
+    if (owner === undefined) return false
+    if (node.kind === 'context') return true
+    return STEP_WORK_KINDS.has(node.kind) && hiddenStep(owner.group, owner.step)
+  }
+
+  for (const group of groups.values()) {
+    for (const account of group.accounts.values()) {
+      group.metrics.steps += account.steps
+      group.metrics.calls += account.calls
+      group.metrics.added += account.added
+      group.metrics.removed += account.removed
+      group.metrics.elapsedMs += account.elapsedMs
+      group.metrics.inputTokens += account.inputTokens
+      group.metrics.outputTokens += account.outputTokens
+      // Accounts carry paths rather than a count, so a file edited in a
+      // withheld step and again in a loaded one counts once.
+      for (const path of account.filePaths) group.paths.add(path)
     }
-    anchors.set(turn, key)
+  }
+  for (const turn of timeline.turns.values()) {
+    for (const step of turn.steps) {
+      const group = groupOf(turn.turn, step.step)
+      // A step past the group's last loaded work is the live one, not yet rendered.
+      if (group.lastStep === undefined || step.step > group.lastStep) continue
+      if (group.accounts.has(step.step) || !hiddenStep(group, step.step)) continue
+      const assistant = step.data.get('assistant-step')
+      if (assistant !== undefined) foldAssistant(assistant, group.metrics)
+    }
+  }
+  for (const node of nodes) {
+    if (!hidden(node)) continue
+    const { group, step } = owners.get(node.key) as { readonly group: Group; readonly step: number }
+    group.keys.push(node.key)
+    group.anchor ??= node.key
+    if (node.kind === 'context') group.metrics.contextInjections += 1
+    else if (node.kind === 'tool-call' && !group.accounts.has(step)) {
+      foldTool((node.data as ToolChatData).root, group.metrics, group.paths)
+    }
+  }
+  for (const group of groups.values()) {
+    group.metrics.files = group.paths.size
+    if (group.accounts.size === 0) continue
+    // Withheld steps have no rows until expansion loads them, so the marker
+    // opens at the group's first loaded work and stays there once they arrive.
+    const first = nodes.find(node => owners.get(node.key)?.group === group
+      && (node.kind === 'context' || STEP_WORK_KINDS.has(node.kind)))
+    if (first === undefined) continue
+    const anchorAt = group.anchor === undefined ? Infinity : position.get(group.anchor) as number
+    if ((position.get(first.key) as number) < anchorAt) group.anchor = first.key
   }
 
   const rows: ChatFlowRow[] = []
-  // One open marker per turn, so a turn's hidden steps collapse into a single
-  // row even when later-turn rows interleave.
-  const markers = new Map<number, { keys: string[]; metrics: CollapsedStepMetrics; paths: Set<string> }>()
-  const openMarker = (turn: number): { keys: string[]; metrics: CollapsedStepMetrics; paths: Set<string> } => {
-    let marker = markers.get(turn)
-    if (marker === undefined) {
-      // The marker is emitted for an expanded turn too: it carries the same
-      // metrics and doubles as the control that folds the group back. Its
-      // figures come from the turn's own account, which stays whole whether or
-      // not the withheld steps have since been loaded.
-      // Accounts carry the paths their steps touched rather than a count, so a
-      // file edited in a withheld step and again in a loaded one counts once.
-      const paths = new Set<string>()
-      for (const digest of accounts.get(turn) ?? []) for (const path of digest.filePaths) paths.add(path)
-      marker = {
-        keys: [],
-        metrics: foldDigests(accounts.get(turn)),
-        paths,
-      }
-      markers.set(turn, marker)
-      rows.push({
-        kind: 'collapsed',
-        turn,
-        keys: marker.keys,
-        metrics: marker.metrics,
-        withheld: digests.has(turn),
-      })
-    }
-    return marker
+  const emitted = new Set<Group>()
+  const emit = (group: Group): void => {
+    if (emitted.has(group) || (group.keys.length === 0 && group.accounts.size === 0)) return
+    emitted.add(group)
+    rows.push({
+      kind: 'collapsed',
+      turn: group.turn,
+      startStep: group.start,
+      key: group.key,
+      keys: group.keys,
+      metrics: group.metrics,
+      withheld: group.withheld,
+    })
   }
-  for (const key of order) {
-    const node = store.get(key)
-    if (node === undefined) continue
-    const { turn, step } = coordinates(node.location)
-    // The marker opens at the turn's own anchor, decided before this pass, so
-    // expanding a turn cannot move its summary row.
-    if (turn !== undefined && anchors.get(turn) === key) openMarker(turn)
-    const collapsible = turn !== undefined && (node.kind === 'context'
-      || (STEP_WORK_KINDS.has(node.kind) && step !== undefined && step !== lastStep.get(turn)))
-    if (!collapsible) {
-      rows.push({ kind: 'node', key })
-      continue
-    }
-    const marker = openMarker(turn)
-    marker.keys.push(key)
-    // Host pages retain injected messages; their inferred step's account does
-    // not include them. Assistant/tool nodes in that account are already counted.
-    const accounted = step !== undefined && accountedSteps.has(stepKey(turn, step))
-    if (node.kind === 'context' || !accounted) foldNode(node, marker.metrics, marker.paths)
-    if (expanded.has(turn)) rows.push({ kind: 'node', key })
+  for (const node of nodes) {
+    const group = owners.get(node.key)?.group
+    if (group?.anchor === node.key) emit(group)
+    if (group === undefined || !hidden(node) || expanded.has(group.key)) rows.push({ kind: 'node', key: node.key })
+    if (group !== undefined && group.anchor === undefined && group.tail === node.key) emit(group)
   }
-  for (const marker of markers.values()) marker.metrics.files = marker.paths.size
   return rows
-}
-
-/**
- * Seed a marker's metrics from the steps the window withheld.
- *
- * The host computed each digest over its whole step, so these figures do not
- * depend on where the page boundary fell; the loaded rows then add to them.
- * The file count is settled by the caller from the union of every path, so it
- * stays zero here.
- * @param digests - withheld steps of one turn, or undefined when none.
- * @returns metrics carrying the withheld work.
- */
-function foldDigests(digests: readonly StepDigest[] | undefined): CollapsedStepMetrics {
-  const metrics: CollapsedStepMetrics = {
-    steps: 0, calls: 0, contextInjections: 0, files: 0, added: 0, removed: 0, elapsedMs: 0, inputTokens: 0, outputTokens: 0,
-  }
-  for (const digest of digests ?? []) {
-    metrics.steps += digest.steps
-    metrics.calls += digest.calls
-    metrics.added += digest.added
-    metrics.removed += digest.removed
-    metrics.elapsedMs += digest.elapsedMs
-    metrics.inputTokens += digest.inputTokens
-    metrics.outputTokens += digest.outputTokens
-  }
-  return metrics
 }

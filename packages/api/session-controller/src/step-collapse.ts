@@ -3,8 +3,9 @@
  * reader is not looking at, describe each of those through a {@link StepDigest},
  * and withhold its interior until the reader expands the turn.
  *
- * The unit is the log's own. A `turn` is one user round; each `step` inside it
- * is one model call with its tool calls. A step's interior is by far the bulk
+ * The unit is the log's own. A `turn` is one driver run, holding its opening
+ * prompt and every human message steered in while it ran; each `step` inside
+ * it is one model call with its tool calls. A step's interior is by far the bulk
  * of a session log — settled tool results and streaming chunks — while the
  * boundaries that place it are a few dozen bytes, so eliding interiors lets one
  * page span far more turns without the client losing the shape of the history
@@ -35,8 +36,7 @@ function coordinateOf(event: SessionEvent, heads: ReadonlyMap<string, CallHead>)
 }
 
 /** Whether an assistant message carries non-blank text the transcript shows. */
-function carriesText(event: SessionEvent): boolean {
-  if (event.type !== 'assistant/message') return false
+function carriesText(event: SessionEvent<'assistant/message'>): boolean {
   const { message } = event.data as { message?: { content?: readonly unknown[] } }
   return (message?.content ?? []).some((block) => {
     const candidate = block as { type?: unknown; text?: unknown }
@@ -44,38 +44,74 @@ function carriesText(event: SessionEvent): boolean {
   })
 }
 
-/** Steps of one turn that stay whole regardless of collapse. */
-interface RetainedSteps {
-  /** The turn's highest step: the reader's current work, and the live one while streaming. */
-  readonly last: number
-  /**
-   * The step carrying the turn's last text-carrying assistant message.
-   *
-   * The turn footer picks its closing message, branch anchor, and latency
-   * figures from that message, so eliding the step it lives in would degrade a
-   * settled turn's footer rather than merely hide steps. It is almost always
-   * the last step already; when it is not, retaining it costs one extra step.
-   */
-  readonly closing: number | undefined
+/** Whether a record is a human prompt or steer rather than injected context. */
+function isHumanMessage(event: SessionEvent): boolean {
+  if (event.type !== 'user/message' || !isAppendSurfaceEvent(event)) return false
+  return event.data.source.kind === 'user'
+}
+
+/**
+ * Steps of one turn that stay whole regardless of collapse.
+ *
+ * The turn's highest step is the reader's current work, and the live one
+ * while streaming. The step of its last text-carrying assistant message feeds
+ * the turn footer's closing message, branch anchor, and latency figures. A
+ * human message steered into the running turn ends one answer, so the last
+ * assistant step and last text-carrying step before it are retained as well.
+ */
+type RetainedSteps = ReadonlySet<number>
+
+/** Running positions of one turn while scanning for retained steps. */
+interface TurnScan {
+  last: number
+  assistant: number | undefined
+  closing: number | undefined
+  readonly retained: Set<number>
 }
 
 /**
  * Locate, per turn, the steps that must be served whole.
+ *
+ * A human message carries no step coordinate and is logged after the
+ * `step/start` of the step that claims it, so it ends the answer of the turn
+ * whose step events precede it. A message before that turn's first assistant
+ * message ends no answer.
  * @param events - the complete event range under consideration, ascending by seq.
  * @returns per-turn retained steps.
  */
 function retainedSteps(events: readonly SessionEvent[], heads: ReadonlyMap<string, CallHead>): Map<number, RetainedSteps> {
-  const last = new Map<number, number>()
-  const closing = new Map<number, number>()
+  const scans = new Map<number, TurnScan>()
+  let active: TurnScan | undefined
   for (const event of events) {
+    if (event.type === 'turn/end') {
+      active = undefined
+      continue
+    }
+    if (isHumanMessage(event)) {
+      if (active?.assistant !== undefined) active.retained.add(active.assistant)
+      if (active?.closing !== undefined) active.retained.add(active.closing)
+      continue
+    }
     const at = coordinateOf(event, heads)
     if (at === undefined) continue
-    const seen = last.get(at.turn)
-    if (seen === undefined || at.step > seen) last.set(at.turn, at.step)
-    if (carriesText(event)) closing.set(at.turn, at.step)
+    active = scans.get(at.turn)
+    if (active === undefined) {
+      active = { last: at.step, assistant: undefined, closing: undefined, retained: new Set() }
+      scans.set(at.turn, active)
+    } else if (at.step > active.last) {
+      active.last = at.step
+    }
+    if (event.type === 'assistant/message') {
+      active.assistant = at.step
+      if (carriesText(event)) active.closing = at.step
+    }
   }
   const retained = new Map<number, RetainedSteps>()
-  for (const [turn, step] of last) retained.set(turn, { last: step, closing: closing.get(turn) })
+  for (const [turn, scan] of scans) {
+    scan.retained.add(scan.last)
+    if (scan.closing !== undefined) scan.retained.add(scan.closing)
+    retained.set(turn, scan.retained)
+  }
   return retained
 }
 
@@ -86,12 +122,11 @@ const STEP_BOUNDARIES: ReadonlySet<string> = new Set(['step/start', 'step/end'])
  * Whether a step's interior may be withheld from a collapsed page.
  * @param at - the step's coordinate.
  * @param retained - per-turn steps that stay whole.
- * @returns true when the step is neither the turn's last nor its closing one.
+ * @returns true when the step is not among its turn's retained steps.
  */
 function isElidableStep(at: StepCoordinate, retained: ReadonlyMap<number, RetainedSteps>): boolean {
   const keep = retained.get(at.turn)
-  if (keep === undefined) return false
-  return at.step !== keep.last && at.step !== keep.closing
+  return keep !== undefined && !keep.has(at.step)
 }
 
 /**
