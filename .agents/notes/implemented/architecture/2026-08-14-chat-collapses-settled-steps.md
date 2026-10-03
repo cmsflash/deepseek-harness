@@ -1,0 +1,39 @@
+# Agent Note: Chat collapses a turn's settled steps behind one expandable row
+
+Status: implemented
+
+English | [中文](2026-08-14-chat-collapses-settled-steps.zh.md)
+
+## Problem
+
+A long turn's transcript is dominated by intermediate work. One user round in this repository routinely spends 150+ model calls, and reading it means scrolling past every settled tool call to reach what the agent is doing now. The wanted reading mode keeps the newest model call rendered exactly as today — including while it streams — and reduces the earlier ones to a single line reporting what they cost.
+
+A `turn` is one driver run (`turn/start` → `turn/end` in `agent-loop`) and may consume steered human inputs; each `step` inside it is one model call with its tool calls. The reading mode must hide intermediate work without hiding the answers to those inputs.
+
+## Decision
+
+Grouping rows into response groups within a turn, and counting their steps, is owned by [response-scoped collapse](../bug-fix/2026-10-02-steered-reply-collapse.md). This note retains the decisions about Chat ownership, disclosure lifetime, the transcript-view mode, and contribution ordering.
+
+Expansion is per group and all-or-nothing: the marker stays rendered when open and doubles as the control that folds the group back, and the revealed rows go through the same `ChatNodeSeat` as every other row. Reader disclosure is component-local and deliberately unpersisted, because it is a reading position rather than a preference.
+
+The behavior lives inside the Chat view rather than in a second view. A keyed slot is renderable by exactly one entry: `renderSlot` authorization reads `entry.children?.[key]` on the rendering entry with no ancestor walk, and a second declaration of an already-declared key throws at load. `conversation.chat.node` is declared by the chat view entry and filled by `ui-tool`, `ui-goal`, and `ui-workflow-run`, so no sibling view can dispatch those renderers. Building here makes an expanded group identical to an uncollapsed transcript by construction, and keeps working for renderer kinds that plugins merge into `ChatNodeDataMap` later.
+
+The fold is the third value of the durable `ui-chat.transcriptView` preference, beside `normal` and `compact`, and `compact` stays the default, so the assembled transcript is unchanged until a reader selects `collapsed`. One selector owns every transcript presentation: `compact` folds a completed Turn's process rows behind one control once the Turn ends with a final answer ([decision](../../archived/feature/2026-08-14-web-turn-process-folding.md)), while `collapsed` folds each Turn's settled steps while the Turn still runs, so the two never render a summary for the same rows. `TranscriptViewPolicy` already owns the section's scope and adoption subscription, so the mode rides it instead of opening a second subscription.
+
+The row is open at one point: `conversation.chat.collapsedMetric` is a list slot whose entries render after every built-in figure. Contributed-last is the contract rather than a shared `order` space, because the row owns figures it may add later and a shared space would silently reshuffle out-of-tree contributors when it does. The owner passes the group identity, recorded counts, and materialized hidden node keys. Those keys alone are not complete accounting when steps are withheld or produced no visible assistant row; reading the whole turn would also count other response groups and the answers they keep visible. The disclosure control and the figure strip are siblings so a contributed figure is not nested inside a button. This is what lets a cost display ship as an out-of-tree plugin.
+
+## Alternatives considered
+
+- **A separate `Focus` view tab.** Rejected after implementation: it cannot reuse Chat's renderers for the reason above, so it hand-rolled approximations that rendered tool calls *worse* than Chat. Its per-turn granularity also collapsed the wrong unit.
+- **Move the node-slot declaration up to `conversation.session`.** Rejected: authorization is checked on the rendering entry, so declaring it on an ancestor authorises that ancestor, not the view entries beneath it.
+- **Import `ChatNodeSeat` into another view package.** Rejected: its `renderSlot` prop is bound per entry, so the imported seat throws `SlotOwnershipError` from an entry that does not declare the key — and it would breach the cross-package import rule besides.
+- **Copy the renderers into a second package.** Rejected: ~4,600 lines duplicated across `ui-conversation` and `ui-tool`, guaranteed to drift, and blind to renderer kinds contributed later.
+- **Per-step disclosure.** Rejected: the reader wants the round's outcome or its full detail, and per-step toggles reintroduce the scanning the feature removes.
+- **A separate boolean beside the `normal` / `compact` selector.** Rejected: on a closed Turn both folds want the same rows, so the toggle would have to suppress Compact whenever it is on, leaving two controls where one nullifies the other. A third mode of the one selector states the exclusion in the type.
+
+## Consequences
+
+- Default output is unchanged: outside `collapsed`, `ChatView` maps the snapshot order exactly as before, so existing web snapshots stay valid.
+- Host-computed digests describe whole steps and remain stable across expansion. Newly paged steps can increase a partial turn's total; only steps without an account are folded from loaded nodes ([decision](2026-09-01-collapsed-step-digest-paging.md)).
+- File figures use the shared pure `appliedFileDiffs` reader in `dsh-tools/presentation`, not renderer state. This keeps Host and Client accounting aligned without a cross-UI implementation dependency. The successful-write fallback describes its whole-file argument image, including identical overwrites; nested dispatches carry no diff metadata. [Chat's package reference](../../../../packages/client/ui-chat/README.md#settled-step-collapse) owns the displayed metric semantics.
+- The row shows no cost of its own. `TokenUsage.costUsd` carries a priced call's dollars ([decision](2026-08-24-token-usage-carries-billed-cost.md)), so the figure is available to a contributor through `conversation.chat.collapsedMetric` rather than being computed here.

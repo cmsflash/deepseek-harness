@@ -9,6 +9,7 @@ import type { SubagentAddress } from '@deepseek-ai/dsh-subagent/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { WorkspaceId } from '@deepseek-ai/dsh-workspace/types'
 import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
+import type { SessionStepDetail } from '../../types.ts'
 import type { AgentContext } from '../scope.ts'
 import type { SessionSearchResultItem } from '../sessions/manager.ts'
 import type { SessionBinding, SessionListState } from '../sessions/service.ts'
@@ -107,6 +108,15 @@ export interface ISessions {
    */
   refreshSubagents(parentSessionId: SessionId): Promise<void>
 
+  /**
+   * Set the reading preference for existing and subsequently opened Sessions.
+   * A Session's full-history consumer requirement takes precedence. Full detail
+   * recovers omitted events in place; lowering detail affects future pages and
+   * never discards an already loaded interval.
+   * @param detail - whole steps, or boundaries plus digests for elidable ones.
+   * @returns completion of required recoveries; each Session reports its own failure.
+   */
+  setStepDetail(detail: SessionStepDetail): Promise<void>
   /**
    * Refresh the Host-authoritative Session list.
    * @returns completion of the current or newly started Session-list refresh.

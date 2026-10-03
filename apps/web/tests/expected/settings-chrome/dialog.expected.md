@@ -43,7 +43,7 @@
     - img
   - button "减小字号":
     - img
-  - text: px 对话显示 控制已完成轮次的过程内容
+  - text: px 对话显示 控制轮次过程内容的显示方式
   - button "紧凑":
     - text: 紧凑
     - img

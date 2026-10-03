@@ -48,6 +48,29 @@ export interface AssistantActionOwnerProps {
   messageId: MessageId
 }
 
+/**
+ * Owner currency of one contributed collapsed-row figure: which response
+ * group's hidden steps the row stands for, and the counts it already folded.
+ */
+export interface CollapsedMetricOwnerProps {
+  /** Backend turn owning the hidden steps. */
+  turn: number
+  /** Step of the human input starting this response group; 1 for the turn's opening group. */
+  startStep: number
+  /**
+   * Materialized node keys this row hides, in render order.
+   *
+   * Withheld steps and tool-only model calls are counted in `steps` and
+   * `calls` without a key. Reading the whole turn instead counts other
+   * response groups and the answers they keep visible.
+   */
+  keys: readonly string[]
+  /** Hidden model calls, including requests that rendered no assistant row. */
+  steps: number
+  /** Hidden settled tool calls, counting nested subcalls. */
+  calls: number
+}
+
 /** Optional prose file-mention provider consumed by Chat. */
 export interface ChatFileMentions {
   /**
@@ -131,7 +154,7 @@ export interface ChatScrollPosition {
 /** Business callbacks injected into the Chat view. */
 export interface ChatViewInjected {
   hooks: {
-    /** Persisted completed-Turn transcript presentation. */
+    /** Persisted transcript presentation. */
     transcriptView: SnapshotStore<TranscriptViewMode>
   }
   keyedHooks: {
@@ -148,6 +171,13 @@ export interface ChatViewInjected {
   loadOlder: () => void
   /** Jump loader: page history back through seq; resolves when the window covers it. */
   loadThrough: (seq: SessionSeq) => Promise<void>
+  /**
+   * Read back the steps a collapsed history page withheld from one turn, so
+   * the rows can render once the reader opens it. Only a row reporting
+   * withheld steps needs it; a turn whose steps are already loaded expands
+   * without any request.
+   */
+  expandTurn: (turn: number) => Promise<void>
   loadImage: MessageImageLoader
   chatScroll: {
     save: (position: ChatScrollPosition | null) => void
@@ -160,7 +190,7 @@ export interface ChatViewInjected {
 /** Full Chat view props. */
 export type ChatViewSlotProps =
   PropsRuntime<'conversation.view'>
-  & PropsRenderSlots<'conversation.chat.node' | 'conversation.message.images'>
+  & PropsRenderSlots<'conversation.chat.node' | 'conversation.message.images' | 'conversation.chat.collapsedMetric'>
   & PropsStore<ChatStore>
   & InjectFace<ChatViewInjected>
   & PropsLocale<'chat'>
@@ -217,5 +247,15 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
      * that entry. With no entries, the standard action row remains unchanged.
      */
     'conversation.chat.assistant-actions': { kind: 'list'; scope: 'session'; owner: AssistantActionOwnerProps }
+    /**
+     * One contributed figure on a collapsed-steps row, rendered after every
+     * figure the row itself computes. Built-ins always come first, so a
+     * contributor never has to reserve an `order` band against figures this
+     * row may gain later; entries render among themselves by ascending
+     * `order`. The owner passes the collapsed group's identity and its
+     * already-folded counts, so a contributor addresses the same hidden steps
+     * without re-reading the Session.
+     */
+    'conversation.chat.collapsedMetric': { kind: 'list'; scope: 'session'; owner: CollapsedMetricOwnerProps }
   }
 }

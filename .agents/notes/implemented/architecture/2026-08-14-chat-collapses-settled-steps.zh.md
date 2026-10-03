@@ -1,0 +1,39 @@
+# Agent Note: Chat 将一个 turn 中已结束的 step 折叠为一行可展开摘要
+
+Status: implemented
+
+[English](2026-08-14-chat-collapses-settled-steps.md) | 中文
+
+## 问题
+
+长 turn 的转录被中间过程主导。本仓库中一轮用户提问经常花费 150 次以上模型调用，阅读它意味着滚过每一个已结束的工具调用才能看到 agent 当下在做什么。所需的阅读方式是：最新一次模型调用保持与今天完全一致的渲染——包括流式期间——并把更早的调用压缩成一行，报告它们的开销。
+
+一个 `turn` 是一次驱动运行（`agent-loop` 中的 `turn/start` → `turn/end`），可以消费中途引导的人工输入；其中每个 `step` 是一次模型调用及其工具调用。阅读模式必须隐藏中间工作，而不能隐藏对这些输入的答案。
+
+## 决定
+
+把轮次内的行划分为回复分组并统计其步骤，由[回复作用域折叠](../bug-fix/2026-10-02-steered-reply-collapse.zh.md)负责。本文保留 Chat 所有权、展开状态生命周期、对话显示模式和贡献排序的决策。
+
+展开以分组为单位、全有或全无：展开时标记行保留，并兼作把分组折回的控件；被恢复的行走与其它所有行相同的 `ChatNodeSeat`。阅读者的展开状态是组件本地的，且刻意不持久化，因为它是阅读位置而非偏好设置。
+
+该行为放在 Chat 视图内部，而非第二个视图。一个 keyed slot 只能由恰好一个 entry 渲染：`renderSlot` 的授权检查渲染方 entry 上的 `entry.children?.[key]`，不会向上遍历祖先；而对已声明 key 的二次声明会在加载时抛错。`conversation.chat.node` 由 chat 视图 entry 声明，并由 `ui-tool`、`ui-goal`、`ui-workflow-run` 填充，因此任何同级视图都无法分派这些 renderer。放在这里可让展开后的分组在构造上与未折叠的转录完全一致，并且对插件日后并入 `ChatNodeDataMap` 的 renderer 种类继续有效。
+
+该折叠是持久化偏好 `ui-chat.transcriptView` 在 `normal` 与 `compact` 之外的第三个取值，默认值仍为 `compact`，因此在阅读者选择 `collapsed` 之前，组装后的转录毫无变化。一个选择器掌管全部转录呈现方式：`compact` 在一个 Turn 以最终正文结束后把它的过程行收进一个控件（[决定](../../archived/feature/2026-08-14-web-turn-process-folding.md)），而 `collapsed` 在 Turn 仍在运行时就折叠其已落定的 step，因此两者永不为同一批行各渲染一份摘要。`TranscriptViewPolicy` 本就持有该设置段的 scope 与采纳订阅，因此该模式搭它的车，而不是另开一个订阅。
+
+该行在一处开放：`conversation.chat.collapsedMetric` 是一个 list slot，其条目渲染在所有内置指标之后。采用「贡献者置后」而非共享 `order` 空间，是因为该行拥有日后可能新增的指标，而共享空间会在新增时静默打乱外部贡献者的位置。owner 传入分组标识、记录的计数和已物化的隐藏节点键。步骤被暂留或没有可见 assistant 行时，仅凭这些键不能完整统计；读取整个 turn 还会计入其它回复分组及其保持可见的答案。展开控件与指标条为同级，因此贡献的指标不会嵌套进 button。正是这一点让成本展示能够作为仓库外插件交付。
+
+## 考虑过的替代方案
+
+- **独立的 `Focus` 视图标签页**：实现后否决——出于上述原因它无法复用 Chat 的 renderer，于是手写了近似实现，把工具调用渲染得比 Chat *更差*；其按 turn 的粒度也折叠了错误的单位。
+- **把 node slot 声明上移到 `conversation.session`**：否决——授权在渲染方 entry 上检查，因此在祖先上声明只授权该祖先，而非其下的各视图 entry。
+- **把 `ChatNodeSeat` 导入另一个视图包**：否决——它的 `renderSlot` prop 按 entry 绑定，因此从未声明该 key 的 entry 使用会抛出 `SlotOwnershipError`；何况这还违反跨包导入规则。
+- **把 renderer 复制进第二个包**：否决——需在 `ui-conversation` 与 `ui-tool` 之间复制约 4600 行，必然漂移，且对日后贡献的 renderer 种类视而不见。
+- **逐 step 展开**：否决——阅读者要么想要该轮的结果，要么想要它的完整细节；逐 step 开关又把这个特性想要消除的扫描带了回来。
+- **在 `normal` / `compact` 选择器旁再加一个布尔开关**：否决——在已关闭的 Turn 上两种折叠争夺同一批行，开关打开时就必须压制紧凑模式，留下两个控件却其一使另一失效。作为同一选择器的第三个模式，则把这种互斥写进了类型。
+
+## 影响
+
+- 默认输出不变：不在 `collapsed` 模式时，`ChatView` 与此前完全一样地映射快照顺序，因此既有 web 快照依然有效。
+- Host 计算的 digest 描述完整 step，在展开前后保持稳定。新分页加入的步骤可能增加尚未加载完整的轮次总量；只有没有账目的步骤才从已加载节点折叠得出（[决策](2026-09-01-collapsed-step-digest-paging.zh.md)）。
+- 文件指标使用 `dsh-tools/presentation` 中共享的纯 `appliedFileDiffs` 读取器，而不是 renderer 状态，因此 Host 与 Client 的记账保持一致，也不需要跨 UI 实现依赖。成功 write 的回退描述其参数中的整文件映像，包括相同内容的覆盖；嵌套 dispatch 不携带 diff 元数据。[Chat 包参考](../../../../packages/client/ui-chat/README.zh.md#settled-step-collapse)拥有显示指标的语义。
+- 该行本身不展示成本。`TokenUsage.costUsd` 承载已计价调用的美元金额（[决策](2026-08-24-token-usage-carries-billed-cost.zh.md)），因此该指标可由贡献者经 `conversation.chat.collapsedMetric` 提供，而不在此处计算。

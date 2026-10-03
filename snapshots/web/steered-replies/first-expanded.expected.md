@@ -1,0 +1,56 @@
+- banner:
+  - navigation "Session hierarchy":
+    - button "{{workspace}}" [disabled]
+  - button "More actions":
+    - img
+  - button "Open right sidebar":
+    - img
+  - tablist:
+    - tab "Chat" [selected]
+    - tab "Trajectory"
+- text: Inspect the fixture workspace and report what the two probe files contain. {{clock}}
+- button "Copy":
+  - img
+- button "{{duration}} 2 steps 2 calls 330 tokens (300 in / 30 out)" [expanded]
+- text: ·
+- button "Bash Probe step 1":
+  - img
+  - img
+  - text: Bash Probe step 1
+- button "Bash Probe step 2":
+  - img
+  - img
+  - text: Bash Probe step 2
+- paragraph: "FIRST_ANSWER: probe-a.txt holds alpha and probe-b.txt holds beta."
+- text: "Steer: now count the lines instead and reply with the total. {{clock}}"
+- button "Copy":
+  - img
+- button "{{duration}} 2 steps 2 calls 990 tokens (900 in / 90 out)"
+- text: ·
+- paragraph: "SECOND_ANSWER: the two probe files hold 2 lines in total."
+- button "Copy":
+  - img
+- button "Good response":
+  - img
+- button "Bad response":
+  - img
+- button "Branch into a new conversation":
+  - img
+- button "Ran for {{duration}}":
+  - img
+  - text: Ran for {{duration}}
+- text: {{clock}}
+- textbox "Message or run a task, / commands, @ files or sessions"
+- button "Add files or run commands":
+  - img
+- 'button "Access mode, current: Workspace Write"': Workspace Write
+- button "Select model, current DeepSeek-V4-Flash":
+  - text: DeepSeek-V4-Flash
+  - img
+- button "Send message" [disabled]
+- button "1 turns 6 steps":
+  - img
+  - text: 1 turns 6 steps
+- button "2.3K tok · Cache hit 0% · $0.0000":
+  - img
+  - text: 2.3K tokCache hit 0%$0.0000

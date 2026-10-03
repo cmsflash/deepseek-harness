@@ -27,6 +27,8 @@ The Trajectory tab lets you inspect agent activity as a turn-aware ledger and in
 
 Open the Trajectory tab in the conversation's view ring to inspect agent activity as an event ledger and timeline. The ledger covers records with an explicit loading row until the initial tail is positioned; while an older prefix remains unloaded, a first-row control loads one earlier page on click and shows a disabled loading status while that page is pending.
 
+The ledger needs every step event. Subscribing to the Trajectory source requires full history from the Session for the rest of its lifetime, so a window opened with collapsed step detail recovers its withheld events before the view presents them. While any turn still withholds steps, the timeline and ledger stay hidden behind a loading status; a failed recovery shows the failure message and code with a Retry control that repeats the demand. Ordinary tail following and older-page loading are unchanged once the interval is complete.
+
 ### Inspecting records
 
 Calls are identified by their recorded tool name. For `run_code`, the row shows the program description and the inspector opens numbered, highlighted source. The Code tab provides wrapping, a `{}` toggle for the original JSON arguments, and exact source copying, including trailing newlines. Copying the original arguments retains their recorded JSON whitespace. Each newly opened code view takes the last wrapping choice; changing it leaves other open views as they are. Output preserves the recorded text, using a tree for complete JSON objects or arrays. Highlighting uses only an unambiguous TypeScript or Python hint in the recorded tool schema; missing or conflicting hints leave plain source. See the [PTC inspection decision](../../../.agents/notes/implemented/feature/2026-09-09-ptc-trajectory-code-inspection.md) for replay constraints.
@@ -55,7 +57,9 @@ The view is a pure projection: Trajectory-owned Definitions assemble business re
 
 Native and nested PTC Tool results retain their raw structured error details. Failed records show the error code in the ledger and the error name and code in the inspector.
 
-A complete appended prompt without a loaded request header appears as a standalone system row; only its known text is available, with no inferred request options or tool catalog. Prepending its request history replaces that standalone presentation without duplicating the prompt. In-history system prompt changes compare against the most recent request state, including earlier prompt updates without a new request header. Each request retains the prompt and change that applied at its own position. Surface replacements, including compaction, restore the last nonempty surviving system prompt even without a new system event; an unloaded prompt remains unavailable until its page arrives.
+A request header whose reply is not loaded appears as a header-only assistant request row; only a request whose recorded purpose is compaction carries the compaction label. A complete appended prompt without a loaded request header appears as a standalone system row; only its known text is available, with no inferred request options or tool catalog. Prepending its request history replaces that standalone presentation without duplicating the prompt. In-history system prompt changes compare against the most recent request state, including earlier prompt updates without a new request header. Each request retains the prompt and change that applied at its own position. Surface replacements, including compaction, restore the last nonempty surviving system prompt even without a new system event; an unloaded prompt remains unavailable until its page arrives.
+
+A provisional system header can become redundant when full history resolves an unloaded predecessor. Its materialized key remains hidden rather than being withdrawn; hidden contributions affect neither request interpretation nor the visible ledger.
 
 ### Virtual rows
 

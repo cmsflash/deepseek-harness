@@ -288,6 +288,43 @@ describe('Session Client stream adapters', () => {
       }
     }
   })
+  it('preserves turn-end accounting through replacement, live append, and older-page prepend', async () => {
+    const usage = { uncachedInputTokens: 10, outputTokens: 5, totalTokens: 15, costUsd: 0, unpricedCalls: 1 }
+    const ended = (seq: number, turn: number, turnUsage: typeof usage | null): SessionHistoryRecord => ({
+      type: 'event',
+      event: { type: 'turn/end', seq, time: seq, data: { turn, reason: { kind: 'completed' } } },
+      turnUsage,
+    })
+    const initial = ended(10, 2, usage)
+    const live = ended(11, 3, usage)
+    const older = ended(9, 1, null)
+    const remote = new ScriptedSessionRemote([
+      { frames: [snapshot(10, [initial]), live], hold: true },
+    ], [{ ok: true, value: page([older]) }])
+    const changes: SessionJournalChange[] = []
+    let appended!: () => void
+    const ready = new Promise<void>((resolve) => { appended = resolve })
+    const stream = new SessionEventStream(sessionClient(remote), ADDRESS, {
+      publish: (change) => {
+        changes.push(change)
+        if (change.type === 'append') appended()
+      },
+      failed: vi.fn(),
+    })
+    try {
+      await stream.open({})
+      await ready
+      await stream.prepend({})
+      expect(changes).toMatchObject([
+        { type: 'replace', entries: [initial] },
+        { type: 'append', entry: live },
+        { type: 'prepend', entries: [older] },
+      ])
+    } finally {
+      await stream.dispose()
+    }
+  })
+
   it('opts into assistant notifications and publishes the reconnect baseline plus live frame', async () => {
     const attemptId = LlmAttemptId('transport-attempt')
     const baseline: SessionAssistantStreamBaseline = {

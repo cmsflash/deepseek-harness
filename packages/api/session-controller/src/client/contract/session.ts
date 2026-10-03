@@ -12,7 +12,12 @@ import type { MessageId } from '@deepseek-ai/dsh-llm/brand'
 import type { SessionId, SessionSeq } from '@deepseek-ai/dsh-session/types'
 import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
 import type { ObservableSnapshot } from '@deepseek-ai/dsh-client-store'
-import type { PromptContentPart, QueueAction, SessionRequestId } from '../../types.ts'
+import type {
+  PromptContentPart,
+  QueueAction,
+  SessionRequestId,
+  SessionStepDetail,
+} from '../../types.ts'
 import type { PendingSubmissionAttachment, SessionSnapshot } from './snapshot.ts'
 
 /**
@@ -131,6 +136,34 @@ export interface ISession {
    * @returns completion once covered, exhausted, superseded, or failed soft.
    */
   loadThrough(seq: SessionSeq): Promise<void>
+  /**
+   * Set the preferred detail for future pages without discarding loaded events.
+   * Full detail restores any withheld events in the current interval. An active
+   * full-history consumer takes precedence over this preference.
+   * @param detail - whole steps, or boundaries plus digests for elidable ones.
+   * @returns completion of any required full-detail recovery; failures remain in the snapshot.
+   */
+  setStepDetail(detail: SessionStepDetail): Promise<void>
+  /**
+   * Require full event detail for this Session object's remaining lifetime.
+   * Before opening finishes this arms the opening's recovery; an errored source
+   * is reopened. An open window recovers in place without changing its head or
+   * discarding live assistant frames. Concurrent calls on the same source join
+   * its recovery; failed reads preserve withheld markers for retry.
+   * @returns current recovery completion, or immediately when arming a cold/loading source;
+   * snapshot.loadingStepDetail and stepDetailError report full-detail recovery.
+   */
+  requireFullHistory(): Promise<void>
+  /**
+   * Load the steps one collapsed page withheld from a single turn and splice
+   * them into the window. Concurrent gestures for the same turn join the
+   * in-flight request; a turn with nothing withheld returns without a request.
+   * `snapshot.expandingTurns` is the busy signal.
+   * @param turn - the turn the reader opened.
+   * @returns completion; failure or window replacement applies no stale result.
+   * The current snapshot remains authoritative and a superseded gesture may be retried.
+   */
+  expandTurn(turn: number): Promise<void>
   /**
    * Execute one slash-command line against this session's agent — pure
    * admission semantics (the host executor durably logs the lifecycle).

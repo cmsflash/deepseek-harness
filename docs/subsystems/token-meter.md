@@ -53,6 +53,12 @@ interface TokenSurfaceNode {
 
 Surface order is authoritative; replacement nodes can have higher durable seqs than later positional nodes. The snapshot is immutable and does not grow when the underlying replay fold advances.
 
+## Turn accounting
+
+`TurnTokenUsage` describes one completed turn: required `uncachedInputTokens`, `outputTokens`, and `totalTokens`; optional cache, reasoning, and provider/model route fields; and recorded `costUsd` with `unpricedCalls`. These are attempt-accounting facts, distinct from the heuristic pressure in `TokenMeasurement`.
+
+The environment-neutral `/turn-usage` export supplies `TurnUsageAccumulator.append(event)` and `result()`, plus the batch `deriveTurnTokenUsage(events)` helper over the same fold. Source: [`turn-usage.ts`](../../packages/llm/token-meter/src/turn-usage.ts). The [package reference](../../packages/llm/token-meter/README.md#turn-accounting) owns availability, retry, and retained-state semantics.
+
 <!-- BEGIN GENERATED cordis-surface (gen-cordis-catalog.ts) — do not edit between markers -->
 
 <a id="cordis-surface"></a>

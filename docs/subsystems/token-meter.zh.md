@@ -53,6 +53,12 @@ interface TokenSurfaceNode {
 
 表层顺序具有权威性；替换节点的持久 seq 可能高于位置排在其后的节点。该快照不可变，不会随底层回放折叠推进而增长。
 
+## 轮次记账
+
+`TurnTokenUsage` 描述一个已完成轮次：必需的 `uncachedInputTokens`、`outputTokens` 和 `totalTokens`；可选的缓存、推理及提供方／模型路由字段；以及已记录的 `costUsd` 和 `unpricedCalls`。这些是尝试记账事实，不同于 `TokenMeasurement` 中的启发式压力。
+
+不依赖运行环境的 `/turn-usage` 导出提供 `TurnUsageAccumulator.append(event)` 和 `result()`，以及使用同一折叠逻辑的批量辅助函数 `deriveTurnTokenUsage(events)`。来源：[`turn-usage.ts`](../../packages/llm/token-meter/src/turn-usage.ts)。[包参考](../../packages/llm/token-meter/README.zh.md#turn-accounting)拥有可用性、重试和保留状态的语义。
+
 <!-- BEGIN GENERATED cordis-surface (gen-cordis-catalog.ts) — do not edit between markers -->
 
 <a id="cordis-surface"></a>

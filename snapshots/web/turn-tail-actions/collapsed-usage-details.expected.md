@@ -1,0 +1,12 @@
+- term: Provider / model
+- definition: deepseek-official/deepseek-v4-flash
+- term: Cache hit
+- definition: 49.7%
+- term: Uncached input
+- definition: 7,891 tok
+- term: Cached input
+- definition: 7,808 tok
+- term: Output
+- definition: 112 tok (42 tok reasoning)
+- term: Cost
+- definition: $0.0000 (2 unpriced)

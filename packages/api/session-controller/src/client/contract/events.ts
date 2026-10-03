@@ -2,6 +2,8 @@
 import { notifySubscribers, type ObservableSnapshot } from '@deepseek-ai/dsh-client-store'
 import type { LlmAttemptId, StreamChunk } from '@deepseek-ai/dsh-llm'
 import type { SessionEvent } from '@deepseek-ai/dsh-session/types'
+import type { TurnTokenUsage } from '@deepseek-ai/dsh-token-meter/turn-usage'
+import type { SessionHistoryCoverage } from '../../types.ts'
 
 /** Client-only live chunk presentation; `seq` orders the transient row between durable Session seqs. */
 export interface AssistantLiveChunkEvent {
@@ -21,7 +23,14 @@ export type SessionEventLike = SessionEvent | AssistantLiveChunkEvent
 
 /** Client history entry retaining its coarse transport discriminator. */
 export type SessionEventLikeEntry =
-  | { readonly type: 'event'; readonly event: SessionEvent }
+  | {
+    readonly type: 'event'
+    readonly event: SessionEvent
+    /** Original page coverage, retained after expansion; stepDigests reports remaining omissions. */
+    readonly covers?: SessionHistoryCoverage
+    /** Host whole-turn accounting on turn/end, or null when unavailable. */
+    readonly turnUsage?: TurnTokenUsage | null
+  }
   | { readonly type: 'transient'; readonly event: AssistantLiveChunkEvent }
 
 /** Scalar live entry accepted by append-only Client paths. */
@@ -99,6 +108,8 @@ export type SessionEventChange =
   | { readonly kind: 'replace'; readonly entries: readonly SessionEventLikeEntry[] }
   | { readonly kind: 'prepend'; readonly entries: readonly SessionEventLikeEntry[] }
   | { readonly kind: 'append'; readonly entries: readonly SessionEventLikeEntry[] }
+  /** Step interiors a collapsed page withheld, spliced by seq inside the window's existing range. */
+  | { readonly kind: 'splice'; readonly entries: readonly SessionEventLikeEntry[] }
   | {
     readonly kind: 'settle-assistant'
     readonly attemptId: LlmAttemptId
@@ -158,6 +169,23 @@ export class MutableSessionEventSource implements SessionEventSource {
   prepend(entries: readonly SessionEventLikeEntry[], hasMore: boolean): void {
     this.window = concat(leaf(entries), this.window)
     this.publish(hasMore, { kind: 'prepend', entries })
+  }
+
+  /**
+   * Splice withheld step interiors into the window by seq. The window's ends
+   * do not move: every spliced entry falls strictly inside the range the
+   * window already spans, and a seq already held wins because the live path
+   * may have appended it since the page was served.
+   * @param entries - the interior entries a collapsed page withheld.
+   */
+  splice(entries: readonly SessionEventLikeEntry[]): void {
+    const held = materialize(this.window)
+    const seqs = new Set(held.map(entry => entry.event.seq))
+    const fresh = entries.filter(entry => !seqs.has(entry.event.seq))
+    if (fresh.length === 0) return
+    const merged = [...held, ...fresh].sort((left, right) => left.event.seq - right.event.seq)
+    this.window = leaf(merged)
+    this.publish(this.snapshot.hasMore, { kind: 'splice', entries: fresh })
   }
 
   /**

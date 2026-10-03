@@ -1,0 +1,35 @@
+{
+  "live": {
+    "steps": "1 steps",
+    "calls": "1 calls",
+    "contextInjections": "1 context injection",
+    "added": "+1",
+    "removed": "-0 lines",
+    "files": "1 files"
+  },
+  "reloaded": {
+    "steps": "1 steps",
+    "calls": "1 calls",
+    "contextInjections": "1 context injection",
+    "added": "+1",
+    "removed": "-0 lines",
+    "files": "1 files"
+  },
+  "expanded": {
+    "steps": "1 steps",
+    "calls": "1 calls",
+    "contextInjections": "1 context injection",
+    "added": "+1",
+    "removed": "-0 lines",
+    "files": "1 files"
+  },
+  "recollapsed": {
+    "steps": "1 steps",
+    "calls": "1 calls",
+    "contextInjections": "1 context injection",
+    "added": "+1",
+    "removed": "-0 lines",
+    "files": "1 files"
+  },
+  "file": "hello world"
+}

@@ -4,8 +4,6 @@ import type {
 } from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type {} from '@deepseek-ai/dsh-llm-retry/types'
 import type { StreamChunk } from '@deepseek-ai/dsh-llm'
-import type { SessionEvent } from '@deepseek-ai/dsh-session/types'
-import { deriveTurnTokenUsage } from '@deepseek-ai/dsh-token-meter/client'
 import type {
   AssistantChatData, FinalAssistantChatData, TurnTailChatData,
 } from '../contract/chat-nodes.ts'
@@ -35,10 +33,6 @@ interface TurnTailState {
 interface StepEvidence {
   readonly streamedText: boolean
   readonly finalized: boolean
-}
-
-function isSessionEvent(event: ConversationMatch['event']): event is SessionEvent {
-  return event.type !== 'assistant/live-chunk'
 }
 
 function hasTextAssistant(event: Parameters<ConversationNodeDefinition['match']>[0]): boolean {
@@ -147,9 +141,7 @@ function tailData(context: ConversationNodeContext<TurnTailState>): TurnTailChat
     }
   }
   const metrics = deriveTurnMetrics(finalized.map(candidate => candidate.finalNode)).get(end.event.data.turn)
-  const tokenUsage = context.start?.event.type === 'turn/start'
-    ? deriveTurnTokenUsage(context.matches.map(match => match.event).filter(isSessionEvent))
-    : undefined
+  const tokenUsage = 'turnUsage' in end.record ? end.record.turnUsage ?? undefined : undefined
   return {
     turn: end.event.data.turn,
     seq: end.event.seq,

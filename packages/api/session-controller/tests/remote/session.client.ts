@@ -11,7 +11,7 @@ import { ok, type RemoteMock, type RemoteTable, type StreamScript, type UnaryRul
 import type { SessionEvent } from '@deepseek-ai/dsh-session/types'
 import type { RemoteFailure, RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
 import type {
-  SessionAssistantStreamBaseline, SessionFollowFrame, SessionFollowRequest,
+  SessionAssistantStreamBaseline, SessionAssistantStreamFrame, SessionFollowFrame, SessionFollowRequest,
   SessionPage, SessionPageRequest,
 } from '../../src/types.ts'
 import { entries, historyValue } from '../event-script.client.ts'
@@ -57,12 +57,22 @@ export function frame(event: SessionEvent): SessionFollowFrame {
 }
 
 /**
- * Deliver one live event to every open follow stream and wait until the client has consumed it.
+ * Deliver one live event frame to every open follow stream and wait until the client has consumed it.
  * @param mock - the mock holding the streams.
  * @param event - the event.
  */
 export async function pushEvent(mock: RemoteMock, event: SessionEvent): Promise<void> {
   mock.streams.push(FOLLOW, frame(event))
+  await mock.streams.drained(FOLLOW)
+}
+
+/**
+ * Deliver one live Assistant stream frame to every open follow stream and wait until the client has consumed it.
+ * @param mock - the mock holding the streams.
+ * @param item - the Assistant stream frame.
+ */
+export async function pushAssistantStream(mock: RemoteMock, item: SessionAssistantStreamFrame): Promise<void> {
+  mock.streams.push(FOLLOW, { type: 'assistant-stream', frame: item })
   await mock.streams.drained(FOLLOW)
 }
 

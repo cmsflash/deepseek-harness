@@ -23,6 +23,8 @@ import type {
   SessionAddress,
   SessionAssistantStreamFrame,
   SessionEventEntry,
+  SessionExpandStepsRequest,
+  SessionExpandStepsValue,
   SessionFollowRequest,
   SessionFollowFrame,
   SessionHistoryRecord,
@@ -30,10 +32,15 @@ import type {
   SessionPageRequest,
   SessionProjectionBaseline,
   SessionProjectionValues,
+  SessionStepDetail,
   SessionWireHeader,
   SessionWireEvent,
+  StepDigest,
 } from './types.ts'
 import { SessionAssistantStreamAccumulator } from './assistant-stream.ts'
+import { collapseSteps, elidedEventsOfTurn } from './step-collapse.ts'
+import { historyTurnUsage } from './turn-usage.ts'
+import type { TurnTokenUsage } from '@deepseek-ai/dsh-token-meter/turn-usage'
 
 const DEFAULT_MAX_MESSAGES = 50
 const MESSAGE_TYPES = new Set(['user/message', 'assistant/message'])
@@ -69,8 +76,8 @@ export class SessionHistoryController {
   }
 
   /**
-   * Read one message-aligned history page without activating an Agent.
-   * @param request - durable address and backwards-page cursor.
+   * Read a message-aligned page or exact event interval without activating an Agent.
+   * @param request - durable address, log cut, and page budget or interval head.
    * @param signal - caller cancellation for persistence reads.
    * @returns a contiguous event page.
    */
@@ -97,17 +104,52 @@ export class SessionHistoryController {
     if (throughSeq >= 0 && sourceLog[throughSeq]?.seq !== throughSeq) {
       throw new RemoteError('gateway/internal', `session log does not contain through seq ${String(throughSeq)}`, {})
     }
+    if (request.fromSeq !== undefined) {
+      const events = sourceLog.slice(request.fromSeq, throughSeq + 1)
+      const usage = historyTurnUsage(events, sourceLog.slice(0, throughSeq + 1))
+      return {
+        records: pageRecords(events, usage.byEnd),
+        hasMore: request.fromSeq > 0,
+      }
+    }
     const page = paginate(
       sourceLog,
       beforeSeq,
       request.maxMessages ?? DEFAULT_MAX_MESSAGES,
       throughSeq,
     )
-    const records = pageRecords(page.events)
+    const scope = sourceLog.slice(0, throughSeq + 1)
+    const usage = historyTurnUsage(page.events, scope)
     return {
-      records,
+      ...detailPage(page.events, scope, request.stepDetail, usage.byEnd),
       hasMore: page.hasMore,
     }
+  }
+
+  /**
+   * Read back the events one collapsed page elided from a single turn, without
+   * activating an Agent.
+   * @param request - durable address, log cut, expanded turn, and window head.
+   * @param signal - caller cancellation for persistence reads.
+   * @returns that turn's withheld events at or after the window head, ascending by seq.
+   */
+  async expandSteps(request: SessionExpandStepsRequest, signal: AbortSignal): Promise<SessionExpandStepsValue> {
+    validateExpandStepsRequest(request)
+    using source = await this.sourceFor(request.address, signal, false)
+    signal.throwIfAborted()
+    const sourceLog = source.events
+    const sourceCursor: SessionSeqCursor = sourceLog.at(-1)?.seq ?? -1
+    if (request.throughSeq > sourceCursor) {
+      throw new RemoteError(
+        'gateway/bad-request',
+        `session expand through seq ${String(request.throughSeq)} is past cursor ${String(sourceCursor)}`,
+        {},
+      )
+    }
+    // Retention is decided over the same range a page decides it over: every
+    // event through the cut, so the two agree on which steps a turn withheld.
+    const scope = sourceLog.slice(0, request.throughSeq + 1)
+    return { records: pageRecords(elidedEventsOfTurn(scope, request.turn, request.fromSeq)) }
   }
 
   /**
@@ -181,6 +223,7 @@ export class SessionHistoryController {
       const cursor = source.cursor
       snapshotCursor = cursor
       const page = paginate(events, undefined, request.maxMessages ?? DEFAULT_MAX_MESSAGES)
+      const usage = historyTurnUsage(page.events, events)
       const assistantStream = request.assistantStream === true
         ? this.assistantStreams.get(target)?.snapshot() ?? { revision: 0 }
         : undefined
@@ -193,7 +236,7 @@ export class SessionHistoryController {
         type: 'snapshot',
         header: wireHeader(source.header),
         cursor,
-        records: pageRecords(page.events),
+        ...detailPage(page.events, events, request.stepDetail, usage.byEnd),
         hasMore: page.hasMore,
         projections: source.projections === undefined
           ? { asOfSeq: cursor, values: {} }
@@ -228,7 +271,7 @@ export class SessionHistoryController {
           throw new RemoteError('gateway/internal', `session event stream skipped seq ${String(expectedSeq)}`, {})
         }
         nextOffset = SessionLogOffset(nextOffset + 1)
-        yield entryFor(item.event)
+        yield entryFor(item.event, usage.continuation.append(item.event))
       }
     } finally {
       this.closeFollowers.delete(close)
@@ -307,6 +350,17 @@ function validatePageRequest(request: SessionPageRequest): void {
     || Object.is(request.throughSeq, -0)) {
     throw new RemoteError('gateway/bad-request', 'throughSeq must be an integer greater than or equal to -1', {})
   }
+  if (request.fromSeq !== undefined) {
+    if (!Number.isSafeInteger(request.fromSeq)
+      || request.fromSeq < 0
+      || Object.is(request.fromSeq, -0)
+      || request.fromSeq > request.throughSeq + 1) {
+      throw new RemoteError('gateway/bad-request', 'fromSeq must be a non-negative safe integer at or before throughSeq + 1', {})
+    }
+    if (request.beforeSeq !== undefined || request.maxMessages !== undefined || request.stepDetail === 'collapsed') {
+      throw new RemoteError('gateway/bad-request', 'an exact history interval cannot use a message budget, beforeSeq, or collapsed detail', {})
+    }
+  }
   if (request.beforeSeq !== undefined
     && (!Number.isSafeInteger(request.beforeSeq)
       || request.beforeSeq < 0
@@ -323,6 +377,21 @@ function validateFollowRequest(request: SessionFollowRequest): void {
   if (request.maxMessages !== undefined
     && (!Number.isSafeInteger(request.maxMessages) || request.maxMessages <= 0)) {
     throw new RemoteError('gateway/bad-request', 'maxMessages must be a positive safe integer', {})
+  }
+}
+
+function validateExpandStepsRequest(request: SessionExpandStepsRequest): void {
+  if (!Number.isSafeInteger(request.throughSeq)
+    || request.throughSeq < -1
+    || Object.is(request.throughSeq, -0)) {
+    throw new RemoteError('gateway/bad-request', 'throughSeq must be an integer greater than or equal to -1', {})
+  }
+  if (!Number.isSafeInteger(request.turn) || request.turn < 0 || Object.is(request.turn, -0)) {
+    throw new RemoteError('gateway/bad-request', 'turn must be a non-negative safe integer', {})
+  }
+  if (request.fromSeq !== undefined
+    && (!Number.isSafeInteger(request.fromSeq) || request.fromSeq < 0 || Object.is(request.fromSeq, -0))) {
+    throw new RemoteError('gateway/bad-request', 'fromSeq must be a non-negative safe integer', {})
   }
 }
 
@@ -414,15 +483,64 @@ function wireHeader(header: SessionHeader): SessionWireHeader {
   return { ...header }
 }
 
-function entryFor(event: SessionEvent): SessionEventEntry {
+function entryFor(event: SessionEvent, turnUsage?: TurnTokenUsage | null): SessionEventEntry {
   return {
     type: 'event',
     // Session.append validates and freezes event data as JSON before publication.
     event: event as unknown as SessionWireEvent,
+    ...event.type === 'turn/end' ? { turnUsage: turnUsage ?? null } : {},
   }
 }
 
 /** Encode one bounded logical page without changing its pagination cut. */
-function pageRecords(events: readonly SessionEvent[]): SessionHistoryRecord[] {
-  return events.map(entryFor)
+function pageRecords(
+  events: readonly SessionEvent[],
+  usage?: ReadonlyMap<number, TurnTokenUsage | null>,
+): SessionHistoryRecord[] {
+  return events.map(event => entryFor(event, usage?.get(event.seq)))
+}
+
+/**
+ * Encode one paginated range at the requested step detail. Under `collapsed`,
+ * elidable step interiors leave the records and return as digests; retention is
+ * decided over `scope`, the whole log through the cut, so a turn split across
+ * pages keeps the same steps whole on each. A page that would keep nothing (a
+ * one-message page inside one elidable step) is served whole instead, so every
+ * page carries at least one record.
+ */
+function detailPage(
+  page: readonly SessionEvent[],
+  scope: readonly SessionEvent[],
+  detail: SessionStepDetail | undefined,
+  usage: ReadonlyMap<number, TurnTokenUsage | null>,
+): { readonly records: SessionHistoryRecord[]; readonly digests?: readonly StepDigest[] } {
+  if (detail !== 'collapsed') return { records: pageRecords(page, usage) }
+  const collapsed = collapseSteps(page, scope)
+  if (collapsed.digests.length === 0) return { records: pageRecords(page, usage) }
+  if (collapsed.events.length === 0) return { records: pageRecords(page, usage) }
+  return { records: coveringRecords(page, collapsed.events, usage), digests: collapsed.digests }
+}
+
+/**
+ * Encode the kept events of a collapsed page so their inclusive ranges partition
+ * the page's seq range: each record stands for the withheld events before it,
+ * and the last record also for those after it.
+ * @param page - the complete contiguous page the kept events were drawn from.
+ * @param kept - the events the collapsed page serves, ascending by seq; non-empty.
+ * @param usage - complete-turn accounting keyed by each served end sequence.
+ * @returns records whose coverage joins end to end from the page's first seq to its last.
+ */
+function coveringRecords(
+  page: readonly SessionEvent[],
+  kept: readonly SessionEvent[],
+  usage: ReadonlyMap<number, TurnTokenUsage | null>,
+): SessionHistoryRecord[] {
+  const pageStart = (page[0] as SessionEvent).seq
+  const pageEnd = (page.at(-1) as SessionEvent).seq
+  return kept.map((event, index) => {
+    const from = index === 0 ? pageStart : (kept[index - 1] as SessionEvent).seq + 1
+    const to = index === kept.length - 1 ? pageEnd : event.seq
+    const record = entryFor(event, usage.get(event.seq))
+    return from === event.seq && to === event.seq ? record : { ...record, covers: { from, to } }
+  })
 }

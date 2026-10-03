@@ -1,0 +1,48 @@
+- banner:
+  - navigation "Session hierarchy":
+    - button "Begin your reply with the" [disabled]
+  - img
+  - text: Standard mode
+  - button "More actions":
+    - img
+  - button "Open right sidebar":
+    - img
+  - tablist:
+    - tab "Chat" [selected]
+    - tab "Trajectory"
+- text: Begin your reply with the plain sentence "Reading the workspace now." as text, and in that same message call the bash tool with the command "echo alpha". After the tool result, reply with the single word DONE and stop. {{clock}}
+- button "Copy":
+  - img
+- button "{{duration}} 1 steps 1 calls 1 context injection 7.9K tokens (7.8K in / 109 out)"
+- text: ·
+- paragraph: DONE
+- button "Copy":
+  - img
+- button "Good response":
+  - img
+- button "Bad response":
+  - img
+- button "Branch into a new conversation":
+  - img
+- button "Usage 15.8K tok · $0.0000":
+  - img
+  - text: Usage 15.8K tok$0.0000
+- button "Ran for {{duration}}":
+  - img
+  - text: Ran for {{duration}}
+- text: {{clock}}
+- textbox "Message or run a task, / commands, @ files or sessions"
+- button "Add files or run commands":
+  - img
+- 'button "Access mode, current: Workspace Write"': Workspace Write
+- button "Select model, current DeepSeek-V4-Flash":
+  - text: DeepSeek-V4-Flash
+  - img
+- button "Send message" [disabled]
+- button "1 turns 2 steps · {{throughput}} tok/s":
+  - img
+  - text: 1 turns 2 steps{{throughput}} tok/s
+- button "15.8K tok · Cache hit 50% · $0.0000":
+  - img
+  - text: 15.8K tokCache hit 50%$0.0000
+- button "6% of context used": 6%

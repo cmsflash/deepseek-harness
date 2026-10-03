@@ -405,6 +405,7 @@ describe('subagent catalogs', () => {
         },
         assistantStream: true,
         maxMessages: 50,
+        stepDetail: 'full',
       },
     ])
     expect(remote.session.page).not.toHaveBeenCalled()

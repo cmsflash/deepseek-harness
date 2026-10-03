@@ -134,47 +134,8 @@ function normalizeUsage(usage: TokenUsage, route?: TurnTokenUsageRoute): Normali
   }
 }
 
-function aggregateAttempts(attempts: readonly NormalizedAttempt[]): TurnTokenUsage | undefined {
-  if (attempts.length === 0) return undefined
-  const inputTokens = safeSum(attempts.map(attempt => attempt.inputTokens))
-  const outputTokens = safeSum(attempts.map(attempt => attempt.outputTokens))
-  const totalTokens = safeSum(attempts.map(attempt => attempt.totalTokens))
-  if (inputTokens === undefined || outputTokens === undefined || totalTokens === undefined) return undefined
-
-  const cacheRead = attempts.map(attempt => attempt.cacheReadTokens)
-  const cacheWrite = attempts.map(attempt => attempt.cacheWriteTokens)
-  const reasoning = attempts.map(attempt => attempt.reasoningTokens)
-  const cacheReadTokens = cacheRead.every(isCount) ? safeSum(cacheRead) : undefined
-  const cacheWriteTokens = cacheWrite.every(isCount) ? safeSum(cacheWrite) : undefined
-  const reasoningTokens = reasoning.every(isCount) ? safeSum(reasoning) : undefined
-  // A present cache bucket is bounded by exact prompt, and reasoning is bounded
-  // by output. Safe required aggregates therefore imply safe optional sums.
-
-  let routes: readonly TurnTokenUsageRoute[] | undefined
-  const attributed = attempts.map(attempt => attempt.route)
-  if (attributed.every((route): route is TurnTokenUsageRoute => route !== undefined)) {
-    const unique = new Map<string, TurnTokenUsageRoute>()
-    for (const route of attributed) unique.set(`${route.provider}\0${route.model}`, route)
-    routes = [...unique.values()]
-  }
-  let costUsd = 0
-  let unpricedCalls = 0
-  for (const attempt of attempts) {
-    if (attempt.costUsd === undefined) unpricedCalls += 1
-    else costUsd += attempt.costUsd
-  }
-
-  return {
-    uncachedInputTokens: inputTokens,
-    outputTokens,
-    totalTokens,
-    ...cacheReadTokens === undefined ? {} : { cacheReadTokens },
-    ...cacheWriteTokens === undefined ? {} : { cacheWriteTokens },
-    ...reasoningTokens === undefined ? {} : { reasoningTokens },
-    ...routes === undefined ? {} : { routes },
-    costUsd,
-    unpricedCalls,
-  }
+function addOptional(total: number | undefined, value: number | undefined): number | undefined {
+  return total === undefined || value === undefined ? undefined : safeSum([total, value])
 }
 
 function sameAttempt(
@@ -186,108 +147,169 @@ function sameAttempt(
 }
 
 /**
+ * Incrementally fold one Turn's durable attempt lifecycle into exact token accounting.
+ *
+ * Retains only lifecycle state, running totals, and distinct routes, not events or
+ * completed attempts. Instances never reset. Missing lifecycle boundaries,
+ * incomplete attempt usage, unsafe counts, non-finite aggregate costs, or
+ * contradictory exact totals make the whole disclosure unavailable.
+ */
+export class TurnUsageAccumulator {
+  private state: AttemptState = { kind: 'idle' }
+  private turn: number | undefined
+  private sawEnd = false
+  private invalid = false
+  private attemptCount = 0
+  private inputTokens = 0
+  private outputTokens = 0
+  private totalTokens = 0
+  private cacheReadTokens: number | undefined = 0
+  private cacheWriteTokens: number | undefined = 0
+  private reasoningTokens: number | undefined = 0
+  private routes: Map<string, TurnTokenUsageRoute> | undefined = new Map()
+  private costUsd = 0
+  private unpricedCalls = 0
+
+  /**
+   * Consume a Turn-local event in durable order; invalidity is permanent.
+   * Events outside `turn/start` through `turn/end` invalidate even a completed result.
+   * @param event - Next durable event for this Turn.
+   */
+  append(event: SessionEvent): void {
+    if (this.invalid) return
+    if (event.type === 'turn/start') {
+      if (this.turn !== undefined || this.state.kind !== 'idle') this.invalid = true
+      else this.turn = event.data.turn
+      return
+    }
+    const turn = this.turn
+    if (turn === undefined) {
+      this.invalid = true
+      return
+    }
+    if (event.type === 'turn/end') {
+      if (event.data.turn !== turn || this.state.kind !== 'idle' || this.sawEnd) this.invalid = true
+      else this.sawEnd = true
+      return
+    }
+    if (this.sawEnd) {
+      this.invalid = true
+      return
+    }
+    if (event.type === 'step/start') {
+      if (event.data.turn !== turn || this.state.kind !== 'idle') this.invalid = true
+      else this.state = { kind: 'open', turn, step: event.data.step }
+      return
+    }
+    if (event.type === 'llm/retry-started') {
+      if (event.data.turn !== turn
+        || this.state.kind !== 'settled'
+        || this.state.by !== 'retry'
+        || !sameAttempt(this.state, event.data.turn, event.data.step)) this.invalid = true
+      else this.state = { kind: 'open', turn, step: event.data.step }
+      return
+    }
+    if (event.type === 'assistant/attempt') {
+      if (event.data.turn !== turn
+        || this.state.kind !== 'open'
+        || !sameAttempt(this.state, event.data.turn, event.data.step)) {
+        this.invalid = true
+        return
+      }
+      const sample: TokenUsage | undefined = streamUsage(event.data.stream) ?? this.state.sample
+      this.state = { kind: 'open', turn, step: event.data.step, ...(sample === undefined ? {} : { sample }) }
+      if (!this.closeOpen()) this.invalid = true
+      else this.state = { kind: 'finishClosed', turn, step: event.data.step }
+      return
+    }
+    if (event.type === 'assistant/message') {
+      if (event.data.turn !== turn
+        || this.state.kind !== 'open'
+        || !sameAttempt(this.state, event.data.turn, event.data.step)) {
+        this.invalid = true
+        return
+      }
+      const sample = event.data.usage ?? streamUsage(event.data.stream)
+      if (sample !== undefined) this.state = { ...this.state, sample }
+      if (!this.closeOpen(messageRoute(event.data.message))) this.invalid = true
+      else this.state = { kind: 'settled', turn, step: event.data.step, by: 'message' }
+      return
+    }
+    if (event.type === 'llm/retry') {
+      if (event.data.turn !== turn || this.state.kind === 'idle'
+        || !sameAttempt(this.state, event.data.turn, event.data.step)) {
+        this.invalid = true
+        return
+      }
+      if (this.state.kind === 'settled' || (this.state.kind === 'open' && !this.closeOpen())) this.invalid = true
+      if (!this.invalid) this.state = { kind: 'settled', turn, step: event.data.step, by: 'retry' }
+      return
+    }
+    if (event.type === 'step/end') {
+      if (event.data.turn !== turn || this.state.kind === 'idle'
+        || !sameAttempt(this.state, event.data.turn, event.data.step)) {
+        this.invalid = true
+        return
+      }
+      if (this.state.kind === 'open' && !this.closeOpen()) this.invalid = true
+      if (!this.invalid) this.state = { kind: 'idle' }
+    }
+  }
+
+  /**
+   * Read accounting without changing the accumulated lifecycle.
+   * @returns exact usage after a valid `turn/end`, or undefined for incomplete,
+   * invalid, or zero-attempt turns.
+   */
+  result(): TurnTokenUsage | undefined {
+    if (this.invalid || !this.sawEnd || this.state.kind !== 'idle' || this.attemptCount === 0) return undefined
+    return {
+      uncachedInputTokens: this.inputTokens,
+      outputTokens: this.outputTokens,
+      totalTokens: this.totalTokens,
+      ...this.cacheReadTokens === undefined ? {} : { cacheReadTokens: this.cacheReadTokens },
+      ...this.cacheWriteTokens === undefined ? {} : { cacheWriteTokens: this.cacheWriteTokens },
+      ...this.reasoningTokens === undefined ? {} : { reasoningTokens: this.reasoningTokens },
+      ...this.routes === undefined ? {} : { routes: [...this.routes.values()] },
+      costUsd: this.costUsd,
+      unpricedCalls: this.unpricedCalls,
+    }
+  }
+
+  private closeOpen(route?: TurnTokenUsageRoute): boolean {
+    if (this.state.kind !== 'open' || this.state.sample === undefined) return false
+    const normalized = normalizeUsage(this.state.sample, route)
+    if (normalized === undefined) return false
+    const inputTokens = safeSum([this.inputTokens, normalized.inputTokens])
+    const outputTokens = safeSum([this.outputTokens, normalized.outputTokens])
+    const totalTokens = safeSum([this.totalTokens, normalized.totalTokens])
+    if (inputTokens === undefined || outputTokens === undefined || totalTokens === undefined) return false
+    this.inputTokens = inputTokens
+    this.outputTokens = outputTokens
+    this.totalTokens = totalTokens
+    this.attemptCount += 1
+    this.cacheReadTokens = addOptional(this.cacheReadTokens, normalized.cacheReadTokens)
+    this.cacheWriteTokens = addOptional(this.cacheWriteTokens, normalized.cacheWriteTokens)
+    this.reasoningTokens = addOptional(this.reasoningTokens, normalized.reasoningTokens)
+    if (normalized.route === undefined) this.routes = undefined
+    else this.routes?.set(`${normalized.route.provider}\0${normalized.route.model}`, normalized.route)
+    if (normalized.costUsd === undefined) this.unpricedCalls += 1
+    else this.costUsd += normalized.costUsd
+    return Number.isFinite(this.costUsd)
+  }
+}
+
+/**
  * Fold one complete Turn's durable attempt lifecycle into exact token accounting.
  *
  * No attempt is inferred from a usage sample. Any missing lifecycle boundary,
- * incomplete attempt usage, unsafe count, or contradictory exact total makes
- * the whole disclosure unavailable.
+ * incomplete attempt usage, unsafe count, non-finite aggregate cost, or
+ * contradictory exact total makes the whole disclosure unavailable.
  * @param events - Turn-local durable events from `turn/start` through `turn/end`.
  * @returns exact aggregate usage, or undefined when it cannot be proven.
  */
 export function deriveTurnTokenUsage(events: readonly SessionEvent[]): TurnTokenUsage | undefined {
-  let state: AttemptState = { kind: 'idle' }
-  const attempts: NormalizedAttempt[] = []
-  let turn: number | undefined
-  let sawEnd = false
-  let invalid = false
-
-  const closeOpen = (route?: TurnTokenUsageRoute): boolean => {
-    if (state.kind !== 'open' || state.sample === undefined) return false
-    const normalized = normalizeUsage(state.sample, route)
-    if (normalized === undefined) return false
-    attempts.push(normalized)
-    return true
-  }
-
-  for (const event of events) {
-    if (invalid) break
-    if (event.type === 'turn/start') {
-      if (turn !== undefined || state.kind !== 'idle') invalid = true
-      else turn = event.data.turn
-      continue
-    }
-    if (turn === undefined) {
-      invalid = true
-      break
-    }
-    if (event.type === 'turn/end') {
-      if (event.data.turn !== turn || state.kind !== 'idle' || sawEnd) invalid = true
-      else sawEnd = true
-      continue
-    }
-    if (sawEnd) {
-      invalid = true
-      break
-    }
-    if (event.type === 'step/start') {
-      if (event.data.turn !== turn || state.kind !== 'idle') invalid = true
-      else state = { kind: 'open', turn, step: event.data.step }
-      continue
-    }
-    if (event.type === 'llm/retry-started') {
-      if (event.data.turn !== turn
-        || state.kind !== 'settled'
-        || state.by !== 'retry'
-        || !sameAttempt(state, event.data.turn, event.data.step)) invalid = true
-      else state = { kind: 'open', turn, step: event.data.step }
-      continue
-    }
-    if (event.type === 'assistant/attempt') {
-      if (event.data.turn !== turn
-        || state.kind !== 'open'
-        || !sameAttempt(state, event.data.turn, event.data.step)) {
-        invalid = true
-        continue
-      }
-      const sample: TokenUsage | undefined = streamUsage(event.data.stream) ?? state.sample
-      state = { kind: 'open', turn, step: event.data.step, ...(sample === undefined ? {} : { sample }) }
-      if (!closeOpen()) invalid = true
-      else state = { kind: 'finishClosed', turn, step: event.data.step }
-      continue
-    }
-    if (event.type === 'assistant/message') {
-      if (event.data.turn !== turn
-        || state.kind !== 'open'
-        || !sameAttempt(state, event.data.turn, event.data.step)) {
-        invalid = true
-        continue
-      }
-      const sample = event.data.usage ?? streamUsage(event.data.stream)
-      if (sample !== undefined) state = { ...state, sample }
-      if (!closeOpen(messageRoute(event.data.message))) invalid = true
-      else state = { kind: 'settled', turn, step: event.data.step, by: 'message' }
-      continue
-    }
-    if (event.type === 'llm/retry') {
-      if (event.data.turn !== turn || state.kind === 'idle'
-        || !sameAttempt(state, event.data.turn, event.data.step)) {
-        invalid = true
-        continue
-      }
-      if (state.kind === 'settled' || (state.kind === 'open' && !closeOpen())) invalid = true
-      if (!invalid) state = { kind: 'settled', turn, step: event.data.step, by: 'retry' }
-      continue
-    }
-    if (event.type === 'step/end') {
-      if (event.data.turn !== turn || state.kind === 'idle'
-        || !sameAttempt(state, event.data.turn, event.data.step)) {
-        invalid = true
-        continue
-      }
-      if (state.kind === 'open' && !closeOpen()) invalid = true
-      if (!invalid) state = { kind: 'idle' }
-    }
-  }
-
-  return invalid || !sawEnd || state.kind !== 'idle' ? undefined : aggregateAttempts(attempts)
+  const accumulator = new TurnUsageAccumulator()
+  for (const event of events) accumulator.append(event)
+  return accumulator.result()
 }

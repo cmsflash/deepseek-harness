@@ -104,6 +104,7 @@
       "@deepseek-ai/dsh-session-turn-outline/types": ["./packages/session/session-turn-outline/src/types.ts"],
       "@deepseek-ai/dsh-session-turn-outline/client": ["./packages/session/session-turn-outline/src/client.ts"],
       "@deepseek-ai/dsh-token-meter/client": ["./packages/llm/token-meter/src/client.ts"],
+      "@deepseek-ai/dsh-token-meter/turn-usage": ["./packages/llm/token-meter/src/turn-usage.ts"],
       "@deepseek-ai/dsh-plan-mode/types": ["./packages/plan/plan-mode/src/types.ts"],
       "@deepseek-ai/dsh-plan-mode/client": ["./packages/plan/plan-mode/src/client.ts"],
       "@deepseek-ai/dsh-agent-presets/types": ["./packages/preset/agent-presets/src/types.ts"],

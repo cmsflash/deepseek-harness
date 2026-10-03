@@ -108,6 +108,9 @@ class BoundConversation implements ConversationBinding {
     this.revision = window.revision
     switch (window.change.kind) {
       case 'prepend':
+      // Spliced interiors merge by seq into the held inputs exactly as an
+      // older page does; only the window's ends differ, and neither moves.
+      case 'splice':
         this.publish(this.assembler.prepend(window.change.entries, window.hasMore))
         return
       case 'append': {

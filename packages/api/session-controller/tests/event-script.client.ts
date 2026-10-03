@@ -8,6 +8,7 @@ import type { ContentBlock } from '@deepseek-ai/dsh-llm/types'
 import type { SessionEvent } from '@deepseek-ai/dsh-session/types'
 import type {
   SessionEventEntry,
+  SessionHistoryRecord,
   SessionPage,
   SessionWireEvent,
 } from '../src/types.ts'
@@ -177,4 +178,23 @@ export function historyValue(events: readonly SessionEvent[], hasMore = false): 
     records: entries(events),
     hasMore,
   }
+}
+
+/**
+ * Encode the kept events of a collapsed page the way the Host does: each
+ * record covers the withheld events before it, and the last also those after
+ * it, so the records partition the page's contiguous seq range.
+ * @param page - the complete contiguous page, ascending by seq.
+ * @param kept - the events the collapsed page serves, ascending by seq.
+ * @returns collapsed-page records with coverage where it differs from the event's own seq.
+ */
+export function collapsedRecords(page: readonly SessionEvent[], kept: readonly SessionEvent[]): SessionHistoryRecord[] {
+  const pageStart = (page[0] as SessionEvent).seq
+  const pageEnd = (page.at(-1) as SessionEvent).seq
+  return kept.map((event, index) => {
+    const from = index === 0 ? pageStart : (kept[index - 1] as SessionEvent).seq + 1
+    const to = index === kept.length - 1 ? pageEnd : event.seq
+    const record: SessionHistoryRecord = { type: 'event', event: event as unknown as SessionWireEvent }
+    return from === event.seq && to === event.seq ? record : { ...record, covers: { from, to } }
+  })
 }

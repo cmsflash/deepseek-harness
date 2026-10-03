@@ -19,6 +19,7 @@ import type {
   SessionPage,
   SessionPageRequest,
   SessionProjectionBaseline,
+  SessionStepDetail,
 } from '../types.ts'
 import {
   historyEntries,
@@ -35,12 +36,12 @@ export {
 } from '../types.ts'
 
 /** Pagination fields bound to an already-addressed Session journal. */
-export type ClientSessionPageRequest = Omit<SessionPageRequest, 'address' | 'throughSeq'>
+export type ClientSessionPageRequest = Omit<SessionPageRequest, 'address' | 'throughSeq' | 'fromSeq'>
 
 /** Complete generated `ctx.remote.session` namespace. */
 export type SessionRemote = ClientRemote['session']
 
-/** Opening metadata carried only by a follow snapshot, never by loadOlder pages. */
+/** Opening metadata carried only by a follow snapshot, never by loadOlder pages; digests ride both. */
 interface SessionJournalPage extends SessionPage {
   readonly projections?: SessionProjectionBaseline
   readonly assistantStream?: SessionAssistantStreamBaseline
@@ -98,6 +99,8 @@ export interface SessionControlStreamOptions {
 
 /** Domain sinks used by one addressed Session event journal. */
 export interface SessionEventStreamOptions {
+  /** Resolve the current consumer requirement for every physical follow and page read. */
+  readonly stepDetail?: () => SessionStepDetail
   /** Apply one complete event-window change. */
   readonly publish: (change: SessionJournalChange) => void
   /** Observe a retryable carrier loss before reconnection. */
@@ -141,6 +144,8 @@ export class SessionEventStream extends RemoteJournalStream<
   ClientSessionPageRequest,
   SessionAssistantStreamFrame
 > {
+  private readonly stepDetail: (() => SessionStepDetail) | undefined
+
   /**
    * @param remote - generated Session namespace and Gateway stream factory.
    * @param address - durable ordinary-Session or direct-subagent address.
@@ -166,6 +171,51 @@ export class SessionEventStream extends RemoteJournalStream<
         : { carrierFailed: options.carrierFailed }),
       failed: options.failed,
     })
+    this.stepDetail = options.stepDetail
+  }
+
+  /**
+   * Read every durable event in the currently held interval, without reopening follow.
+   * @param fromSeq - inclusive head of the caller's loaded window.
+   * @returns complete records through the cursor captured when the request starts.
+   */
+  async readFullRange(fromSeq: number): Promise<readonly SessionHistoryRecord[]> {
+    const throughSeq = this.cursor()
+    const result = await this.remote.session.page(
+      { address: this.address, fromSeq, throughSeq, stepDetail: 'full' },
+      this.signal,
+    )
+    if (!result.ok) throw result.error
+    const { records, digests } = result.value
+    for (const record of records) assertSessionWireEvent(record.event)
+    if (records.length !== throughSeq - fromSeq + 1
+      || records.some((record, index) => record.event.seq !== fromSeq + index || record.covers !== undefined)
+      || (digests !== undefined && digests.length > 0)) {
+      throw new RemoteError('gateway/internal', 'session full-detail interval is incomplete', { fromSeq, throughSeq })
+    }
+    return records
+  }
+
+  private resolveRequest(request: ClientSessionPageRequest): ClientSessionPageRequest {
+    return this.stepDetail === undefined ? request : { ...request, stepDetail: this.stepDetail() }
+  }
+
+  /**
+   * Read back the events one collapsed page withheld from a turn, at the
+   * journal's current cursor so the result never outruns the published window.
+   * @param turn - the turn the reader expanded.
+   * @param fromSeq - lowest seq the caller's window holds.
+   * @param signal - caller cancellation for the read.
+   * @returns the withheld records, ascending by seq.
+   */
+  async expandSteps(turn: number, fromSeq: number, signal?: AbortSignal): Promise<readonly SessionHistoryRecord[]> {
+    const result = await this.remote.session.expandSteps(
+      { address: this.address, throughSeq: this.cursor(), turn, fromSeq },
+      signal ?? this.signal,
+    )
+    if (!result.ok) throw result.error
+    for (const record of result.value.records) assertSessionWireEvent(record.event)
+    return result.value.records
   }
 
   /** @inheritdoc */
@@ -176,10 +226,12 @@ export class SessionEventStream extends RemoteJournalStream<
     SessionHistoryRecord, number, SessionJournalPage, SessionAssistantStreamFrame
   >> {
     let assistantRevision: number | undefined
+    const resolved = this.resolveRequest(request)
     for await (const frame of this.remote.session.follow({
       address: this.address,
       assistantStream: true,
-      ...(request.maxMessages === undefined ? {} : { maxMessages: request.maxMessages }),
+      ...(resolved.maxMessages === undefined ? {} : { maxMessages: resolved.maxMessages }),
+      ...(resolved.stepDetail === undefined ? {} : { stepDetail: resolved.stepDetail }),
     }, signal)) {
       if (frame.type === 'snapshot') {
         for (const record of frame.records) assertSessionWireEvent(record.event)
@@ -197,6 +249,7 @@ export class SessionEventStream extends RemoteJournalStream<
           page: {
             records: frame.records,
             hasMore: frame.hasMore,
+            ...(frame.digests === undefined ? {} : { digests: frame.digests }),
             projections: frame.projections,
             assistantStream: frame.assistantStream,
           },
@@ -226,7 +279,7 @@ export class SessionEventStream extends RemoteJournalStream<
     signal: AbortSignal,
   ): Promise<SessionJournalPage> {
     const result = await this.remote.session.page(
-      { address: this.address, throughSeq, ...request },
+      { address: this.address, throughSeq, ...this.resolveRequest(request) },
       signal,
     )
     if (!result.ok) throw result.error
@@ -238,6 +291,9 @@ export class SessionEventStream extends RemoteJournalStream<
   protected override repairRequest(
     request: ClientSessionPageRequest,
   ): ClientSessionPageRequest {
-    return request.maxMessages === undefined ? {} : { maxMessages: request.maxMessages }
+    return {
+      ...(request.maxMessages === undefined ? {} : { maxMessages: request.maxMessages }),
+      ...(request.stepDetail === undefined ? {} : { stepDetail: request.stepDetail }),
+    }
   }
 }

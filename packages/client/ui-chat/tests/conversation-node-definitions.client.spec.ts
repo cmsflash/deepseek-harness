@@ -31,6 +31,7 @@ import { turnErrorDefinition } from '../src/client/conversation-nodes/turn-error
 import { turnMaxTokensDefinition } from '../src/client/conversation-nodes/turn-max-tokens.ts'
 import { turnTailDefinition } from '../src/client/conversation-nodes/turn-tail.ts'
 import { turnProcessDefinition } from '../src/client/conversation-nodes/turn-process.ts'
+import { collapseSettledSteps } from '../src/client/chat/step-collapse.ts'
 import type {
   AssistantChatData, ManualCompactionChatData, RetryChatData, ToolChatData, TurnTailChatData,
 } from '../src/client/contract/chat-nodes.ts'
@@ -224,6 +225,7 @@ describe('built-in conversation node Definitions', () => {
     const input = at(1, 'turn/start', { turn: 1 })
     const invalidStart = {
       ...input,
+      record: input,
       role: 'start' as const,
       location: { kind: 'session' as const },
     }
@@ -236,6 +238,7 @@ describe('built-in conversation node Definitions', () => {
     const input = at(1, 'turn/start', { turn: 1 })
     const invalidStart = {
       ...input,
+      record: input,
       role: 'start' as const,
       location: { kind: 'session' as const },
     }
@@ -494,6 +497,63 @@ describe('built-in conversation node Definitions', () => {
 
     expect(current.order.map(key => current.nodes.get(key)?.kind)).toEqual([
       'user', 'turn-process', 'context', 'steering', 'assistant-step', 'assistant-step', 'turn-tail',
+    ])
+  })
+
+  it('collapses an appended steered turn per human input, counting tool-only requests', () => {
+    const steer = textMessage('steer', 'Follow-up question')
+    const append = { surfaceOp: 'append' }
+    const toolOnly = (id: string, callId: string) => ({
+      ...assistantMessage(id, ''),
+      content: [{ type: 'tool-call', id: callId, name: 'read', arguments: '{}' }],
+    })
+    const value = assembler([
+      at(1, 'turn/start', { turn: 1 }),
+      at(2, 'step/start', { turn: 1, step: 1 }),
+      at(3, 'user/message', textMessage('ask', 'First question'), append),
+      at(4, 'assistant/message', { turn: 1, step: 1, message: toolOnly('a1', 'c1'), usage: { inputTokens: 100, outputTokens: 20 } }, append),
+      at(5, 'tool/call', { turn: 1, step: 1, callId: 'c1', name: 'read', arguments: '{}' }),
+      at(6, 'tool/result', { turn: 1, step: 1, message: toolResult('c1', 'first result') }, append),
+      at(7, 'step/end', { turn: 1, step: 1 }),
+      at(8, 'step/start', { turn: 1, step: 2 }),
+      at(9, 'assistant/message', { turn: 1, step: 2, message: assistantMessage('a2', 'First answer') }, append),
+      at(10, 'agent/inbox/spliced', { target: 'next-step', start: 0, inserted: [steer] }),
+      at(11, 'step/end', { turn: 1, step: 2 }),
+    ])
+    for (const entry of [
+      at(12, 'agent/inbox/spliced', { target: 'next-step', start: 0, removedCount: 1, inserted: [] }),
+      at(13, 'step/start', { turn: 1, step: 3 }),
+      at(14, 'user/message', steer, append),
+      at(15, 'assistant/message', { turn: 1, step: 3, message: toolOnly('a3', 'c2'), usage: { inputTokens: 300, outputTokens: 10 } }, append),
+      at(16, 'tool/call', { turn: 1, step: 3, callId: 'c2', name: 'read', arguments: '{}' }),
+      at(17, 'tool/result', { turn: 1, step: 3, message: toolResult('c2', 'second result') }, append),
+      at(18, 'step/end', { turn: 1, step: 3 }),
+      at(19, 'step/start', { turn: 1, step: 4 }),
+      at(20, 'assistant/message', { turn: 1, step: 4, message: toolOnly('a4', 'c3'), usage: { inputTokens: 400, outputTokens: 20 } }, append),
+      at(21, 'tool/call', { turn: 1, step: 4, callId: 'c3', name: 'read', arguments: '{}' }),
+      at(22, 'tool/result', { turn: 1, step: 4, message: toolResult('c3', 'third result') }, append),
+      at(23, 'step/end', { turn: 1, step: 4 }),
+      at(24, 'step/start', { turn: 1, step: 5 }),
+      at(25, 'assistant/message', { turn: 1, step: 5, message: assistantMessage('a5', 'Second answer') }, append),
+      at(26, 'step/end', { turn: 1, step: 5 }),
+      at(27, 'turn/end', { turn: 1, reason: { kind: 'completed' } }),
+    ]) value.append(entry)
+    value.flush()
+    const current = snapshot(value)
+    const rows = collapseSettledSteps(current.order, current.nodes, new Set(), current.timeline)
+    // The compact-mode process control renders nothing in collapsed-steps mode.
+    const kinds = rows.map(row => row.kind === 'collapsed' ? `collapsed:${row.key}` : current.nodes.get(row.key)?.kind)
+      .filter(kind => kind !== 'turn-process')
+    expect(kinds).toEqual([
+      'user', 'collapsed:1:1', 'assistant-step', 'steering', 'collapsed:1:3', 'assistant-step', 'turn-tail',
+    ])
+    const visibleText = rows.flatMap(row => row.kind === 'node' && current.nodes.get(row.key)?.kind === 'assistant-step'
+      ? (current.nodes.get(row.key)?.data as AssistantChatData).blocks.flatMap(block => block.kind === 'text' ? [block.text] : [])
+      : [])
+    expect(visibleText).toEqual(['First answer', 'Second answer'])
+    expect(rows.filter(row => row.kind === 'collapsed').map(row => row.metrics)).toMatchObject([
+      { steps: 1, calls: 1, inputTokens: 100, outputTokens: 20 },
+      { steps: 2, calls: 2, inputTokens: 700, outputTokens: 30 },
     ])
   })
 
@@ -1383,34 +1443,8 @@ describe('built-in conversation node Definitions', () => {
     expect(tail.branchUnavailable).toBe(true)
   })
 
-  it('publishes exact Turn usage only after pagination supplies the full lifecycle window', () => {
-    const value = assembler([
-      at(3, 'assistant/message', {
-        turn: 1,
-        step: 1,
-        message: assistantMessage('usage-assistant', 'done'),
-        usage: {
-          inputTokens: 10,
-          outputTokens: 4,
-          totalTokens: 17,
-          cacheReadTokens: 2,
-          cacheWriteTokens: 1,
-          reasoningTokens: 1,
-        },
-      }, { surfaceOp: 'append' }),
-      at(4, 'step/end', { turn: 1, step: 1 }),
-      at(5, 'turn/end', { turn: 1, reason: { kind: 'completed' } }),
-    ], true)
-
-    expect((node(snapshot(value), 'turn-tail')?.data as TurnTailChatData).tokenUsage).toBeUndefined()
-
-    value.prepend([
-      at(1, 'turn/start', { turn: 1 }),
-      at(2, 'step/start', { turn: 1, step: 1 }),
-    ], false)
-    value.flush()
-
-    expect((node(snapshot(value), 'turn-tail')?.data as TurnTailChatData).tokenUsage).toEqual({
+  it('keeps authoritative Turn usage when its start is outside the page and later prepended', () => {
+    const usage = {
       uncachedInputTokens: 10,
       outputTokens: 4,
       totalTokens: 17,
@@ -1418,9 +1452,81 @@ describe('built-in conversation node Definitions', () => {
       cacheWriteTokens: 1,
       reasoningTokens: 1,
       routes: [{ provider: 'fake', model: 'fake' }],
-      costUsd: 0,
+      costUsd: 0.024,
       unpricedCalls: 1,
-    })
+    }
+    const end = {
+      ...at(5, 'turn/end', { turn: 1, reason: { kind: 'completed' } }),
+      turnUsage: usage,
+    }
+    const value = assembler([
+      at(3, 'assistant/message', {
+        turn: 1,
+        step: 1,
+        message: assistantMessage('usage-assistant', 'done'),
+      }, { surfaceOp: 'append' }),
+      at(4, 'step/end', { turn: 1, step: 1 }),
+      end,
+    ], true)
+
+    expect((node(snapshot(value), 'turn-tail')?.data as TurnTailChatData).tokenUsage).toBe(usage)
+
+    value.prepend([
+      at(1, 'turn/start', { turn: 1 }),
+      at(2, 'step/start', { turn: 1, step: 1 }),
+    ], false)
+    value.flush()
+
+    expect((node(snapshot(value), 'turn-tail')?.data as TurnTailChatData).tokenUsage).toBe(usage)
+  })
+
+  it.each([undefined, null])('does not infer usage from loaded events when the Host summary is %s', (usage) => {
+    const value = assembler([
+      at(1, 'turn/start', { turn: 1 }),
+      at(2, 'step/start', { turn: 1, step: 1 }),
+      at(3, 'assistant/message', {
+        turn: 1,
+        step: 1,
+        message: assistantMessage('unavailable-usage', 'done'),
+        usage: { inputTokens: 10, outputTokens: 4, totalTokens: 14, costUsd: 0.02 },
+      }, { surfaceOp: 'append' }),
+      at(4, 'step/end', { turn: 1, step: 1 }),
+      {
+        ...at(5, 'turn/end', { turn: 1, reason: { kind: 'completed' } }),
+        ...usage === undefined ? {} : { turnUsage: usage },
+      },
+    ])
+
+    expect((node(snapshot(value), 'turn-tail')?.data as TurnTailChatData).tokenUsage).toBeUndefined()
+  })
+
+  it('publishes zero usage on live completion and clears it when the history is replaced', () => {
+    const usage = { uncachedInputTokens: 0, outputTokens: 0, totalTokens: 0, costUsd: 0, unpricedCalls: 0 }
+    const prefix = [
+      at(1, 'turn/start', { turn: 1 }),
+      at(2, 'step/start', { turn: 1, step: 1 }),
+      at(3, 'assistant/message', {
+        turn: 1,
+        step: 1,
+        message: assistantMessage('zero-usage', 'done'),
+      }, { surfaceOp: 'append' }),
+      at(4, 'step/end', { turn: 1, step: 1 }),
+    ]
+    const end = at(5, 'turn/end', { turn: 1, reason: { kind: 'completed' } })
+    const value = assembler(prefix)
+    expect(node(snapshot(value), 'turn-tail')).toBeUndefined()
+
+    value.append({ ...end, turnUsage: usage })
+    value.flush()
+    expect((node(snapshot(value), 'turn-tail')?.data as TurnTailChatData).tokenUsage).toBe(usage)
+
+    value.replaceWindow([...prefix, { ...end, turnUsage: null }], false)
+    value.flush()
+    expect((node(snapshot(value), 'turn-tail')?.data as TurnTailChatData).tokenUsage).toBeUndefined()
+
+    value.replaceWindow([...prefix, end], false)
+    value.flush()
+    expect((node(snapshot(value), 'turn-tail')?.data as TurnTailChatData).tokenUsage).toBeUndefined()
   })
 
   it('replays inbox predecessors after prepend and reclassifies the dependent message as steering', () => {

@@ -4,6 +4,7 @@ import SessionStore, { SESSION_FORMAT_VERSION, SessionId, SessionLogOffset, Sess
 import type { Session, SessionEvent, SessionHeader, SurfaceIntent } from '@deepseek-ai/dsh-session'
 import type { SessionObservation } from '@deepseek-ai/dsh-session-query'
 import { snapshotSubagentDescriptor } from '@deepseek-ai/dsh-subagent'
+import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { subagentIdentityProjectionDefinition } from '@deepseek-ai/dsh-subagent/src/projection.ts'
 import { describe, expect, it, vi } from 'vitest'
 import { SessionHistoryController } from '../src/history.ts'
@@ -82,6 +83,61 @@ async function setup(): Promise<{ ctx: Context; transport: SessionHistoryControl
 }
 
 describe('SessionHistoryController', () => {
+  it('refuses an expansion beyond an empty Session cursor', async () => {
+    const { ctx, transport } = await setup()
+    try {
+      const session = ctx.sessions.create(SessionId('empty-expansion'), { meta: { cwd: '/workspace' } })
+      await expect(transport.expandSteps({
+        address: { kind: 'session', sessionId: session.id }, throughSeq: 0, fromSeq: 0, turn: 1,
+      }, signal())).rejects.toMatchObject({ code: 'gateway/bad-request' })
+    } finally {
+      await ctx.fiber.dispose()
+    }
+  })
+
+  it('serves an exact full interval independently of the default message budget', async () => {
+    const { ctx, transport } = await setup()
+    try {
+      const session = ctx.sessions.create(SessionId('full-interval'), { meta: { cwd: '/workspace' } })
+      for (let index = 0; index < 120; index++) {
+        session.append('user/message', createUserMessage({
+          content: [{ type: 'text', text: `message ${index}` }], source: { kind: 'user' },
+        }), { surfaceOp: 'append' })
+      }
+      const address = { kind: 'session' as const, sessionId: session.id }
+      const ordinary = await transport.page({ address, throughSeq: 119 }, signal())
+      expect(ordinary.records).toHaveLength(50)
+      const interval = await transport.page({ address, fromSeq: 10, throughSeq: 109, stepDetail: 'full' }, signal())
+      expect(interval.records.map(record => record.event.seq)).toEqual(Array.from({ length: 100 }, (_, index) => index + 10))
+      expect(interval.hasMore).toBe(true)
+      expect(interval.digests).toBeUndefined()
+      expect(interval.records.every(record => record.covers === undefined)).toBe(true)
+      expect(await transport.page({ address, fromSeq: 110, throughSeq: 109 }, signal())).toEqual({ records: [], hasMore: true })
+      const whole = await transport.page({ address, fromSeq: 0, throughSeq: 119 }, signal())
+      expect(whole.records).toHaveLength(120)
+      expect(whole.hasMore).toBe(false)
+    } finally {
+      await ctx.fiber.dispose()
+    }
+  })
+
+  it.each([
+    { fromSeq: -1 }, { fromSeq: -0 }, { fromSeq: 0.5 }, { fromSeq: 2 },
+    { fromSeq: 0, beforeSeq: 1 }, { fromSeq: 0, maxMessages: 50 },
+    { fromSeq: 0, stepDetail: 'collapsed' as const },
+  ])('rejects invalid or ambiguous exact-interval requests: %j', async (range) => {
+    const { ctx, transport } = await setup()
+    try {
+      const session = ctx.sessions.create(SessionId('invalid-interval'), { meta: { cwd: '/workspace' } })
+      session.append('turn/start', { turn: 1 })
+      await expect(transport.page({
+        address: { kind: 'session', sessionId: session.id }, throughSeq: 0, ...range,
+      }, signal())).rejects.toMatchObject({ code: 'gateway/bad-request' })
+    } finally {
+      await ctx.fiber.dispose()
+    }
+  })
+
   it('opens at the current cursor and follows later events from an ordinary Session', async () => {
     const { ctx, transport } = await setup()
     const session = ctx.sessions.create(SessionId('ordinary'), { meta: { cwd: '/workspace' } })

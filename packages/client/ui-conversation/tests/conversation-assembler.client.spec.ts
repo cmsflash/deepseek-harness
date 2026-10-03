@@ -172,6 +172,48 @@ function fallbackDefinition(start: () => string): ConversationNodeDefinition<str
 }
 
 describe('ConversationNodeAssembler', () => {
+  it('retains original history records through pending Context replay and location refresh', () => {
+    let matches: readonly ConversationMatch[] = []
+    const definition: ConversationNodeDefinition<number> = {
+      kind: 'record-probe',
+      target: 'test',
+      match: event => event.type === 'turn/start'
+        ? { id: String(event.data.turn), role: 'start' }
+        : event.type === 'turn/end' ? { id: String(event.data.turn), role: 'update' } : null,
+      start: () => 0,
+      update: context => context.state + 1,
+      buildViewNode: (context) => {
+        matches = context.matches
+        return node(context, context.state)
+      },
+    }
+    const assembler = new ConversationNodeAssembler(
+      new TestEventDefinitions([definition]),
+      new TestViewDefinitions([testView()]),
+    )
+    const start = input(at(SessionSeq(1), 'turn/start', { turn: 1 }))
+    const end: SessionLiveEventEntry = {
+      ...input(at(SessionSeq(4), 'turn/end', { turn: 1, reason: { kind: 'completed' } })),
+      covers: { from: 2, to: 4 },
+      turnUsage: { uncachedInputTokens: 10, outputTokens: 5, totalTokens: 15, costUsd: 0.25, unpricedCalls: 0 },
+    }
+    assembler.replaceWindow([end], true)
+    assembler.flush()
+    expect(matches[0]?.record).toBe(end)
+    expect(matches[0]?.event).toBe(end.event)
+
+    assembler.prepend([start], false)
+    assembler.flush()
+    expect(matches[0]?.record).toBe(start)
+    expect(matches[1]?.record).toBe(end)
+    expect(matches[1]?.record.event).toBe(matches[1]?.event)
+
+    const replacement = { ...end, turnUsage: null }
+    assembler.replaceWindow([start, replacement], false)
+    assembler.flush()
+    expect(matches[1]?.record).toBe(replacement)
+  })
+
   it('publishes Location data through stable per-key sources', () => {
     const index = new ConversationLocationIndex()
     const turnStart = at(SessionSeq(1), 'turn/start', { turn: 1 })
