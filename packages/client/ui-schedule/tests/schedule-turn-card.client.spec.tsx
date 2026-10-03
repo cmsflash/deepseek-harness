@@ -568,11 +568,11 @@ describe('schedule-created Definition lifecycle', () => {
   const location = { kind: 'session' } as const
 
   function updateMatch(event: SessionEvent): ConversationMatch {
-    return { event, role: 'update', location }
+    return { event, record: { type: 'event', event }, role: 'update', location }
   }
 
   function startMatch(event: SessionEvent): ConversationStartMatch {
-    return { event, role: 'start', location }
+    return { event, record: { type: 'event', event }, role: 'start', location }
   }
 
   /** State the Definition adopts for one Turn start. */

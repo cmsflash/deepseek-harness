@@ -642,7 +642,7 @@ describe('Session history raw journal', () => {
       done: false, value: { type: 'event', event: durable },
     })
     await expect(iterator.next()).resolves.toEqual({
-      done: false, value: { type: 'event', event: next },
+      done: false, value: { type: 'event', event: next, turnUsage: null },
     })
     abort.abort()
     await iterator.next()

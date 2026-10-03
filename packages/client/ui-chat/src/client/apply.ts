@@ -186,6 +186,17 @@ export function apply(ctx: Context): void {
     }),
   }, PerformanceUsageRow))
 
+  // The transcript mode decides what the transcript SHOWS and therefore what
+  // its pages need to carry: a collapsing reader never looks at the elided
+  // steps, so the sessions domain stops fetching them and reads them back per
+  // turn on expansion. Following the live preference rather than reading it
+  // once also covers the durable value arriving after boot.
+  const followStepDetail = (): void => {
+    void ctx.sessions.setStepDetail(transcriptView.mode.getSnapshot() === 'collapsed' ? 'collapsed' : 'full')
+  }
+  ctx.effect(() => transcriptView.mode.subscribe(followStepDetail), 'ui-chat: step detail')
+  followStepDetail()
+
   ctx.slots.inject('settings.general.item', () => ctx.slots.register({
     name: 'settings.general.item',
     id: 'transcript-view',
@@ -202,6 +213,7 @@ export function apply(ctx: Context): void {
     const chat = chatSource(binding)
     const conversation = ctx.uiConversation.binding(binding)
     return {
+      expandTurn: turn => binding.session.expandTurn(turn),
       hooks: { presentation },
       keyedHooks: {
         chatNode: key => chat.getSnapshot().nodes.source(key),
@@ -216,6 +228,7 @@ export function apply(ctx: Context): void {
     name: 'conversation.chat.flow', locale: NS, store: chatStore,
     children: {
       'conversation.chat.node': { kind: 'keyed', scope: 'session', inject: CHAT_NODE_INJECT },
+      'conversation.chat.collapsedMetric': { kind: 'list', scope: 'session' },
     },
     inject: (sessionId: SessionId): ChatFlowDataInjected => {
       const binding = ctx.sessions.binding(sessionId)

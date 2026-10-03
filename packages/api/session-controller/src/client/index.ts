@@ -74,6 +74,7 @@ export type {
   PendingSubmissionPlacement,
   PromptError,
   SessionSnapshot,
+  StepDigestsByTurn,
 } from './contract/snapshot.ts'
 
 /** Consumer-owned reference labels; extend this map through the package's canonical /client entry. */

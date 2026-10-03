@@ -1,4 +1,4 @@
-// Sessions remain resident after creation so their open Remote sources keep running off-screen.
+/** Reference-owned Session history, commands, and observable state. */
 
 import type { Context } from '@deepseek-ai/cordis'
 import type { InboxState, InboxTarget } from '@deepseek-ai/dsh-agent/types'
@@ -9,20 +9,24 @@ import type { MessageId } from '@deepseek-ai/dsh-llm/brand'
 import type { UserMessage } from '@deepseek-ai/dsh-llm/types'
 import { SessionLogOffset, SessionSeq, type SessionId } from '@deepseek-ai/dsh-session/types'
 import { SessionEventStream } from '../transport.ts'
-import type { SessionJournalChange } from '../transport.ts'
+import type { ClientSessionPageRequest, SessionJournalChange } from '../transport.ts'
+import { historyInteriorEntries, historyPageFirstSeq } from './history-records.ts'
 import type {
   PromptContentPart,
   QueueAction,
   SessionAddress,
   SessionAssistantStreamBaseline,
+  SessionHistoryRecord,
   SessionProjectionBaseline,
   SessionRequestId,
+  SessionStepDetail,
+  StepDigest,
 } from '../../types.ts'
 import type {
   BeginSubmissionInput, PendingSubmissionRetirement, SessionFace, SubmissionHandle,
 } from '../contract/session.ts'
 import type {
-  OpenState, PendingSubmission, PromptError, SessionSnapshot,
+  OpenState, PendingSubmission, PromptError, SessionSnapshot, StepDigestsByTurn,
 } from '../contract/snapshot.ts'
 import { MutableSessionEventSource } from '../contract/events.ts'
 import type {
@@ -51,6 +55,14 @@ function projectionsBaseline(value: SessionProjectionBaseline): ProjectionsBasel
 /** Minimum message count for ordinary history windows. */
 export const PAGE_MESSAGES = 50
 
+/**
+ * Minimum messages per collapsed page. A collapsed page carries a fraction of
+ * a full page's bytes per message, and the point of collapsing is to reach
+ * further back rather than to send a smaller response.
+ */
+export const COLLAPSED_PAGE_MESSAGES = 300
+
+/** Turn-aligned window: at least 50 messages and two Turn starts, capped at 500 messages. */
 const HISTORY_PAGE_OPTIONS = { maxMessages: 500, turnWindow: { minMessages: PAGE_MESSAGES, minTurns: 2 } }
 
 /** Minimum messages per page while a turn jump loops backwards. */
@@ -64,7 +76,7 @@ const JUMP_PAGE_OPTIONS = {
 interface PendingHistory {
   beforeSeq: SessionLogOffset
   hasMore: boolean
-  readonly pages: (readonly SessionEventLikeEntry[])[]
+  readonly pages: { readonly entries: readonly SessionEventLikeEntry[]; readonly digests: readonly StepDigest[] }[]
 }
 
 /** Manager-owned observers of a Session object's local state edges. */
@@ -85,6 +97,8 @@ export interface SessionOptions {
    * private store (bare object-layer construction).
    */
   projections?: ProjectionValueStore
+  /** Step detail every page of this Session requests; omitted means `full`. */
+  stepDetail?: SessionStepDetail
 }
 
 /**
@@ -147,6 +161,26 @@ export class Session implements SessionFace {
   }>()
   /** Owns the addressed page/follow lifecycle while this Session is open. */
   private events: SessionEventStream | undefined
+  private stepDetail: SessionStepDetail = 'full'
+  private fullHistoryRequired = false
+  /** Physical follow replacement invalidates reads even when the Session stream object survives. */
+  private windowGeneration = 0
+  private detailLoad: { readonly source: SessionEventStream; readonly promise: Promise<void> } | undefined
+  private stepDetailError: RemoteFailure | null = null
+  /**
+   * Elided-step digests of the loaded window, by turn: the window's account of
+   * what it does NOT hold. A turn drops out once {@link expandTurn} loads it.
+   */
+  private digests: StepDigestsByTurn = new Map()
+  /**
+   * Every digest this window has been told about, including turns already
+   * expanded. A digest describes a whole step, so loading its events does not
+   * change what it cost; the collapsed row keeps its figures after expansion.
+   */
+  private accounts: StepDigestsByTurn = new Map()
+  private readonly expanding = new Map<number, Promise<void>>()
+  /** Published keys of {@link expanding}; replaced only when membership changes, so selectors keep identity. */
+  private expandingTurns: ReadonlySet<number> = new Set()
 
   /**
    * Per-session projection value store (push model; see the session-projection
@@ -187,6 +221,7 @@ export class Session implements SessionFace {
     private readonly options: SessionOptions = {},
   ) {
     this.projections = options.projections ?? new ProjectionValueStore()
+    this.stepDetail = options.stepDetail ?? 'full'
     this.address = options.address
     this.parentAvailable = options.parentAvailable
     this.notifier = new Notifier(() => {
@@ -402,6 +437,114 @@ export class Session implements SessionFace {
     return promise
   }
 
+  /** @inheritdoc */
+  setStepDetail(detail: SessionStepDetail): Promise<void> {
+    this.stepDetail = detail
+    return this.completeHistoryIfRequired()
+  }
+
+  /** @inheritdoc */
+  requireFullHistory(): Promise<void> {
+    this.fullHistoryRequired = true
+    return this.openState === 'error' ? this.open() : this.completeHistoryIfRequired()
+  }
+
+  /** @inheritdoc */
+  expandTurn(turn: number): Promise<void> {
+    const pending = this.expanding.get(turn)
+    if (pending !== undefined) return pending
+    if (this.openState !== 'open' || !this.digests.has(turn) || this.events === undefined) return Promise.resolve()
+    const events = this.events
+    const generation = this.windowGeneration
+    const promise = this.expandTurnWindow(turn, events, generation).finally(() => {
+      if (this.expanding.get(turn) === promise) {
+        this.expanding.delete(turn)
+        this.expandingTurns = new Set(this.expanding.keys())
+      }
+      this.notifier.markDirty()
+    })
+    this.expanding.set(turn, promise)
+    this.expandingTurns = new Set(this.expanding.keys())
+    this.notifier.markDirty()
+    return promise
+  }
+
+  private async expandTurnWindow(turn: number, events: SessionEventStream, generation: number): Promise<void> {
+    while (this.events === events && generation === this.windowGeneration) {
+      const requested = this.digests.get(turn)
+      if (requested === undefined) return
+      const window = this.eventSource.getSnapshot().entries
+      let records: readonly SessionHistoryRecord[]
+      try {
+        records = await events.expandSteps(turn, this.baseSeq)
+      } catch (error) {
+        if (!isRemoteFailure(error)) console.error('[session-controller] expandTurn failed:', error)
+        return
+      }
+      if (this.events !== events || generation !== this.windowGeneration) return
+      this.restoreStepHistory(records, window, new Map([[turn, requested]]))
+    }
+  }
+
+  private effectiveStepDetail(): SessionStepDetail {
+    return this.fullHistoryRequired ? 'full' : this.stepDetail
+  }
+
+  private completeHistoryIfRequired(): Promise<void> {
+    const source = this.events
+    if (source !== undefined && this.detailLoad?.source === source) return this.detailLoad.promise
+    if (this.effectiveStepDetail() !== 'full' || this.openState !== 'open'
+      || source === undefined || this.digests.size === 0) return Promise.resolve()
+    this.stepDetailError = null
+    const promise = this.completeHistoryWindow(source).finally(() => {
+      if (this.detailLoad?.promise !== promise) return
+      this.detailLoad = undefined
+      this.notifier.markDirty()
+      // A pending older page may publish between the read loop and its settlement.
+      if (this.stepDetailError === null) void this.completeHistoryIfRequired()
+    })
+    this.detailLoad = { source, promise }
+    this.notifier.markDirty()
+    return promise
+  }
+
+  private async completeHistoryWindow(events: SessionEventStream): Promise<void> {
+    while (this.events === events && this.openState === 'open'
+      && this.effectiveStepDetail() === 'full' && this.digests.size > 0) {
+      const generation = this.windowGeneration
+      const requested = this.digests
+      const window = this.eventSource.getSnapshot().entries
+      let records: readonly SessionHistoryRecord[]
+      try {
+        records = await events.readFullRange(this.baseSeq)
+      } catch (error) {
+        if (this.events !== events || generation !== this.windowGeneration) continue
+        if (!isRemoteFailure(error)) console.error('[session-controller] full history failed:', error)
+        this.stepDetailError = isRemoteFailure(error)
+          ? error
+          : new RemoteError('gateway/internal', error instanceof Error ? error.message : String(error), {})
+        return
+      }
+      if (this.events !== events || generation !== this.windowGeneration) continue
+      this.restoreStepHistory(records, window, requested)
+    }
+  }
+
+  private restoreStepHistory(
+    records: readonly SessionHistoryRecord[],
+    window: readonly SessionEventLikeEntry[],
+    requested: StepDigestsByTurn,
+  ): void {
+    const digests = new Map(this.digests)
+    for (const [turn, captured] of requested) {
+      // A concurrently prepended page may add omissions to this same turn.
+      if (digests.get(turn) === captured) digests.delete(turn)
+    }
+    this.digests = digests
+    this.eventSource.splice(historyInteriorEntries(records, window))
+    this.notifier.markDirty()
+  }
+
   /** Prepend one Turn-aligned page: at least 50 messages and two Turn starts, capped at 500 messages. */
   async loadOlder(): Promise<void> {
     if (this.openState !== 'open' || !this.hasMore || this.loadingOlder) return
@@ -410,10 +553,7 @@ export class Session implements SessionFace {
     this.loadingOlder = true
     this.notifier.markDirty()
     try {
-      await events.prepend({
-        beforeSeq: this.baseSeq,
-        ...HISTORY_PAGE_OPTIONS,
-      })
+      await events.prepend(this.pageRequest(this.baseSeq, HISTORY_PAGE_OPTIONS))
     } catch (error) {
       if (!isRemoteFailure(error)) {
         console.error('[session-controller] loadOlder failed:', error)
@@ -457,7 +597,7 @@ export class Session implements SessionFace {
         while (pending.hasMore && this.jumpTargetSeq !== null && pending.beforeSeq > this.jumpTargetSeq) {
           if (generation !== this.openGeneration) return
           const before = pending.beforeSeq
-          await events.prepend({ beforeSeq: before, ...JUMP_PAGE_OPTIONS })
+          await events.prepend(this.pageRequest(before, JUMP_PAGE_OPTIONS))
           // No-progress guard: an empty or dropped page that still claims more
           // history must end the loop, not spin it.
           if (pending.beforeSeq >= before) return
@@ -472,7 +612,13 @@ export class Session implements SessionFace {
         this.pendingHistory = null
         this.loadingOlder = false
         if (generation === this.openGeneration && pending.pages.length > 0) {
-          this.prependWindow(pending.pages.reverse().flat(), pending.hasMore)
+          const pages = pending.pages.reverse()
+          this.prependWindow(
+            pages.flatMap(page => page.entries),
+            pending.hasMore,
+            pending.beforeSeq,
+            pages.flatMap(page => page.digests),
+          )
         }
         this.notifier.markDirty()
       }
@@ -493,6 +639,8 @@ export class Session implements SessionFace {
     this.openState = 'cold'
     this.openError = null
     this.baseSeq = SessionLogOffset(0)
+    this.digests = new Map()
+    this.accounts = new Map()
     this.notifier.markDirty()
     await this.open()
   }
@@ -618,6 +766,7 @@ export class Session implements SessionFace {
     this.openError = null
     this.notifier.markDirty()
     const events = new SessionEventStream(this.remote, this.sessionAddress(), {
+      stepDetail: () => this.effectiveStepDetail(),
       publish: (change) => {
         if (generation !== this.openGeneration || this.events !== events) return
         this.acceptEventChange(change)
@@ -628,9 +777,10 @@ export class Session implements SessionFace {
     })
     this.events = events
     try {
-      await events.open(HISTORY_PAGE_OPTIONS)
+      await events.open(this.pageRequest(undefined, HISTORY_PAGE_OPTIONS))
       if (generation !== this.openGeneration || this.events !== events) return
       this.openState = 'open'
+      await this.completeHistoryIfRequired()
     } catch (error) {
       if (generation !== this.openGeneration || this.events !== events) return
       if (!isRemoteFailure(error)) throw error
@@ -649,12 +799,14 @@ export class Session implements SessionFace {
         this.installWindow(
           change.entries,
           change.hasMore,
+          historyPageFirstSeq(change.page.records),
           change.page.projections === undefined ? undefined : projectionsBaseline(change.page.projections),
           change.page.assistantStream,
+          change.page.digests,
         )
         return
       case 'prepend':
-        this.prependWindow(change.entries, change.hasMore)
+        this.prependWindow(change.entries, change.hasMore, historyPageFirstSeq(change.page.records), change.page.digests)
         return
       case 'append':
         this.publishAssistantEntry(this.assistantStream.acceptDurable(change.entry))
@@ -664,24 +816,36 @@ export class Session implements SessionFace {
     }
   }
 
-  /** Replace the complete contiguous window and apply page-owned projection metadata. */
+  /**
+   * Replace the complete contiguous window and apply page-owned projection metadata.
+   * `coveredHead` is the first seq the page stands for, which precedes its first
+   * event when a collapsed page withheld the events before it.
+   */
   private installWindow(
     entries: readonly SessionEventLikeEntry[],
     hasMore: boolean,
+    coveredHead: number | undefined,
     projections?: ProjectionsBaseline,
     assistantStream?: SessionAssistantStreamBaseline,
+    digests?: readonly StepDigest[],
   ): void {
     // A durable gap-repair page has no assistant baseline. Clearing transient
     // attempts makes a held notification reopen follow once for an atomic
     // page/baseline pair instead of applying it to an unrelated repair cut.
+    this.windowGeneration++
+    this.expanding.clear()
+    if (this.expandingTurns.size > 0) this.expandingTurns = new Set()
+    this.stepDetailError = null
     const visible = this.assistantStream.replace(entries, assistantStream)
-    this.baseSeq = SessionLogOffset(entries[0]?.event.seq ?? 0)
+    this.baseSeq = SessionLogOffset(coveredHead ?? entries[0]?.event.seq ?? 0)
     this.hasMore = hasMore
     if (this.pendingHistory !== null) {
       this.pendingHistory.beforeSeq = this.baseSeq
       this.pendingHistory.hasMore = hasMore
       this.pendingHistory.pages.length = 0
     }
+    this.digests = groupDigests(digests)
+    this.accounts = groupDigests(digests)
     if (visible.some(entry => entry.event.type === 'turn/start')) this.firstPromptPendingTurn = false
     if (projections !== undefined) this.projections.seed(projections)
     this.eventSource.replace(visible, hasMore)
@@ -702,6 +866,7 @@ export class Session implements SessionFace {
       }
     }
     this.notifier.markDirty()
+    void this.completeHistoryIfRequired()
   }
 
   private publishAssistantEntry(result: ClientAssistantStreamResult): void {
@@ -733,18 +898,50 @@ export class Session implements SessionFace {
     }
   }
 
-  /** Prepend one stream-validated history page. */
-  private prependWindow(entries: readonly SessionEventLikeEntry[], hasMore: boolean): void {
+  /** Prepend one stream-validated history page; `coveredHead` as for {@link installWindow}. */
+  private prependWindow(
+    entries: readonly SessionEventLikeEntry[],
+    hasMore: boolean,
+    coveredHead: number | undefined,
+    digests?: readonly StepDigest[],
+  ): void {
+    const head = entries.length === 0 ? undefined : coveredHead ?? entries[0]?.event.seq
     if (this.pendingHistory !== null) {
       const pending = this.pendingHistory
-      pending.beforeSeq = entries[0] === undefined ? pending.beforeSeq : SessionLogOffset(entries[0].event.seq)
+      pending.beforeSeq = head === undefined ? pending.beforeSeq : SessionLogOffset(head)
       pending.hasMore = hasMore
-      pending.pages.push(entries)
+      pending.pages.push({ entries, digests: digests ?? [] })
       return
     }
-    this.baseSeq = entries[0] === undefined ? this.baseSeq : SessionLogOffset(entries[0].event.seq)
+    this.baseSeq = head === undefined ? this.baseSeq : SessionLogOffset(head)
     this.hasMore = hasMore
+    if (entries.length > 0 && digests !== undefined && digests.length > 0) {
+      this.digests = mergeDigests(this.digests, digests)
+      this.accounts = mergeDigests(this.accounts, digests)
+    }
     this.eventSource.prepend(entries, hasMore)
+    void this.completeHistoryIfRequired()
+  }
+
+  /**
+   * One Turn-aligned page request carrying the current step detail. A
+   * collapsed page raises the window's message minimum to
+   * {@link COLLAPSED_PAGE_MESSAGES}, within the same cap.
+   */
+  private pageRequest(
+    beforeSeq: number | undefined,
+    window: typeof HISTORY_PAGE_OPTIONS,
+  ): ClientSessionPageRequest {
+    const stepDetail = this.effectiveStepDetail()
+    const minMessages = stepDetail === 'collapsed'
+      ? Math.min(window.maxMessages, Math.max(window.turnWindow.minMessages, COLLAPSED_PAGE_MESSAGES))
+      : window.turnWindow.minMessages
+    return {
+      ...(beforeSeq === undefined ? {} : { beforeSeq }),
+      maxMessages: window.maxMessages,
+      turnWindow: { ...window.turnWindow, minMessages },
+      stepDetail,
+    }
   }
 
   /** Append one stream-validated live event. */
@@ -904,6 +1101,11 @@ export class Session implements SessionFace {
       openError: this.openError,
       hasMore: this.hasMore,
       loadingOlder: this.loadingOlder,
+      stepDigests: this.digests,
+      stepAccounts: this.accounts,
+      expandingTurns: this.expandingTurns,
+      loadingStepDetail: this.events !== undefined && this.detailLoad?.source === this.events,
+      stepDetailError: this.stepDetailError,
       promptError: this.promptError,
       blank: this.blankBit,
       lastAgentError: this.lastAgentError,
@@ -917,6 +1119,38 @@ export class Session implements SessionFace {
       ? { kind: 'session', sessionId: this.sessionId }
       : { kind: 'subagent', ...this.address }
   }
+}
+
+/**
+ * Index one page's elided-step digests by the turn that owns them.
+ * @param digests - digests as served, ascending by startSeq.
+ * @returns per-turn digests, preserving that order.
+ */
+function groupDigests(digests: readonly StepDigest[] = []): StepDigestsByTurn {
+  const byTurn = new Map<number, StepDigest[]>()
+  for (const digest of digests) {
+    const held = byTurn.get(digest.turn)
+    if (held === undefined) byTurn.set(digest.turn, [digest])
+    else held.push(digest)
+  }
+  return byTurn
+}
+
+/** Merge an older page's digests ahead of the ones already held for each turn. */
+function mergeDigests(held: StepDigestsByTurn, added: readonly StepDigest[]): StepDigestsByTurn {
+  const merged = new Map(held)
+  for (const [turn, digests] of groupDigests(added)) {
+    const byStep = new Map((merged.get(turn) ?? []).map(digest => [digest.step, digest]))
+    for (const digest of digests) {
+      const existing = byStep.get(digest.step)
+      byStep.set(digest.step, existing === undefined ? digest : {
+        ...digest,
+        elided: existing.elided + digest.elided,
+      })
+    }
+    merged.set(turn, [...byStep.values()].sort((left, right) => left.startSeq - right.startSeq))
+  }
+  return merged
 }
 
 /** Run one callback on the next animation frame, or a macrotask where no frame clock exists. */

@@ -961,12 +961,14 @@ describe('web e2e: Host-backed collapse timing preference', () => {
     {
       locale: 'zh', browserLocale: ZH_BROWSER_LOCALE, theme: 'dark',
       settings: '设置', close: '关闭', details: '工作步骤展示', compact: '简洁', detailed: '详细',
+      modes: ['简洁', '标准', '详细', '完全展开', '折叠步骤'],
       title: '工作步骤收起时机', completion: '回答结束后', nextInput: '下次有新消息时',
       description: '选择何时自动收起工作步骤',
     },
     {
       locale: 'en', browserLocale: 'en-US', theme: 'light',
       settings: 'Settings', close: 'Close', details: 'Work details', compact: 'Compact', detailed: 'Detailed',
+      modes: ['Compact', 'Standard', 'Detailed', 'Verbose', 'Collapsed steps'],
       title: 'When to Collapse Work Details', completion: 'On completion', nextInput: 'On next message',
       description: 'Choose when to automatically collapse work details',
     },
@@ -986,7 +988,7 @@ describe('web e2e: Host-backed collapse timing preference', () => {
     const dialog = page.getByRole('dialog', { name: copy.settings, exact: true })
     const details = dialog.getByText(copy.details, { exact: true }).locator('../..')
     await details.getByRole('button').click()
-    expect(await page.getByRole('menuitem').count()).toBe(4)
+    expect(await page.getByRole('menuitem').allTextContents()).toEqual(copy.modes)
     // The persistence checks require an explicit saved mode, not the client's default.
     await page.getByRole('menuitem', { name: copy.compact, exact: true }).click()
     await expect.poll(() => scaffold.ctx.settings.describe().find(row => row.ns === 'ui-chat')?.value, uiWait)

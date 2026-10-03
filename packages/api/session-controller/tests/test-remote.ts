@@ -42,10 +42,12 @@ import type {
   SessionControlFrame,
   SessionCreateRequest,
   SessionCreateValue,
-  SessionForkRequest,
-  SessionForkValue,
+  SessionExpandStepsRequest,
+  SessionExpandStepsValue,
   SessionFollowFrame,
   SessionFollowRequest,
+  SessionForkRequest,
+  SessionForkValue,
   SessionListRequest,
   SessionListValue,
   SessionOpenWorkspacePathRequest,
@@ -89,6 +91,7 @@ export interface TestSessionRemote {
   ): Promise<RemoteResult<SessionOpenWorkspacePathValue>>
   page(request: SessionPageRequest, signal?: AbortSignal): Promise<RemoteResult<SessionPage>>
   projections(request: SessionProjectionsRequest, signal?: AbortSignal): Promise<RemoteResult<SessionProjectionsValue>>
+  expandSteps(request: SessionExpandStepsRequest, signal?: AbortSignal): Promise<RemoteResult<SessionExpandStepsValue>>
   follow(request: SessionFollowRequest, signal?: AbortSignal): AsyncIterable<SessionFollowFrame>
   control(signal?: AbortSignal): AsyncIterable<SessionControlFrame>
 }
@@ -384,6 +387,10 @@ export function createSessionTestRemote(
     ),
     projections: (request, signal = new AbortController().signal) => remoteResult(
       () => direct.projections(request, signal),
+      signal,
+    ),
+    expandSteps: (request, signal = new AbortController().signal) => remoteResult(
+      () => direct.expandSteps(request, signal),
       signal,
     ),
     follow: (request, signal = new AbortController().signal) => direct.follow(request, signal),

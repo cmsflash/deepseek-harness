@@ -20,8 +20,12 @@ export type CollapseTiming = typeof COLLAPSE_TIMINGS[number]
 /** Preserve completion-time folding when no timing preference is saved. */
 export const DEFAULT_COLLAPSE_TIMING: CollapseTiming = 'completion'
 
-/** Work-details presentation modes a user can choose. */
-export const TRANSCRIPT_VIEW_MODES = ['compact', 'standard', 'detailed', 'verbose'] as const
+/**
+ * Work-details presentation modes a user can choose. `collapsed` renders the
+ * process rows flat like `verbose` and folds each response's settled steps
+ * behind one summary row while the Turn is still running.
+ */
+export const TRANSCRIPT_VIEW_MODES = ['compact', 'standard', 'detailed', 'verbose', 'collapsed'] as const
 
 /** Work-details presentation mode. */
 export type TranscriptViewMode = typeof TRANSCRIPT_VIEW_MODES[number]

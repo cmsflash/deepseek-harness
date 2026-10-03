@@ -32,6 +32,7 @@ const LABELS = {
   standard: 'settings.transcript.standard',
   detailed: 'settings.transcript.detailed',
   verbose: 'settings.transcript.verbose',
+  collapsed: 'settings.transcript.collapsed',
 } as const satisfies Record<TranscriptViewMode, ChatKey>
 
 const COLLAPSE_LABELS = {
