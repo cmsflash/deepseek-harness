@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { StreamChunk, TokenUsage } from '@deepseek-ai/dsh-llm'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
-import { deriveTurnTokenUsage } from '../src/turn-usage.ts'
+import { deriveTurnTokenUsage, TurnUsageAccumulator } from '../src/turn-usage.ts'
 
 function event(seq: number, type: string, data: unknown): SessionEvent {
   return { seq, time: seq, type, data } as unknown as SessionEvent
@@ -64,6 +64,200 @@ function completeAttempt(...middle: readonly SessionEvent[]): SessionEvent[] {
     event(91, 'turn/end', { turn: 1, reason: { kind: 'completed' } }),
   ]
 }
+
+function appendStep(
+  accumulator: TurnUsageAccumulator,
+  step: number,
+  tokenUsage: TokenUsage,
+  provider = 'deepseek',
+  model = 'deepseek-chat',
+): void {
+  const seq = step * 3
+  accumulator.append(event(seq, 'step/start', { turn: 1, step }))
+  accumulator.append(message(seq + 1, tokenUsage, provider, model, step))
+  accumulator.append(event(seq + 2, 'step/end', { turn: 1, step }))
+}
+
+describe('TurnUsageAccumulator', () => {
+  it('withholds accounting until the complete turn has been appended', () => {
+    const accumulator = new TurnUsageAccumulator()
+    const events = completeAttempt(message(3, usage({
+      cacheWriteTokens: 0,
+      reasoningTokens: 8,
+      costUsd: 0.02,
+    })))
+    for (const entry of events) {
+      expect(accumulator.result()).toBeUndefined()
+      accumulator.append(entry)
+    }
+    const expected = {
+      uncachedInputTokens: 100,
+      outputTokens: 20,
+      totalTokens: 170,
+      cacheReadTokens: 50,
+      cacheWriteTokens: 0,
+      reasoningTokens: 8,
+      routes: [{ provider: 'deepseek', model: 'deepseek-chat' }],
+      costUsd: 0.02,
+      unpricedCalls: 0,
+    }
+    expect(accumulator.result()).toEqual(expected)
+    expect(accumulator.result()).toEqual(expected)
+    expect(deriveTurnTokenUsage(events)).toEqual(expected)
+  })
+
+  it('accumulates a retry after a seeded attempt without counting either twice', () => {
+    const accumulator = new TurnUsageAccumulator()
+    const seed = [
+      event(1, 'turn/start', { turn: 1 }),
+      event(2, 'step/start', { turn: 1, step: 1 }),
+      attempt(3, [
+        { type: 'usage', usage: usage({ costUsd: 0.01 }) },
+        { type: 'finish', reason: { kind: 'error', failure: { code: 'HTTP', message: 'failed' } } },
+      ]),
+    ]
+    for (const entry of seed) accumulator.append(entry)
+    const live = [
+      event(5, 'llm/retry', { turn: 1, step: 1 }),
+      event(6, 'llm/retry-started', { turn: 1, step: 1, retry: 1 }),
+      message(7, usage({ inputTokens: 40, outputTokens: 10, totalTokens: 70, cacheReadTokens: 20 })),
+      event(8, 'step/end', { turn: 1, step: 1 }),
+      event(9, 'turn/end', { turn: 1, reason: { kind: 'completed' } }),
+    ]
+    for (const entry of live) {
+      expect(accumulator.result()).toBeUndefined()
+      accumulator.append(entry)
+    }
+    const expected = {
+      uncachedInputTokens: 140,
+      outputTokens: 30,
+      totalTokens: 240,
+      cacheReadTokens: 70,
+      costUsd: 0.01,
+      unpricedCalls: 1,
+    }
+    expect(accumulator.result()).toEqual(expected)
+    expect(deriveTurnTokenUsage([...seed, ...live])).toEqual(expected)
+  })
+
+  it.each([
+    ['missing attempt usage', message(3)],
+    ['unsafe counts', message(3, usage({ totalTokens: Number.MAX_SAFE_INTEGER + 1 }))],
+    ['contradictory totals', message(3, usage({ totalTokens: 171, cacheWriteTokens: 0 }))],
+    ['wrong-step settlement', message(3, usage(), 'deepseek', 'deepseek-chat', 2)],
+  ])('keeps %s unavailable after subsequent valid events', (_label, settlement) => {
+    const accumulator = new TurnUsageAccumulator()
+    for (const entry of completeAttempt(settlement)) {
+      accumulator.append(entry)
+      expect(accumulator.result()).toBeUndefined()
+    }
+    for (const entry of completeAttempt(message(3, usage()))) {
+      accumulator.append(entry)
+      expect(accumulator.result()).toBeUndefined()
+    }
+  })
+
+  it.each([
+    ['another turn', event(92, 'turn/start', { turn: 2 })],
+    ['duplicate turn end', event(92, 'turn/end', { turn: 1, reason: { kind: 'completed' } })],
+    ['unrelated trailing event', event(92, 'tool/call', { turn: 1, step: 1 })],
+  ])('invalidates completed accounting for %s without resetting', (_label, trailing) => {
+    const accumulator = new TurnUsageAccumulator()
+    for (const entry of completeAttempt(message(3, usage()))) accumulator.append(entry)
+    expect(accumulator.result()?.totalTokens).toBe(170)
+    accumulator.append(trailing)
+    expect(accumulator.result()).toBeUndefined()
+    for (const entry of completeAttempt(message(3, usage()))) accumulator.append(entry)
+    expect(accumulator.result()).toBeUndefined()
+  })
+
+  it('keeps a completed zero-attempt turn unavailable', () => {
+    const accumulator = new TurnUsageAccumulator()
+    accumulator.append(event(1, 'turn/start', { turn: 1 }))
+    accumulator.append(event(2, 'turn/end', { turn: 1, reason: { kind: 'completed' } }))
+    expect(accumulator.result()).toBeUndefined()
+  })
+
+  it('retains a zero-token attempt as exact accounting', () => {
+    const accumulator = new TurnUsageAccumulator()
+    accumulator.append(event(1, 'turn/start', { turn: 1 }))
+    appendStep(accumulator, 1, usage({
+      inputTokens: 0,
+      outputTokens: 0,
+      totalTokens: 0,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      reasoningTokens: 0,
+    }))
+    accumulator.append(event(6, 'turn/end', { turn: 1, reason: { kind: 'completed' } }))
+    expect(accumulator.result()).toEqual({
+      uncachedInputTokens: 0,
+      outputTokens: 0,
+      totalTokens: 0,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      reasoningTokens: 0,
+      routes: [{ provider: 'deepseek', model: 'deepseek-chat' }],
+      costUsd: 0,
+      unpricedCalls: 1,
+    })
+  })
+
+  it('keeps optional buckets and attribution incomplete after later complete attempts', () => {
+    const accumulator = new TurnUsageAccumulator()
+    accumulator.append(event(1, 'turn/start', { turn: 1 }))
+    appendStep(accumulator, 1, usage({ cacheWriteTokens: 0, reasoningTokens: 2 }))
+    appendStep(accumulator, 2, usage({ cacheReadTokens: undefined, cacheWriteTokens: 0 }), '', '')
+    appendStep(accumulator, 3, usage({ cacheWriteTokens: 0, reasoningTokens: 3 }), 'openai', 'gpt-5')
+    expect(accumulator.result()).toBeUndefined()
+    accumulator.append(event(12, 'turn/end', { turn: 1, reason: { kind: 'completed' } }))
+    expect(accumulator.result()).toEqual({
+      uncachedInputTokens: 300,
+      outputTokens: 60,
+      totalTokens: 510,
+      cacheWriteTokens: 0,
+      costUsd: 0,
+      unpricedCalls: 3,
+    })
+  })
+
+  it('deduplicates recurring routes in their first-occurrence order', () => {
+    const accumulator = new TurnUsageAccumulator()
+    accumulator.append(event(1, 'turn/start', { turn: 1 }))
+    appendStep(accumulator, 1, usage())
+    appendStep(accumulator, 2, usage(), 'openai', 'gpt-5')
+    appendStep(accumulator, 3, usage())
+    accumulator.append(event(12, 'turn/end', { turn: 1, reason: { kind: 'completed' } }))
+    expect(accumulator.result()).toEqual({
+      uncachedInputTokens: 300,
+      outputTokens: 60,
+      totalTokens: 510,
+      cacheReadTokens: 150,
+      routes: [
+        { provider: 'deepseek', model: 'deepseek-chat' },
+        { provider: 'openai', model: 'gpt-5' },
+      ],
+      costUsd: 0,
+      unpricedCalls: 3,
+    })
+  })
+
+  it.each([
+    ['rounding', [0.1, 0.2, 0.3], 0.6000000000000001],
+    ['overflow', [Number.MAX_VALUE, Number.MAX_VALUE], undefined],
+  ])('requires a finite aggregate cost after %s', (_label, costs, costUsd) => {
+    const accumulator = new TurnUsageAccumulator()
+    accumulator.append(event(1, 'turn/start', { turn: 1 }))
+    for (const [index, cost] of costs.entries()) {
+      appendStep(accumulator, index + 1, usage({ costUsd: cost }))
+    }
+    appendStep(accumulator, costs.length + 1, usage())
+    appendStep(accumulator, costs.length + 2, usage({ costUsd: 0 }))
+    accumulator.append(event((costs.length + 3) * 3, 'turn/end', { turn: 1, reason: { kind: 'completed' } }))
+    if (costUsd === undefined) expect(accumulator.result()).toBeUndefined()
+    else expect(accumulator.result()).toMatchObject({ costUsd, unpricedCalls: 1 })
+  })
+})
 
 describe('deriveTurnTokenUsage', () => {
   it('preserves authoritative totals and explicit optional buckets', () => {

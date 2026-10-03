@@ -322,14 +322,19 @@ function node(key: string, data: StatsContribution): StatsViewNode {
   }
 }
 
+/** The accepted window entry carrying one event. */
+function recordOf(event: SessionEventLike): SessionEventLikeEntry {
+  return event.type === 'assistant/live-chunk' ? { type: 'transient', event } : { type: 'event', event }
+}
+
 /** A start-role match for one event. */
 function startMatch(event: SessionEventLike): ConversationStartMatch {
-  return { event, role: 'start', location: { kind: 'unresolved' } }
+  return { event, record: recordOf(event), role: 'start', location: { kind: 'unresolved' } }
 }
 
 /** An update-role match for one event. */
 function updateMatch(event: SessionEventLike): ConversationMatch {
-  return { event, role: 'update', location: { kind: 'unresolved' } }
+  return { event, record: recordOf(event), role: 'update', location: { kind: 'unresolved' } }
 }
 
 /** The reader a start callback receives; the stats Definitions read no predecessors. */
@@ -378,12 +383,12 @@ function stepAt(turn: number, step: number): ConversationLocation {
 
 /** A start-role match placed at a fabricated Location. */
 function locatedStart(event: SessionEventLike, location: ConversationLocation): ConversationStartMatch {
-  return { event, role: 'start', location }
+  return { event, record: recordOf(event), role: 'start', location }
 }
 
 /** An update-role match placed at a fabricated Location. */
 function locatedUpdate(event: SessionEventLike, location: ConversationLocation): ConversationMatch {
-  return { event, role: 'update', location }
+  return { event, record: recordOf(event), role: 'update', location }
 }
 
 describe('browser plugin registration', () => {

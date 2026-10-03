@@ -122,6 +122,9 @@
     },
     {
       "path": "../../core/tool-executor-ptc"
+    },
+    {
+      "path": "../../core/tools"
     }
   ],
   "exclude": [

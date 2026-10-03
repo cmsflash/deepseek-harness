@@ -136,6 +136,11 @@ class FixtureJournal extends RemoteJournalStream<Page, Entry, number, PageReques
   protected override repairRequest(request: PageRequest): PageRequest {
     return request.limit === undefined ? {} : { limit: request.limit }
   }
+
+  /** @returns the protected cursor read that domain subclasses use. */
+  heldCursor(): number {
+    return this.cursor()
+  }
 }
 
 function journalFixture(
@@ -143,7 +148,7 @@ function journalFixture(
   pages: PageSource[],
   factory: RemoteStreamFactory = STREAM_FACTORY,
 ): {
-  readonly journal: RemoteJournalStream<Page, Entry, number, PageRequest, string>
+  readonly journal: FixtureJournal
   readonly changes: RemoteJournalChange<Page, Entry, string>[]
   readonly failed: ReturnType<typeof vi.fn>
   readonly calls: string[]
@@ -1109,10 +1114,13 @@ describe('RemoteJournalStream', () => {
     )
 
     await expect(fixture.journal.prepend({})).rejects.toThrow('is not open')
+    expect(() => fixture.journal.heldCursor()).toThrow('is not open')
     await fixture.journal.open({})
+    expect(fixture.journal.heldCursor()).toBe(-1)
     await expect(fixture.journal.open({})).rejects.toThrow('already opened')
     fixture.journal.restart()
     await fixture.journal.dispose()
     await expect(fixture.journal.prepend({})).rejects.toThrow('is not open')
+    expect(() => fixture.journal.heldCursor()).toThrow('is not open')
   })
 })

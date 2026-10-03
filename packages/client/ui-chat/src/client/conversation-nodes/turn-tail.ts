@@ -3,8 +3,6 @@ import type {
   ConversationMatch, ConversationNodeContext, ConversationNodeDefinition, TurnLocation,
 } from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type {} from '@deepseek-ai/dsh-llm-retry/types'
-import type { SessionEvent } from '@deepseek-ai/dsh-session/types'
-import { deriveTurnTokenUsage } from '@deepseek-ai/dsh-token-meter/client'
 import type {
   AssistantChatData, FinalAssistantChatData, TurnTailChatData,
 } from '../contract/chat-nodes.ts'
@@ -27,10 +25,6 @@ declare module '@deepseek-ai/dsh-client-ui-conversation/client' {
 interface TurnTailState {
   readonly turn: number
   readonly end?: ConversationMatch
-}
-
-function isSessionEvent(event: ConversationMatch['event']): event is SessionEvent {
-  return event.type !== 'assistant/live-chunk'
 }
 
 function turnCoordinates(event: Parameters<ConversationNodeDefinition['match']>[0]): {
@@ -87,9 +81,7 @@ function tailData(context: ConversationNodeContext<TurnTailState>): TurnTailChat
       latestTranscriptSeq = candidate
     }
   }
-  const tokenUsage = context.start?.event.type === 'turn/start'
-    ? deriveTurnTokenUsage(context.matches.map(match => match.event).filter(isSessionEvent))
-    : undefined
+  const tokenUsage = 'turnUsage' in end.record ? end.record.turnUsage ?? undefined : undefined
   return {
     turn: end.event.data.turn,
     seq: end.event.seq,

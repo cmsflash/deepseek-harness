@@ -6,13 +6,15 @@ import type { SessionId, SessionEvent } from '@deepseek-ai/dsh-session'
 import type { SessionObservation } from '@deepseek-ai/dsh-session-query'
 import { RemoteError, remoteErrorOf } from '@deepseek-ai/dsh-typert-protocol'
 import {
-  DEFAULT_MAX_MESSAGES, paginate, pageRecords, entryFor, addressId,
-  validateHistoryWindow, validateAddress, rejectNotFound,
+  DEFAULT_MAX_MESSAGES, paginate, pageRecords, entryFor, addressId, detailPage,
+  validateHistoryWindow, validateHistoryInterval, validateExpandStepsRequest, validateAddress, rejectNotFound,
 } from '../history.ts'
+import { elidedEventsOfTurn } from '../step-collapse.ts'
+import { historyTurnUsage, type HistoryTurnUsage } from '../turn-usage.ts'
 import { EventListener, ProjectionListener } from './listener.ts'
 import { SessionAssistantStreamsListener } from './assistant-stream.ts'
 import type {
-  SessionEventFrame, SessionEventsPage, SessionPageRequest,
+  SessionEventFrame, SessionEventsPage, SessionPageRequest, SessionExpandStepsRequest, SessionExpandStepsValue,
   SessionObserveEventRequest, SessionProjectionsRequest, SessionProjectionFrame,
   SessionAddress, SessionProjectionBaseline, SessionProjectionValues, SessionProjectionsValue, SessionWaitOutput, SessionHistoryRecord,
 } from '../types.ts'
@@ -30,8 +32,8 @@ export class HistoryController {
   }
 
   /**
-   * Read a passive page of Session events at an exact cut.
-   * @param request - Session identity and optional cut and page window.
+   * Read a passive page or exact interval of Session events at an exact cut.
+   * @param request - Session identity, optional cut, and a page window or interval head.
    * @param signal - read cancellation.
    * @returns a page at the supplied cut, or the observed log end when omitted.
    */
@@ -40,7 +42,36 @@ export class HistoryController {
     try {
       return await this.usingObservation({ sessionId: addressId(request.address), projection: request.address.kind === 'subagent' }, signal, (observation) => {
         validateObservationAddress(request.address, observation)
-        return history(observation, spec)
+        return history(observation, spec).page
+      })
+    } catch (error: unknown) {
+      if (remoteErrorOf(error)?.code === 'session/not-found') rejectNotFound(request.address)
+      throw error
+    }
+  }
+
+  /**
+   * Read back the events one collapsed page withheld from a single turn, without activating the Session.
+   * @param request - Session address, log cut, expanded turn, and window head.
+   * @param signal - read cancellation.
+   * @returns that turn's withheld events at or after the window head, ascending by seq.
+   */
+  async expandSteps(request: SessionExpandStepsRequest, signal: AbortSignal): Promise<SessionExpandStepsValue> {
+    validateExpandStepsRequest(request)
+    try {
+      return await this.usingObservation({ sessionId: addressId(request.address), projection: request.address.kind === 'subagent' }, signal, (observation) => {
+        validateObservationAddress(request.address, observation)
+        if (request.throughSeq > observation.cursor) {
+          throw new RemoteError(
+            'gateway/bad-request',
+            `session expand through seq ${String(request.throughSeq)} is past cursor ${String(observation.cursor)}`,
+            {},
+          )
+        }
+        // Retention is decided over the same range a page decides it over: every
+        // event through the cut, so the two agree on which steps a turn withheld.
+        const scope = observation.events.slice(0, request.throughSeq + 1)
+        return { records: pageRecords(elidedEventsOfTurn(scope, request.turn, request.fromSeq)) }
       })
     } catch (error: unknown) {
       if (remoteErrorOf(error)?.code === 'session/not-found') rejectNotFound(request.address)
@@ -206,15 +237,31 @@ export function validateObservationAddress(address: SessionAddress, observation:
 
 /**
  * Convert a borrowed observation to one page without acquiring or retaining it.
+ * Every served `turn/end` carries its complete turn's accounting over the log through the cut.
  * @param observation - exact read cut owned by the caller.
- * @param request - validated page window and optional inclusive cut.
- * @returns a chronological page at the requested cut.
+ * @param request - validated page window or exact interval head, step detail, and optional inclusive cut.
+ * @returns a chronological page at the requested cut, and the turn accounting fold positioned at that cut.
  */
-export function history(observation: SessionObservation, request: Omit<SessionPageRequest, 'address'> & { readonly maxMessages: number }): SessionEventsPage {
+export function history(
+  observation: SessionObservation,
+  request: Omit<SessionPageRequest, 'address'> & { readonly maxMessages: number },
+): { readonly page: SessionEventsPage; readonly turnUsage: HistoryTurnUsage } {
   const cursor = request.throughSeq === undefined ? observation.cursor
     : request.throughSeq === -1 ? -1 : SessionSeq(request.throughSeq)
   if (cursor > observation.cursor) {
     throw new RemoteError('gateway/bad-request', `session history cut ${String(cursor)} exceeds ${String(observation.cursor)}`, {})
+  }
+  const scope = observation.events.slice(0, cursor + 1)
+  if (request.fromSeq !== undefined) {
+    if (request.fromSeq > cursor + 1) {
+      throw new RemoteError('gateway/bad-request', `session history interval from seq ${String(request.fromSeq)} is past cut ${String(cursor)}`, {})
+    }
+    const events = scope.slice(request.fromSeq)
+    const usage = historyTurnUsage(events, scope)
+    return {
+      page: { cursor, records: pageRecords(events, usage.byEnd), hasMore: request.fromSeq > 0 },
+      turnUsage: usage.continuation,
+    }
   }
   const page = paginate(
     observation.events,
@@ -223,7 +270,11 @@ export function history(observation: SessionObservation, request: Omit<SessionPa
     cursor,
     request.turnWindow,
   )
-  return { cursor, records: pageRecords(page.events), hasMore: page.hasMore }
+  const usage = historyTurnUsage(page.events, scope)
+  return {
+    page: { cursor, ...detailPage(page.events, scope, request.stepDetail, usage.byEnd), hasMore: page.hasMore },
+    turnUsage: usage.continuation,
+  }
 }
 
 /**
@@ -238,9 +289,9 @@ export function projections(observation: SessionObservation): SessionProjectionB
 }
 
 /**
- * Validate and resolve the history page window.
+ * Validate and resolve the history page window or exact interval.
  * @param request - external history window.
- * @returns the validated request with an explicit message budget.
+ * @returns the validated request with an explicit message budget, which an exact interval ignores.
  */
 export function resolveHistoryRequest(request: SessionPageRequest): SessionPageRequest & { readonly maxMessages: number } {
   if (request.throughSeq !== undefined
@@ -252,5 +303,6 @@ export function resolveHistoryRequest(request: SessionPageRequest): SessionPageR
     throw new RemoteError('gateway/bad-request', 'beforeSeq must be a non-negative safe integer', {})
   }
   validateHistoryWindow(request)
+  validateHistoryInterval(request)
   return { ...request, maxMessages: request.maxMessages ?? DEFAULT_MAX_MESSAGES }
 }

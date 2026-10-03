@@ -114,21 +114,21 @@ Automatic collapse keeps the process open if hiding it would hide keyboard focus
 <a id="display-modes"></a>
 ## Display modes
 
-Settings → General → Work details offers four modes for choosing how much tool-call detail to show: Compact `compact`, Standard `standard`, Detailed `detailed`, and Verbose `verbose`.
+Settings → General → Work details offers five modes for choosing how much tool-call detail to show: Compact `compact`, Standard `standard`, Detailed `detailed`, Verbose `verbose`, and Collapsed steps `collapsed`.
 
-| Behavior | Compact | Standard | Detailed | Verbose |
-|---|---|---|---|---|
-| Process-group header | Category summary | Summary and live task detail | Hidden in running Turns; retained in historical Turns | Hidden |
-| Process-group body | Initially collapsed | Initially collapsed | Directly visible without a group-level height cap in running Turns; manual disclosure in historical Turns | Directly visible without a group-level height cap in running and historical Turns |
-| Settled reasoning preview | Hidden | First line | First line | First line |
-| Individual reasoning and tool bodies | Manual expansion | Manual expansion | Manual expansion | Manual expansion |
-| Eligible completed Turn | Initially collapsed | Initially collapsed | Initially collapsed | Always open; duration/status header cannot collapse it |
+| Behavior | Compact | Standard | Detailed | Verbose | Collapsed steps |
+|---|---|---|---|---|---|
+| Process-group header | Category summary | Summary and live task detail | Hidden in running Turns; retained in historical Turns | Hidden | Hidden |
+| Process-group body | Initially collapsed | Initially collapsed | Directly visible without a group-level height cap in running Turns; manual disclosure in historical Turns | Directly visible without a group-level height cap in running and historical Turns | Members render as flat rows; each response's settled intermediate steps fold behind one [summary row](../../../README.md#settled-step-collapse) |
+| Settled reasoning preview | Hidden | First line | First line | First line | First line |
+| Individual reasoning and tool bodies | Manual expansion | Manual expansion | Manual expansion | Manual expansion | Manual expansion |
+| Eligible completed Turn | Initially collapsed | Initially collapsed | Initially collapsed | Always open; duration/status header cannot collapse it | Always open; duration/status header cannot collapse it |
 
 ### Defaults and saving preferences
 
 Work details uses the Host setting `ui-chat.transcriptView`. The client reads it according to these rules:
 
-- Saved values for the four modes are used directly, regardless of changes to defaults.
+- Saved values for the five modes are used directly, regardless of changes to defaults.
 - Legacy `normal` and `expanded` values display as `detailed`, without automatically rewriting the saved values on disk.
 - When the setting is missing, `null`, or invalid, Desktop uses `standard` and non-Desktop Web uses `detailed`. Each client also uses its default before Host settings arrive; invalid values in other settings still fail validation.
 
@@ -148,7 +148,7 @@ Verbose retains its flat process rows under either timing. Failed, stopped, and 
 <a id="folded-replies"></a>
 ### Replies after collapse
 
-Settings → General → Replies after collapse appears directly below Collapse work details and chooses which Assistant replies stay visible when a Turn's process folds. All replies is the default: every reply stays visible and only reasoning, tool calls, and step groups fold; a Turn whose range holds only replies offers no collapse action. Final answer only folds intermediate replies with the process and keeps only the final answer visible. The choice is saved as `ui-chat.foldedReplies` through the same Host profile settings and applies immediately to already rendered Turns without remounting their rows. Verbose never folds a Turn, so the setting is hidden while Verbose is selected.
+Settings → General → Replies after collapse appears directly below Collapse work details and chooses which Assistant replies stay visible when a Turn's process folds. All replies is the default: every reply stays visible and only reasoning, tool calls, and step groups fold; a Turn whose range holds only replies offers no collapse action. Final answer only folds intermediate replies with the process and keeps only the final answer visible. The choice is saved as `ui-chat.foldedReplies` through the same Host profile settings and applies immediately to already rendered Turns without remounting their rows. Verbose and Collapsed steps never fold a whole Turn, so the setting is hidden while either is selected.
 
 ### Group-title rules
 

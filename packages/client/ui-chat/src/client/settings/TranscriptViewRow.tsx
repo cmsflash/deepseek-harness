@@ -36,6 +36,7 @@ const LABELS = {
   standard: 'settings.transcript.standard',
   detailed: 'settings.transcript.detailed',
   verbose: 'settings.transcript.verbose',
+  collapsed: 'settings.transcript.collapsed',
 } as const satisfies Record<TranscriptViewMode, ChatKey>
 
 const COLLAPSE_LABELS = {
@@ -50,7 +51,7 @@ const FOLDED_REPLY_LABELS = {
 
 /**
  * Render the independent, Host-backed work-details, collapse-timing, and folded-reply selectors.
- * Verbose never folds a Turn, so it omits the folded-reply selector.
+ * Verbose and collapsed steps never fold a whole Turn, so they omit the folded-reply selector.
  * @param props - composed Settings slot props.
  * @returns the preference row.
  */
@@ -78,7 +79,7 @@ export function TranscriptViewRow({
         options={COLLAPSE_TIMINGS.map(id => ({ id, label: t(COLLAPSE_LABELS[id]) }))}
         onSelect={(value) => { setCollapseTiming(value as CollapseTiming) }}
       />
-      {mode !== 'verbose' && (
+      {mode !== 'verbose' && mode !== 'collapsed' && (
         <PreferenceRow
           title={t('settings.foldedReplies.title')}
           description={t('settings.foldedReplies.description')}

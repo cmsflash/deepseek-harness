@@ -43,6 +43,7 @@ function sessionFakeFor() {
   return {
     loadOlder: vi.fn<ISession['loadOlder']>(() => Promise.resolve()),
     loadThrough: vi.fn<ISession['loadThrough']>(() => Promise.resolve()),
+    expandTurn: vi.fn<ISession['expandTurn']>(() => Promise.resolve()),
     readAttachment: vi.fn<ISession['readAttachment']>(() => Promise.resolve({
       ok: true,
       value: { attachment: ATTACHMENT, data: Uint8Array.of(1) },
@@ -208,6 +209,25 @@ describe('Chat inject API', () => {
       expect(b.chatSettings.set).toHaveBeenLastCalledWith('foldedReplies', 'final')
       expect(b.session.prompt).not.toHaveBeenCalled()
       expect(b.session.cancel).not.toHaveBeenCalled()
+    } finally {
+      await b.runtime.dispose()
+    }
+  })
+
+  it('follows the work-details mode into the Session step detail and expands turns through the Session', async () => {
+    const b = await bench()
+    try {
+      const stepDetails = () => b.runtime.sessions.calls
+        .filter(call => call.method === 'setStepDetail').map(call => call.args[0])
+      expect(stepDetails()).toEqual(['full'])
+      b.chatSettings.publish({ status: 'ready', value: { linkOpening: 'sidebar', transcriptView: 'collapsed', performanceUsage: 'detailed' }, revision: 1, writable: true })
+      expect(stepDetails()).toEqual(['full', 'collapsed'])
+      b.chatSettings.publish({ status: 'ready', value: { linkOpening: 'sidebar', transcriptView: 'verbose', performanceUsage: 'detailed' }, revision: 2, writable: true })
+      expect(stepDetails()).toEqual(['full', 'collapsed', 'full'])
+
+      const { injected } = b.chatFlowApi(b.rootReference)
+      await injected.expandTurn(3)
+      expect(b.session.expandTurn).toHaveBeenCalledExactlyOnceWith(3)
     } finally {
       await b.runtime.dispose()
     }

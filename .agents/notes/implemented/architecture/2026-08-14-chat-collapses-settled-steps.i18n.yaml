@@ -1,0 +1,19 @@
+# Bilingual-pair consistency record for 2026-08-14-chat-collapses-settled-steps.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/architecture/2026-08-14-chat-collapses-settled-steps.md
+/agent-note-chat-collapses-a-turn-s-settled-steps-behind-one-expandable-row:
+  en: 0266e29e52ab4833
+  zh: 11ffa5d30f0e43df
+/agent-note-chat-collapses-a-turn-s-settled-steps-behind-one-expandable-row/problem:
+  en: 061c159cd4faba5e
+  zh: d9512e1424435ec1
+/agent-note-chat-collapses-a-turn-s-settled-steps-behind-one-expandable-row/decision:
+  en: 29f9cbe7210da3e0
+  zh: 8ed5348b6af819a6
+/agent-note-chat-collapses-a-turn-s-settled-steps-behind-one-expandable-row/alternatives-considered:
+  en: ebd3bb3cecdf6f86
+  zh: 1c99af87181ff1b9
+/agent-note-chat-collapses-a-turn-s-settled-steps-behind-one-expandable-row/consequences:
+  en: 9cdeefb369bba260
+  zh: ea5ef2ca9e1b078d

@@ -20,6 +20,8 @@ export interface ChatPresentationPolicy {
   readonly liveProcessDetail: boolean
   /** Whether a settled reasoning row previews its first line beside the Think title. */
   readonly settledReasoningPreview: boolean
+  /** Whether each response's settled steps fold behind one summary row, including while its Turn runs. */
+  readonly foldSettledSteps: boolean
 }
 
 const POLICIES: Readonly<Record<TranscriptViewMode, Omit<ChatPresentationPolicy, 'collapseTiming' | 'foldedReplies'>>> = {
@@ -29,6 +31,7 @@ const POLICIES: Readonly<Record<TranscriptViewMode, Omit<ChatPresentationPolicy,
     stepGrouping: 'collapsed',
     liveProcessDetail: false,
     settledReasoningPreview: false,
+    foldSettledSteps: false,
   },
   standard: {
     mode: 'standard',
@@ -36,6 +39,7 @@ const POLICIES: Readonly<Record<TranscriptViewMode, Omit<ChatPresentationPolicy,
     stepGrouping: 'collapsed',
     liveProcessDetail: true,
     settledReasoningPreview: true,
+    foldSettledSteps: false,
   },
   detailed: {
     mode: 'detailed',
@@ -43,6 +47,7 @@ const POLICIES: Readonly<Record<TranscriptViewMode, Omit<ChatPresentationPolicy,
     stepGrouping: 'history',
     liveProcessDetail: true,
     settledReasoningPreview: true,
+    foldSettledSteps: false,
   },
   verbose: {
     mode: 'verbose',
@@ -50,6 +55,15 @@ const POLICIES: Readonly<Record<TranscriptViewMode, Omit<ChatPresentationPolicy,
     stepGrouping: 'none',
     liveProcessDetail: false,
     settledReasoningPreview: true,
+    foldSettledSteps: false,
+  },
+  collapsed: {
+    mode: 'collapsed',
+    foldCompletedTurns: false,
+    stepGrouping: 'none',
+    liveProcessDetail: false,
+    settledReasoningPreview: true,
+    foldSettledSteps: true,
   },
 }
 
@@ -62,6 +76,7 @@ function withTiming(
     standard: { ...POLICIES.standard, collapseTiming, foldedReplies },
     detailed: { ...POLICIES.detailed, collapseTiming, foldedReplies },
     verbose: { ...POLICIES.verbose, collapseTiming, foldedReplies },
+    collapsed: { ...POLICIES.collapsed, collapseTiming, foldedReplies },
   }
 }
 

@@ -21,7 +21,7 @@ describe('ui-chat Host settings', () => {
     expect(plainConfig(configuration.fiber.effectiveConfig)).toEqual({
       transcriptView: 'normal', performanceUsage: 'detailed', linkOpening: 'sidebar', collapseTiming: 'completion', foldedReplies: 'all',
     })
-    for (const mode of ['expanded', 'compact', 'standard', 'detailed', 'verbose']) {
+    for (const mode of ['expanded', 'compact', 'standard', 'detailed', 'verbose', 'collapsed']) {
       await configuration.update({ transcriptView: mode })
       expect(plainConfig(configuration.fiber.effectiveConfig)).toMatchObject({ transcriptView: mode })
     }

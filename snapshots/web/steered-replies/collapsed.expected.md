@@ -1,0 +1,32 @@
+- banner:
+  - navigation "Session hierarchy": {{workspace}}
+  - button "More actions"
+  - button "Open right sidebar"
+  - tablist:
+    - tab "Chat" [selected]
+    - tab "Trajectory"
+  - button "More conversation views"
+- text: Inspect the fixture workspace and report what the two probe files contain. {{clock}}
+- button "Copy"
+- status: Completed
+- button "Completed in {{duration}}" [disabled]
+- button "{{duration}} 2 steps 2 calls 330 tokens (300 in / 30 out)"
+- text: ·
+- paragraph: "FIRST_ANSWER: probe-a.txt holds alpha and probe-b.txt holds beta."
+- text: "Steer: now count the lines instead and reply with the total. {{clock}}"
+- button "Copy"
+- button "{{duration}} 2 steps 2 calls 990 tokens (900 in / 90 out)"
+- text: ·
+- paragraph: "SECOND_ANSWER: the two probe files hold 2 lines in total."
+- button "Copy"
+- button "Good response"
+- button "Bad response"
+- button "Branch into a new conversation"
+- text: {{clock}}
+- textbox "Message or run a task, / commands, @ files or sessions"
+- button "Add files or run commands"
+- 'button "Access mode, current: Workspace Write"': Workspace Write
+- button "Select model, current DeepSeek-V4-Flash": DeepSeek-V4-Flash
+- button "Send message" [disabled]
+- button "1 turns 6 steps"
+- button "2.3K tok · Cache hit 0% · $0.0000": 2.3K tokCache hit 0%$0.0000

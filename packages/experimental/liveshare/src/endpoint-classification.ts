@@ -55,6 +55,7 @@ export const VIEWER_ENDPOINT_CLASSES = {
   'session/projections': 'reader-session-read', // the page reads visible Session projections
   'skills/list': 'reader-session-read', // the page lists the skills of a visible Session
   'session/events': 'reader-session-read', // the page reads the event history of a visible Session
+  'session/expandSteps': 'reader-session-read', // the page reads back the steps a collapsed page of a visible Session withheld
   'session/observeEvent': 'reader-session-read', // the page follows one visible Session's events
   'session/observeProjections': 'reader-session-read', // the page follows visible Session projections
   'session/observeState': 'reader-session-read', // the page follows a visible Session's passive state

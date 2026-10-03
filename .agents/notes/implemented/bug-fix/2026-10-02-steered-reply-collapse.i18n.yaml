@@ -1,0 +1,19 @@
+# Bilingual-pair consistency record for 2026-10-02-steered-reply-collapse.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/bug-fix/2026-10-02-steered-reply-collapse.md
+/agent-note-preserve-replies-when-steering-continues-the-same-backend-turn:
+  en: e0d5b502d3ed3021
+  zh: c26b802d3ff21b42
+/agent-note-preserve-replies-when-steering-continues-the-same-backend-turn/problem:
+  en: 378360ad69623068
+  zh: 60faa5157c3b80cd
+/agent-note-preserve-replies-when-steering-continues-the-same-backend-turn/decision:
+  en: c778d5606a29fc96
+  zh: c35288ccd443fd24
+/agent-note-preserve-replies-when-steering-continues-the-same-backend-turn/alternatives-considered:
+  en: 9ef87e7314c9aee7
+  zh: 238d2d036b630a5f
+/agent-note-preserve-replies-when-steering-continues-the-same-backend-turn/consequences:
+  en: 2a5f66a01d7fbc59
+  zh: 2ca7bd331e75cf64

@@ -1,0 +1,19 @@
+# Bilingual-pair consistency record for 2026-09-22-turn-usage-history-metadata.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/architecture/2026-09-22-turn-usage-history-metadata.md
+/agent-note-whole-turn-usage-travels-with-history-end-records:
+  en: c33a376c33ff32f8
+  zh: d9b16158c2934045
+/agent-note-whole-turn-usage-travels-with-history-end-records/problem:
+  en: e7173553b8e7b498
+  zh: 5aa8a7fc2602a1f5
+/agent-note-whole-turn-usage-travels-with-history-end-records/decision:
+  en: b35b710456ab687f
+  zh: cbf7e53120e5cdb4
+/agent-note-whole-turn-usage-travels-with-history-end-records/alternatives-considered:
+  en: 4ee0ae7cadc4d2ec
+  zh: 073bdf18fb5be8e3
+/agent-note-whole-turn-usage-travels-with-history-end-records/consequences:
+  en: bf6d6af307afac70
+  zh: 5cf10a0b59e0120c

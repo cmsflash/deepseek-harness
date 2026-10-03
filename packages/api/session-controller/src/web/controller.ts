@@ -4,7 +4,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { remoteErrorOf } from '@deepseek-ai/dsh-typert-protocol'
 import type { SessionObservation } from '@deepseek-ai/dsh-session-query'
 import type { HistoryController } from '../history/controller.ts'
-import { addressId, rejectNotFound } from '../history.ts'
+import { addressId, entryFor, rejectNotFound } from '../history.ts'
 import { EventListener, ListenerBuffer } from '../history/listener.ts'
 import { history, projections, resolveHistoryRequest, validateObservationAddress } from '../history/controller.ts'
 import type { SessionFollowFrame, SessionFollowRequest } from '../types.ts'
@@ -25,7 +25,8 @@ export class WebController {
 
   /**
    * Open a history snapshot and follow uncovered history and assistant notifications.
-   * @param request - Session identity, page budget, assistant output and optional activation (default false).
+   * Each `turn/end`, in the opening and after it, carries its complete turn's accounting.
+   * @param request - Session identity, page budget, step detail, assistant output and optional activation (default false).
    * @param signal - cancellation for opening and streaming.
    * @returns an opening snapshot followed by uncovered queued increments.
    */
@@ -44,13 +45,14 @@ export class WebController {
         throw error
       })
     validateObservationAddress(request.address, observation)
+    const { page, turnUsage } = history(observation, spec)
     let opening: SessionFollowFrame = {
       type: 'snapshot',
       header: { ...observation.header },
       projections: projections(observation),
-      ...history(observation, spec),
+      ...page,
     }
-    listener.setCursor(opening.cursor)
+    listener.setCursor(opening.cursor, event => entryFor(event, turnUsage.append(event)))
     if (assistantListener !== undefined) {
       const { baseline: assistantStream, ordinal } = assistantListener.snapshot()
       opening = { ...opening, assistantStream }

@@ -20,6 +20,7 @@ export class EventListener implements Disposable {
   private readonly disposes: (() => void)[] = []
   private firstReceivedSeq: number | undefined
   private nextExpectedSeq: number | undefined
+  private encode: (event: SessionEvent) => SessionEventEntry = entryFor
 
   /**
    * @param ctx - context owning the event registrations.
@@ -63,9 +64,11 @@ export class EventListener implements Disposable {
   }
 
   /** Set the inclusive opening cut for buffered history notifications.
-   * @param cursor - snapshot cut set before consuming the queue. */
-  setCursor(cursor: number): void {
+   * @param cursor - snapshot cut set before consuming the queue.
+   * @param encode - wire encoding applied once, in seq order, to each event after the cut. */
+  setCursor(cursor: number, encode: (event: SessionEvent) => SessionEventEntry = entryFor): void {
     this.nextExpectedSeq = cursor + 1
+    this.encode = encode
   }
 
   private *transform(item: EventItem): Iterable<SessionEventEntry> {
@@ -75,7 +78,7 @@ export class EventListener implements Disposable {
     this.nextExpectedSeq = result.next
     for (const event of result.events) {
       if (this.disposes.length === 0) return
-      yield entryFor(event)
+      yield this.encode(event)
     }
   }
 

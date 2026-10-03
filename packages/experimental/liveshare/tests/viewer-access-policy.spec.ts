@@ -46,9 +46,9 @@ const GLOBAL_ACTIONS = [
 /** Session reads the served page's startup and render paths need; see {@link GLOBAL_ACTIONS}. */
 const SESSION_READS = [
   'commands/list', 'fileUploads/upload', 'goals/get', 'session/attachment', 'session/control',
-  'session/events', 'session/follow', 'session/list', 'session/observeEvent', 'session/observeProjections',
-  'session/observeState', 'session/page', 'session/projections', 'session/state', 'session/wait',
-  'skills/list', 'toolResults/watch', 'workspace/follow',
+  'session/events', 'session/expandSteps', 'session/follow', 'session/list', 'session/observeEvent',
+  'session/observeProjections', 'session/observeState', 'session/page', 'session/projections', 'session/state',
+  'session/wait', 'skills/list', 'toolResults/watch', 'workspace/follow',
 ] as const
 const SESSION_EVENTS = [
   'event:api-session/activity', 'event:api-session/added', 'event:api-session/error',

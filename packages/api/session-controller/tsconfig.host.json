@@ -25,7 +25,9 @@
     "src/list.ts",
     "src/media-references.ts",
     "src/archived-session-gate.ts",
-    "src/skill-catalog.ts"
+    "src/skill-catalog.ts",
+    "src/step-collapse.ts",
+    "src/turn-usage.ts"
   ],
   "references": [
     {
@@ -53,6 +55,12 @@
       "path": "../../core/session"
     },
     {
+      "path": "../../core/tools"
+    },
+    {
+      "path": "../../core/tool-executor-ptc"
+    },
+    {
       "path": "../../context/file-reference"
     },
     {
@@ -75,6 +83,9 @@
     },
     {
       "path": "../../llm/llm"
+    },
+    {
+      "path": "../../llm/token-meter"
     },
     {
       "path": "../../util/deque"

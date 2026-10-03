@@ -4,6 +4,7 @@ import SessionStore, { SESSION_FORMAT_VERSION, SessionId, SessionLogOffset, Sess
 import type { Session, SessionEvent, SessionHeader, SurfaceIntent } from '@deepseek-ai/dsh-session'
 import type { SessionObservation } from '@deepseek-ai/dsh-session-query'
 import { snapshotSubagentDescriptor } from '@deepseek-ai/dsh-subagent'
+import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { subagentIdentityProjectionDefinition } from '@deepseek-ai/dsh-subagent/src/projection.ts'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { HistoryController } from '../src/history/controller.ts'
@@ -100,6 +101,78 @@ async function setup(): Promise<{ ctx: Context; history: HistoryController; web:
 }
 
 describe('Session history and Web follow', () => {
+  it('refuses an expansion beyond an empty Session cursor', async () => {
+    const { ctx, history } = await setup()
+    const session = ctx.sessions.create(SessionId('empty-expansion'), { meta: { cwd: '/workspace' } })
+    await expect(history.expandSteps({
+      address: { kind: 'session', sessionId: session.id }, throughSeq: 0, fromSeq: 0, turn: 1,
+    }, signal())).rejects.toMatchObject({ code: 'gateway/bad-request' })
+  })
+
+  it('reports missing ordinary and subagent sources on expansion', async () => {
+    const { ctx, history } = await setup()
+    ctx.provide('sessionPersistence', testSessionPersistence(ctx, {
+      list: () => Promise.resolve([]),
+      stat: () => Promise.resolve(undefined),
+      inspect: () => Promise.resolve(undefined),
+    }) as never)
+    await expect(history.expandSteps({
+      address: { kind: 'session', sessionId: SessionId('missing') }, throughSeq: -1, turn: 1,
+    }, signal())).rejects.toMatchObject({ code: 'session/not-found' })
+    await expect(history.expandSteps({
+      address: {
+        kind: 'subagent',
+        parentSessionId: SessionId('parent'),
+        childSessionId: SessionId('missing-child'),
+        mode: 'continuable',
+      },
+      throughSeq: -1,
+      turn: 1,
+    }, signal())).rejects.toMatchObject({ code: 'subagent/not-found' })
+  })
+
+  it('serves an exact full interval independently of the default message budget', async () => {
+    const { ctx, history } = await setup()
+    const session = ctx.sessions.create(SessionId('full-interval'), { meta: { cwd: '/workspace' } })
+    for (let index = 0; index < 120; index++) {
+      session.append('user/message', createUserMessage({
+        content: [{ type: 'text', text: `message ${index}` }], source: { kind: 'user' },
+      }), { surfaceOp: 'append' })
+    }
+    const address = { kind: 'session' as const, sessionId: session.id }
+    const ordinary = await history.events({ address, throughSeq: 119 }, signal())
+    expect(ordinary.records).toHaveLength(50)
+    const interval = await history.events({ address, fromSeq: 10, throughSeq: 109, stepDetail: 'full' }, signal())
+    expect(interval.records.map(record => record.event.seq)).toEqual(Array.from({ length: 100 }, (_, index) => index + 10))
+    expect(interval.hasMore).toBe(true)
+    expect(interval.digests).toBeUndefined()
+    expect(interval.records.every(record => record.covers === undefined)).toBe(true)
+    expect(await history.events({ address, fromSeq: 110, throughSeq: 109 }, signal()))
+      .toEqual({ cursor: 109, records: [], hasMore: true })
+    const whole = await history.events({ address, fromSeq: 0, throughSeq: 119 }, signal())
+    expect(whole.records).toHaveLength(120)
+    expect(whole.hasMore).toBe(false)
+    const tail = await history.events({ address, fromSeq: 117 }, signal())
+    expect(tail).toMatchObject({ cursor: 119, hasMore: true })
+    expect(tail.records.map(record => record.event.seq)).toEqual([117, 118, 119])
+    await expect(history.events({ address, fromSeq: 121 }, signal()))
+      .rejects.toMatchObject({ code: 'gateway/bad-request' })
+  })
+
+  it.each([
+    { fromSeq: -1 }, { fromSeq: -0 }, { fromSeq: 0.5 }, { fromSeq: 2 },
+    { fromSeq: 0, beforeSeq: 1 }, { fromSeq: 0, maxMessages: 50 },
+    { fromSeq: 0, turnWindow: { minMessages: 1, minTurns: 1 } },
+    { fromSeq: 0, stepDetail: 'collapsed' as const },
+  ])('rejects invalid or ambiguous exact-interval requests: %j', async (range) => {
+    const { ctx, history } = await setup()
+    const session = ctx.sessions.create(SessionId('invalid-interval'), { meta: { cwd: '/workspace' } })
+    session.append('turn/start', { turn: 1 })
+    await expect(history.events({
+      address: { kind: 'session', sessionId: session.id }, throughSeq: 0, ...range,
+    }, signal())).rejects.toMatchObject({ code: 'gateway/bad-request' })
+  })
+
   it('opens at the current cursor and follows later events from an ordinary Session', async () => {
     const { ctx, history, web } = await setup()
     const session = ctx.sessions.create(SessionId('ordinary'), { meta: { cwd: '/workspace' } })

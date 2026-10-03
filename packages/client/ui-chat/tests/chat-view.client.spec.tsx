@@ -105,6 +105,11 @@ function sessionSnapshot(overrides: Partial<TestSessionSnapshot> = {}): TestSess
     openError: null,
     hasMore: false,
     loadingOlder: false,
+    stepDigests: new Map(),
+    stepAccounts: new Map(),
+    expandingTurns: new Set(),
+    loadingStepDetail: false,
+    stepDetailError: null,
     promptError: null,
     blank: false,
     subagent: null,
@@ -421,6 +426,7 @@ function makeHarness(
   const renderUserContent = createUserContentFixture({ openFile: openUserFile })
   const loadOlder = vi.fn()
   const loadThrough = vi.fn<(seq: number) => Promise<void>>().mockResolvedValue(undefined)
+  const expandTurn = vi.fn<(turn: number) => Promise<void>>().mockResolvedValue(undefined)
   // Mutable outline holder: tests swap the value and drive a re-render via set().
   let outlineValue: unknown
   const openView = vi.fn<(view: string, focus: string) => void>()
@@ -543,6 +549,7 @@ function makeHarness(
     openExternalLink: vi.fn(),
     loadOlder,
     loadThrough,
+    expandTurn,
     loadImage: vi.fn(() => Promise.reject(new Error('not used'))),
     chatScroll,
     forkAt,
@@ -571,7 +578,7 @@ function makeHarness(
   return {
     set, setSession: session.set, setChat: chatSource.set, ChatView, props,
     setConnection: (state: ConnectionState) => { connection.set(state) },
-    openFile, openUserFile, loadOlder, loadThrough, openView,
+    openFile, openUserFile, loadOlder, loadThrough, expandTurn, openView,
     setOutline: (value: unknown) => { outlineValue = value },
     chatScroll, forkAt, toolOwners,
     setPerformanceUsage: (mode: 'compact' | 'detailed') => { performanceUsage.set(mode) },

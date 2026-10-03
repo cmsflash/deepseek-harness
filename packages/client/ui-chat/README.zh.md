@@ -10,7 +10,7 @@ kind: "package-reference"
 
 ## 概述
 
-使用本包可在浏览器中渲染已记录的 Session 对话，包括历史图片、本地化操作和滚动位置恢复。工作步骤展示模式控制思考预览与过程显隐，不隐藏 Assistant 回复；完全展开模式保持已完成轮次的过程行可见。本地 transcript（文本记录）与 steering（中途引导）提交会立即显示并保留在原区域，在权威会话记录到达时原子地消失，而排队中的提交始终不进入 Chat。本包不组装或修改模型请求。
+使用本包可在浏览器中渲染已记录的 Session 对话，包括历史图片、本地化操作和滚动位置恢复。工作步骤展示模式控制思考预览与过程显隐，不隐藏 Assistant 回复；完全展开模式保持已完成轮次的过程行可见，折叠步骤模式逐段回复给出摘要。本地 transcript（文本记录）与 steering（中途引导）提交会立即显示并保留在原区域，在权威会话记录到达时原子地消失，而排队中的提交始终不进入 Chat。本包不组装或修改模型请求。
 
 文件提及提供方同时接收当前查看的会话 ID 与收尾轮次的属主信息，因此继承历史中的链接可以指向 fork 自身。
 
@@ -23,6 +23,7 @@ kind: "package-reference"
 - [已完成轮次的页脚](#completed-turn-footer)
 - [轮次过程折叠](#turn-process-folding)
 - [分组渲染](#grouped-rendering)
+- [已落定步骤折叠](#settled-step-collapse)
 - [滚动归属](#scroll-ownership)
 - [模型体验](#model-experience)
 - [已知限制与暂缓事项](#known-limitations-and-deferred-work)
@@ -68,7 +69,7 @@ Assistant 尝试结束且没有可见消息时，Chat 隐藏已发布的 Node，
 <a id="turn-token-usage"></a>
 ## 轮次 token 用量
 
-只有当已加载窗口包含 `turn/start`，且每次已启动的模型尝试都报告安全、精确的用量时，已完成轮次才显示可展开的用量行。该行会省略不可用的可选用量桶。记账不完整或相互矛盾时，整个详情都不显示，避免把部分总量冒充完整结果。轮次药丸与 composer 下方的会话用量药丸各自追加计费美元总额，累加范围内已计价的尝试；任一尝试缺少价格时，对话框的 `费用` 行追加 `（N 次调用未计价）`，因此部分总和不会被误认为全部花费（[计费成本显示](../../../.agents/notes/implemented/feature/2026-09-11-billed-cost-display.zh.md)）。
+已完成轮次从 Host 的 `turn/end` record 元数据读取可展开的用量行，因此在折叠历史中、或轮次起点位于已加载页之外时，token 与费用仍然可用。展开步骤或加载更早分页不会改变权威总量。该行省略不可用的可选用量桶。记账缺失或为 null 时隐藏整个详情，不从已加载事件重新拼出部分总量。轮次药丸与 composer 下方的会话用量药丸各自追加计费美元总额，累加范围内已计价的尝试；任一尝试缺少价格时，对话框的 `费用` 行追加 `（N 次调用未计价）`，因此部分总和不会被误认为全部花费（[计费成本显示](../../../.agents/notes/implemented/feature/2026-09-11-billed-cost-display.zh.md)）。
 
 设置 → 通用设置 → 性能与用量位于繁忙时的发送行为之后、Session Log 上传之前，将 `ui-chat.performanceUsage` 保存为 `detailed`（默认）或 `compact`。简洁模式仅在输入框下方显示可用的输出速度和缓存命中率，不显示统计交互卡片或每轮用量。详细模式提供会话统计和每轮 token 用量。两种模式的已完成轮次页脚均不显示耗时。该偏好仅影响展示，记账和 Session 事件保持完整。
 
@@ -96,9 +97,9 @@ Assistant 尝试结束且没有可见消息时，Chat 隐藏已发布的 Node，
 
 Chat 末尾为进行中的 Turn 控制行，且该轮尚无可见输入时，第一条本地 transcript 回显显示在控制行前。其他回显保留在正文末尾。控制行与回显共用一个 keyed 列表，因此控制行到达时不会重新挂载回显。持久输入在同一次渲染中替换匹配的回显。
 
-工作步骤展示模式控制过程组显示与推理预览。简洁、标准、详细模式收起符合条件的已完成轮次，保留所有 Assistant 回复可见，选「仅最终回答」时只保留最终答案；完全展开模式保留时长或状态抬头，但不支持收起，历史过程行直接显示。[业务规则明细](src/client/conversation-nodes/README.zh.md#display-modes) 统一说明模式表、组头行为、整轮折叠资格、时钟与开合重置。
+工作步骤展示模式控制过程组显示与推理预览。简洁、标准、详细模式收起符合条件的已完成轮次，保留所有 Assistant 回复可见，选「仅最终回答」时只保留最终答案；完全展开模式保留时长或状态抬头，但不支持收起，历史过程行直接显示。折叠步骤模式平铺过程行，以[逐段回复折叠](#settled-step-collapse)取代整轮折叠。[业务规则明细](src/client/conversation-nodes/README.zh.md#display-modes) 统一说明模式表、组头行为、整轮折叠资格、时钟与开合重置。
 
-工作步骤展示下方的设置行提供[独立的收起时机设置](src/client/conversation-nodes/README.zh.md#collapse-timing)和[「收起后显示的回复」设置](src/client/conversation-nodes/README.zh.md#folded-replies)（`ui-chat.foldedReplies`，完全展开模式下隐藏），二者都通过相同的 Host profile 配置保存。
+工作步骤展示下方的设置行提供[独立的收起时机设置](src/client/conversation-nodes/README.zh.md#collapse-timing)和[「收起后显示的回复」设置](src/client/conversation-nodes/README.zh.md#folded-replies)（`ui-chat.foldedReplies`，完全展开与折叠步骤模式下隐藏），二者都通过相同的 Host profile 配置保存。
 
 -----
 
@@ -128,6 +129,15 @@ Session 作用域的 `conversation.chat.reasoning.body` single Slot 仅在思考
 Chat 节点 slot 为推理与工具注入绑定重置来源的 `useDisclosure` 钩子。中间 renderer 只透传、不订阅，每次调用拥有独立展开状态。来源回调保留接收对象及稳定引用。外层轮次实际隐藏过程成员时，所在节点重置这些开合状态，不替换组件 key，也不改变钩子引用。展示模式切换保留展开状态。
 
 过程行的文字与图标在所有工作过程展示模式下共用一种颜色：默认 tertiary、悬停 secondary，错误与警告文字保留语义色。前置图标、折叠箭头及其容器随正文字号增量缩放。
+
+-----
+
+<a id="settled-step-collapse"></a>
+## 已落定步骤折叠
+
+一个轮次是一次驱动运行，其中每个步骤是一次模型调用，因此长轮次的阅读成本在于中间步骤而非答案。轮次在作答之后仍可能消费中途引导（steering）的人工输入，因此「折叠步骤」模式在每条 `user` 与 `steering` 行处把轮次划分为回复分组，分界取认领该输入的步骤；上下文注入不划分分组。每个分组保留其最高步骤渲染——流式输出时即当前活跃的那一步——以及最后一个含文本的步骤，因此在 steering 之前给出的答案保持可见。分组把其余 `assistant-step` 与 `tool-call` 行折叠进一个 `CollapsedStepsRow`，汇报这些步骤耗费的时长、模型调用数、工具调用数、token、增删行数与文件数。模型调用数、时长与 token 来自每个步骤发布的 assistant 数据，因此只产生工具调用的请求即使不渲染 assistant 行也会计入。已落定的根级工具调用和嵌套 dispatch 结果各计一次调用。Host 与 Client 的文件指标共享 `dsh-tools/presentation` 中的 `appliedFileDiffs`：失败结果不贡献 diff；可用元数据提供 hunk；成功的 `write` 若没有 hunk，则使用已记录参数中的整文件映像。这一回退也表示相同内容的覆盖，因此其行量不是实测的文件系统净改动。嵌套 dispatch 不记录 diff 元数据。已记录路径跨步骤去重；触及的空文件即使行量为零，也会显示文件计数。归属该分组且由 Chat 渲染的每条上下文注入也折叠进其摘要，包括其可见步骤旁的注入；摘要行显示「X 次上下文注入」，也可以只显示这一计数。Chat 只渲染增删工具的上下文（[隐藏行](#system-prompt-row)），因此普通上下文不会进入折叠。人工与 steering 消息、turn tail，以及尚无明确轮次归属的上下文保持可见。打开某行会通过同一个 keyed node seat 就地恢复该分组隐藏的行，因此展开后的分组与未折叠的 transcript 渲染完全一致；每个分组的展示状态相互独立、全有或全无、由读者掌控且不持久化（[决策](../../../.agents/notes/implemented/bug-fix/2026-10-02-steered-reply-collapse.zh.md)）。该行只有一个开放点：`conversation.chat.collapsedMetric` 是会话作用域的 list 槽位，其条目渲染在该行自行计算的每个指标之后，因此贡献者无需针对该行以后可能新增的指标预留 `order` 区间；owner 传入后端轮次、分组的 `startStep`、它隐藏的已物化 node key，以及已折叠的步骤数和调用数。只有 digest 的步骤与只调用工具的模型请求计入计数但没有 node key。若改为读取整个轮次，就会计入其它回复分组及其保持可见的答案。展示控件与指标是兄弟节点，因此贡献的指标可以携带交互内容而不会嵌套在按钮内部。
+
+该模式也选择历史读取偏好：`collapsed` 分页携带边界和每个可省略步骤的一条 `StepDigest`，直到展开时取回内部事件。每份账目描述完整步骤，并在展开后保留；但当更早分页加入更多步骤时，尚未加载完整的轮次总量仍会增长。偏好改变时，已经加载的事件仍保留在内存。Trajectory 等完整详情消费者会在该 Session 对象中优先于此偏好，并恢复其已加载区间；Chat 仍可折叠显示。被暂留的事件按整个后端轮次加载，但只有被打开的分组显示其行。事件已全部存在的轮次展开时不再请求数据，被打开的摘要行会报告正在进行的展开（[摘要分页](../../../.agents/notes/implemented/architecture/2026-09-01-collapsed-step-digest-paging.zh.md)、[完整详情恢复](../../../.agents/notes/implemented/bug-fix/2026-09-10-consumer-required-full-history.zh.md)）。
 
 -----
 
@@ -205,6 +215,7 @@ Chat view 在标记了 `data-text-interaction-source` 的业务节点上检测�
 
 - **transcript 只反映已加载的 Session 窗口**——只有会话控制器加载前一页事件后，更早的 transcript node 才会出现。轮次导航比窗口更宽：轨道把已加载的轮次与宿主 `turnOutline` 投影合并，每个已开始的轮次都有固定间距刻度（相隔 10px；阶梯高于外框时在框内滚动并以渐变淡出标示可滚方向），激活未加载刻度会先把历史分页拉到该轮次的 `turn/start` seq 再落到它的行上。没有该投影时（未挂载 `dsh-session-turn-outline` 的装配），轨道回退到仅显示已加载轮次。
 - **导航预览按卡片尺寸截断**——提示词一行（50 字符）、回复至多三行（120 字符），已加载与未加载 Turn 一致；未加载 Turn 的回复要等该轮落定后才随大纲到达，进行中的轮次在此之前只预览提示词（或仅轮次号）。
+- **折叠步骤的指标自身不展示费用**——`TokenUsage.costUsd` 承载已计价调用的美元金额，因此费用指标是 `conversation.chat.collapsedMetric` 的贡献项，而非内置项。`StepDigest` 不携带费用；需要被省略用量的贡献者必须先请求完整详情，再计算那些步骤的费用。
 
 
 <a id="dev-note"></a>

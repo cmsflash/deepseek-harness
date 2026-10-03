@@ -182,4 +182,37 @@ describe('Client Session contracts', () => {
     })
   })
 
+  it('appends a settlement after every held entry when nothing follows its seq', () => {
+    const feed = new MutableSessionEventSource()
+    const opening = entry(SessionSeq(1))
+    feed.replace([opening, transient('attempt-tail')], false)
+    const settlement = assistantSettlement(SessionSeq(2))
+
+    feed.settleAssistant(LlmAttemptId('attempt-tail'), settlement)
+
+    expect(feed.getSnapshot().entries).toEqual([opening, settlement])
+  })
+
+  it('splices withheld interiors by seq, keeping held entries and both window ends', () => {
+    const feed = new MutableSessionEventSource()
+    const first = entry(SessionSeq(1))
+    const held = entry(SessionSeq(3))
+    const last = entry(SessionSeq(6))
+    feed.replace([first, held, last], true)
+    const revision = feed.getSnapshot().revision
+    const interiors = [entry(SessionSeq(2)), entry(SessionSeq(3)), entry(SessionSeq(4)), entry(SessionSeq(5))]
+
+    feed.splice(interiors)
+
+    expect(feed.getSnapshot().entries.map(candidate => candidate.event.seq)).toEqual([1, 2, 3, 4, 5, 6])
+    expect(feed.getSnapshot().entries[2]).toBe(held)
+    expect(feed.getSnapshot().hasMore).toBe(true)
+    expect(feed.getSnapshot().revision).toBe(revision + 1)
+    expect(feed.getSnapshot().change).toEqual({ kind: 'splice', entries: [interiors[0], interiors[2], interiors[3]] })
+
+    // Entries the window already holds publish nothing.
+    feed.splice([entry(SessionSeq(4))])
+    expect(feed.getSnapshot().revision).toBe(revision + 1)
+  })
+
 })

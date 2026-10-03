@@ -1,4 +1,4 @@
-/** Shared Session history pagination, address validation and wire conversion. */
+/** Shared Session history pagination, step detail, address validation and wire conversion. */
 
 import {
   isAppendSurfaceEvent,
@@ -13,13 +13,18 @@ import type {
 } from '@deepseek-ai/dsh-session'
 import type { SessionObservation } from '@deepseek-ai/dsh-session-query'
 import type {} from '@deepseek-ai/dsh-subagent'
+import type { TurnTokenUsage } from '@deepseek-ai/dsh-token-meter/turn-usage'
 import { RemoteError } from '@deepseek-ai/dsh-typert-protocol'
+import { collapseSteps } from './step-collapse.ts'
 import type {
   SessionAddress,
   SessionEventEntry,
+  SessionExpandStepsRequest,
   SessionHistoryRecord,
   SessionPageRequest,
+  SessionStepDetail,
   SessionWireEvent,
+  StepDigest,
 } from './types.ts'
 
 /** Message budget applied when a history request omits `maxMessages`. */
@@ -44,6 +49,48 @@ export function validateHistoryWindow(request: Pick<SessionPageRequest, 'maxMess
     if (!Number.isSafeInteger(window.minTurns) || window.minTurns <= 0) {
       throw new RemoteError('gateway/bad-request', 'turnWindow.minTurns must be a positive safe integer', {})
     }
+  }
+}
+
+/**
+ * Reject an invalid exact-interval head, or one combined with a page window or collapsed detail.
+ * A head past an omitted cut is rejected once the read resolves that cut.
+ * @param request - history request fields.
+ */
+export function validateHistoryInterval(request: Omit<SessionPageRequest, 'address'>): void {
+  if (request.fromSeq === undefined) return
+  if (!Number.isSafeInteger(request.fromSeq)
+    || request.fromSeq < 0
+    || Object.is(request.fromSeq, -0)
+    || (request.throughSeq !== undefined && request.fromSeq > request.throughSeq + 1)) {
+    throw new RemoteError('gateway/bad-request', 'fromSeq must be a non-negative safe integer at or before throughSeq + 1', {})
+  }
+  if (request.beforeSeq !== undefined || request.maxMessages !== undefined || request.turnWindow !== undefined
+    || request.stepDetail === 'collapsed') {
+    throw new RemoteError(
+      'gateway/bad-request',
+      'an exact history interval cannot use a message budget, a turn window, beforeSeq, or collapsed detail',
+      {},
+    )
+  }
+}
+
+/**
+ * Reject an invalid cut, turn, or window head of a step expansion.
+ * @param request - expansion request fields.
+ */
+export function validateExpandStepsRequest(request: SessionExpandStepsRequest): void {
+  if (!Number.isSafeInteger(request.throughSeq)
+    || request.throughSeq < -1
+    || Object.is(request.throughSeq, -0)) {
+    throw new RemoteError('gateway/bad-request', 'throughSeq must be an integer greater than or equal to -1', {})
+  }
+  if (!Number.isSafeInteger(request.turn) || request.turn < 0 || Object.is(request.turn, -0)) {
+    throw new RemoteError('gateway/bad-request', 'turn must be a non-negative safe integer', {})
+  }
+  if (request.fromSeq !== undefined
+    && (!Number.isSafeInteger(request.fromSeq) || request.fromSeq < 0 || Object.is(request.fromSeq, -0))) {
+    throw new RemoteError('gateway/bad-request', 'fromSeq must be a non-negative safe integer', {})
   }
 }
 
@@ -169,21 +216,76 @@ export function paginate(
 /**
  * Convert a committed event to its wire entry.
  * @param event - committed Session event.
+ * @param turnUsage - whole-turn accounting for a `turn/end`; reads that do not compute it omit the field.
  * @returns the wire event entry.
  */
-export function entryFor(event: SessionEvent): SessionEventEntry {
+export function entryFor(event: SessionEvent, turnUsage?: TurnTokenUsage | null): SessionEventEntry {
   return {
     type: 'event',
     // Session.append validates and freezes event data as JSON before publication.
     event: event as unknown as SessionWireEvent,
+    ...event.type === 'turn/end' && turnUsage !== undefined ? { turnUsage } : {},
   }
 }
 
 /**
  * Encode one bounded logical page without changing its pagination cut.
  * @param events - page events.
+ * @param usage - complete-turn accounting keyed by each served end sequence.
  * @returns the wire records.
  */
-export function pageRecords(events: readonly SessionEvent[]): SessionHistoryRecord[] {
-  return events.map(entryFor)
+export function pageRecords(
+  events: readonly SessionEvent[],
+  usage?: ReadonlyMap<number, TurnTokenUsage | null>,
+): SessionHistoryRecord[] {
+  return events.map(event => entryFor(event, usage?.get(event.seq)))
+}
+
+/**
+ * Encode one paginated range at the requested step detail. Under `collapsed`,
+ * elidable step interiors leave the records and return as digests; retention is
+ * decided over `scope`, the whole log through the cut, so a turn split across
+ * pages keeps the same steps whole on each. A page that would keep nothing (a
+ * one-message page inside one elidable step) is served whole instead, so every
+ * page carries at least one record.
+ * @param page - the contiguous page events.
+ * @param scope - every event through the cut.
+ * @param detail - requested step detail; omitted means `full`.
+ * @param usage - complete-turn accounting keyed by each served end sequence.
+ * @returns the page records, plus digests when steps were elided.
+ */
+export function detailPage(
+  page: readonly SessionEvent[],
+  scope: readonly SessionEvent[],
+  detail: SessionStepDetail | undefined,
+  usage: ReadonlyMap<number, TurnTokenUsage | null>,
+): { readonly records: SessionHistoryRecord[]; readonly digests?: readonly StepDigest[] } {
+  if (detail !== 'collapsed') return { records: pageRecords(page, usage) }
+  const collapsed = collapseSteps(page, scope)
+  if (collapsed.digests.length === 0 || collapsed.events.length === 0) return { records: pageRecords(page, usage) }
+  return { records: coveringRecords(page, collapsed.events, usage), digests: collapsed.digests }
+}
+
+/**
+ * Encode the kept events of a collapsed page so their inclusive ranges partition
+ * the page's seq range: each record stands for the withheld events before it,
+ * and the last record also for those after it.
+ * @param page - the complete contiguous page the kept events were drawn from.
+ * @param kept - the events the collapsed page serves, ascending by seq; non-empty.
+ * @param usage - complete-turn accounting keyed by each served end sequence.
+ * @returns records whose coverage joins end to end from the page's first seq to its last.
+ */
+function coveringRecords(
+  page: readonly SessionEvent[],
+  kept: readonly SessionEvent[],
+  usage: ReadonlyMap<number, TurnTokenUsage | null>,
+): SessionHistoryRecord[] {
+  const pageStart = (page[0] as SessionEvent).seq
+  const pageEnd = (page.at(-1) as SessionEvent).seq
+  return kept.map((event, index) => {
+    const from = index === 0 ? pageStart : (kept[index - 1] as SessionEvent).seq + 1
+    const to = index === kept.length - 1 ? pageEnd : event.seq
+    const record = entryFor(event, usage.get(event.seq))
+    return from === event.seq && to === event.seq ? record : { ...record, covers: { from, to } }
+  })
 }

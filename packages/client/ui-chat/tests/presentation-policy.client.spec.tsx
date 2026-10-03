@@ -3,7 +3,7 @@ import { act, cleanup, render } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
 import { bindSnapshotSelector } from '@deepseek-ai/dsh-client-test-runtime'
-import type { TranscriptViewMode } from '../src/chat-settings.ts'
+import { TRANSCRIPT_VIEW_MODES, type TranscriptViewMode } from '../src/chat-settings.ts'
 import {
   COLLAPSE_TIMINGS, FOLDED_REPLIES, derivePresentationPolicy, presentationPolicyFor,
   type ChatPresentationPolicy, type CollapseTiming, type FoldedReplies,
@@ -13,14 +13,18 @@ afterEach(cleanup)
 
 describe('Chat presentation policy', () => {
   it.each([
-    ['compact', true, 'collapsed', false, false],
-    ['standard', true, 'collapsed', true, true],
-    ['detailed', true, 'history', true, true],
-    ['verbose', false, 'none', true, false],
-  ] as const)('maps %s to stable presentation capabilities', (mode, foldCompletedTurns, stepGrouping, settledReasoningPreview, liveProcessDetail) => {
+    ['compact', true, 'collapsed', false, false, false],
+    ['standard', true, 'collapsed', true, true, false],
+    ['detailed', true, 'history', true, true, false],
+    ['verbose', false, 'none', true, false, false],
+    ['collapsed', false, 'none', true, false, true],
+  ] as const)('maps %s to stable presentation capabilities', (
+    mode, foldCompletedTurns, stepGrouping, settledReasoningPreview, liveProcessDetail, foldSettledSteps,
+  ) => {
     const policy = presentationPolicyFor(mode)
     expect(policy).toEqual({
       mode, collapseTiming: 'completion', foldedReplies: 'all', foldCompletedTurns, stepGrouping, settledReasoningPreview, liveProcessDetail,
+      foldSettledSteps,
     })
     expect(presentationPolicyFor(mode)).toBe(policy)
     expect(presentationPolicyFor(mode, 'completion')).toBe(policy)
@@ -34,14 +38,14 @@ describe('Chat presentation policy', () => {
     expect(presentationPolicyFor(mode, 'completion', 'final')).toBe(finalOnly)
   })
 
-  it('keeps all sixteen mode, timing, and folded-reply policies distinct and stable', () => {
+  it('keeps all twenty mode, timing, and folded-reply policies distinct and stable', () => {
     const policies = new Set<ChatPresentationPolicy>()
-    for (const mode of ['compact', 'standard', 'detailed', 'verbose'] as const) {
+    for (const mode of TRANSCRIPT_VIEW_MODES) {
       for (const timing of COLLAPSE_TIMINGS) {
         for (const replies of FOLDED_REPLIES) policies.add(presentationPolicyFor(mode, timing, replies))
       }
     }
-    expect(policies.size).toBe(16)
+    expect(policies.size).toBe(20)
   })
 
   it('forwards all three preferences and removes their subscriptions on disposal', () => {

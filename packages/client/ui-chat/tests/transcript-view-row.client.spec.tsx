@@ -164,6 +164,7 @@ describe('TranscriptViewRow', () => {
     ['compact', 'Compact'],
     ['detailed', 'Detailed'],
     ['verbose', 'Verbose'],
+    ['collapsed', 'Collapsed steps'],
   ] as const)('selects %s and follows the mirrored value', (mode, label) => {
     const b = mount()
     fireEvent.click(screen.getByRole('button', { name: /Standard/ }))
@@ -178,7 +179,7 @@ describe('TranscriptViewRow', () => {
     expect(screen.queryByRole('menuitem', { name: 'Compact' })).toBeNull()
   })
 
-  it('shows all four work-detail values in Chinese', () => {
+  it('shows all five work-detail values in Chinese', () => {
     const b = mount('compact', zh)
     expect(screen.getByText('工作步骤展示')).toBeDefined()
     expect(screen.getByText('选择希望看到多少工具调用细节')).toBeDefined()
@@ -191,7 +192,10 @@ describe('TranscriptViewRow', () => {
     fireEvent.click(screen.getByRole('button', { name: '详细' }))
     fireEvent.click(screen.getByRole('menuitem', { name: '完全展开' }))
     expect(b.setTranscriptView).toHaveBeenLastCalledWith('verbose')
-    expect(screen.getByRole('button', { name: '完全展开' })).toBeDefined()
+    fireEvent.click(screen.getByRole('button', { name: '完全展开' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: '折叠步骤' }))
+    expect(b.setTranscriptView).toHaveBeenLastCalledWith('collapsed')
+    expect(screen.getByRole('button', { name: '折叠步骤' })).toBeDefined()
   })
 
   it('returns focus before publishing a mode change without refocusing after the menu closes', async () => {

@@ -1,0 +1,19 @@
+# Bilingual-pair consistency record for 2026-09-10-consumer-required-full-history.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/bug-fix/2026-09-10-consumer-required-full-history.md
+/agent-note-full-detail-readers-preserve-the-loaded-session-interval:
+  en: 2e719e7d14cc3c75
+  zh: de90d700292a64f8
+/agent-note-full-detail-readers-preserve-the-loaded-session-interval/problem:
+  en: b07a179e5e0d2bdb
+  zh: d8947b818e95b35f
+/agent-note-full-detail-readers-preserve-the-loaded-session-interval/decision:
+  en: cb54ff51b28682c3
+  zh: d466029289d00776
+/agent-note-full-detail-readers-preserve-the-loaded-session-interval/alternatives-considered:
+  en: 050a49844529b003
+  zh: d7499f46e15ccbb1
+/agent-note-full-detail-readers-preserve-the-loaded-session-interval/consequences:
+  en: bfca9f48eb268924
+  zh: ad26dfe3b87afcab

@@ -125,6 +125,7 @@ const VIEWER_SESSION_READ_ROLE: RemoteAccessRole<'session'> = {
     'session/attachment',
     'session/control',
     'session/events',
+    'session/expandSteps',
     'session/follow',
     'session/list',
     'session/observeEvent',

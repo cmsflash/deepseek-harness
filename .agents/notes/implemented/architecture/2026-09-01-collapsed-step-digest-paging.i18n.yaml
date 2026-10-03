@@ -1,0 +1,19 @@
+# Bilingual-pair consistency record for 2026-09-01-collapsed-step-digest-paging.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/architecture/2026-09-01-collapsed-step-digest-paging.md
+/agent-note-history-pages-elide-collapsed-steps-and-describe-them-with-digests:
+  en: 14159fc74043ec2f
+  zh: 7f1e3b899e958647
+/agent-note-history-pages-elide-collapsed-steps-and-describe-them-with-digests/problem:
+  en: f62dd08b82c29c86
+  zh: 7b20c856b43c9f71
+/agent-note-history-pages-elide-collapsed-steps-and-describe-them-with-digests/decision:
+  en: 938cd54df147e192
+  zh: a857e7425a3fdacd
+/agent-note-history-pages-elide-collapsed-steps-and-describe-them-with-digests/alternatives-considered:
+  en: caa414c7a3afbd53
+  zh: c3f8d165a8177876
+/agent-note-history-pages-elide-collapsed-steps-and-describe-them-with-digests/consequences:
+  en: 84dce7088330ea16
+  zh: 9ce889908d80f37f

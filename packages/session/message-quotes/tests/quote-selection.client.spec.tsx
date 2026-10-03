@@ -14,7 +14,7 @@ function props(enabled = true, subagent: SessionSnapshot['subagent'] = null) {
   const value = {
     trigger: 'selection',
     dismiss: vi.fn(), readText: vi.fn((): string | null => 'Hello world'), clearSelection: vi.fn(),
-    inputActions, useSession: selector => selector({ sessionId: SessionId('quote-selection'), pendingSubmissions: [], running: false, removed: !enabled, openState: 'open', openError: null, hasMore: false, loadingOlder: false, promptError: null, blank: false, subagent, lastAgentError: null, promptAttempted: true, awaitingFirstTurn: false }),
+    inputActions, useSession: selector => selector({ sessionId: SessionId('quote-selection'), pendingSubmissions: [], running: false, removed: !enabled, openState: 'open', openError: null, hasMore: false, loadingOlder: false, stepDigests: new Map(), stepAccounts: new Map(), expandingTurns: new Set(), loadingStepDetail: false, stepDetailError: null, promptError: null, blank: false, subagent, lastAgentError: null, promptAttempted: true, awaitingFirstTurn: false }),
     t: () => 'Quote text',
   } as Props
   return { value, inputActions }
