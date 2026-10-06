@@ -340,3 +340,25 @@ export async function openSettings(page: Page, locale: 'en' | 'zh'): Promise<voi
     await page.getByRole('button', { name: label, exact: true }).click()
   }
 }
+
+/**
+ * Whether a panel's box is exactly the viewport right of the left sidebar column,
+ * sampled together so a settling sidebar width cannot race the comparison.
+ * @param page - page hosting the AppFrame.
+ * @param panel - the right Sidebar panel.
+ * @returns `beside sidebar`, or a description of the mismatch.
+ */
+export async function besideSidebar(page: Page, panel: Locator): Promise<string> {
+  return await page.evaluate((target) => {
+    if (target === null) return 'panel not rendered'
+    const sidebar = document.querySelector('[class*="sidebarCol"]')
+    if (sidebar === null) return 'sidebar not rendered'
+    const left = sidebar.getBoundingClientRect().right
+    const box = target.getBoundingClientRect()
+    const actual = [box.x, box.y, box.width, box.height]
+    const expected = [left, 0, window.innerWidth - left, window.innerHeight]
+    return actual.every((value, index) => value === expected[index])
+      ? 'beside sidebar'
+      : `panel ${JSON.stringify(actual)} != ${JSON.stringify(expected)}`
+  }, await panel.elementHandle())
+}
