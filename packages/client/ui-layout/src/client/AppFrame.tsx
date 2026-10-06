@@ -11,7 +11,9 @@
  * to the frame's right edge at the resolved normal width, and the
  * track only decides whether the centre makes room for it. The occupant reports
  * shown/track/fullscreen through `ctx.layout`; fullscreen keeps the reported
- * track but hides the outer resize handle.
+ * track but hides the outer resize handle. The frame publishes the left
+ * column's grid width as `--dsh-sidebar-width` so a fullscreen occupant can
+ * leave that column uncovered.
  *
  * A mobile solve (columns.ts MOBILE_MAX) collapses the grid to the single
  * center track and moves the sidebar to an overlay drawer with a dismiss
@@ -23,7 +25,7 @@
  * imports, zero self-made hooks.
  */
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import type { ReactNode } from 'react'
+import type { CSSProperties, ReactNode } from 'react'
 import { IconPanelLeftOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type {
   PropsLocale, PropsRenderSlots, PropsRuntime, PropsStore,
@@ -227,12 +229,11 @@ export function AppFrame({
       ref={frameRef}
       className={css.frame}
       style={{
-        ...(document.documentElement.hasAttribute('data-windows-titlebar')
-          ? { '--dsh-windows-sidebar-width': `${cols.sidebar}px` } : {}),
+        '--dsh-sidebar-width': `${cols.overlay ? 0 : cols.sidebar}px`,
         gridTemplateColumns: cols.overlay
           ? 'minmax(0, 1fr)'
           : `${cols.sidebar}px minmax(0, 1fr) ${cols.rightbar}px`,
-      }}
+      } as CSSProperties}
       data-sidebar-collapsed={sidebarCollapsed || undefined}
       data-rightbar-collapsed={cols.rightbar === 0 || undefined}
       data-rightbar-fullscreen={layoutInfo.rightbarFullscreen || undefined}

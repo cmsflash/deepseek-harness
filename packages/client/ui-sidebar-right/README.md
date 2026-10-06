@@ -36,14 +36,14 @@ The layout itself — the split tree, its operations, the drag gestures, the flo
 <a id="presentations"></a>
 ## Presentations
 
-Normal and fullscreen presentations share the same content tree, so switching does not remount tabs. The normal panel anchors to the right column; fullscreen covers the viewport while retaining the wide-screen columns underneath. Opening below 768px uses fullscreen automatically; leaving fullscreen on a narrow viewport closes the panel, and widening does not reopen a closed panel. A fullscreen opening keeps the underlying columns unchanged until its slide finishes, then prepares the normal track without a column transition. Before a fullscreen panel retreats, closing prepares a full-width conversation and restoring prepares the normal right track; the background does not animate during the retreat.
+Normal and fullscreen presentations share the same content tree, so switching does not remount tabs. The normal panel anchors to the right column; fullscreen covers the viewport right of the left sidebar column, whose width the frame publishes as `--dsh-sidebar-width`, while retaining the wide-screen columns underneath. Opening below 768px uses fullscreen automatically; leaving fullscreen on a narrow viewport closes the panel, and widening does not reopen a closed panel. A fullscreen opening keeps the underlying columns unchanged until its slide finishes, then prepares the normal track without a column transition. Before a fullscreen panel retreats, closing prepares a full-width conversation and restoring prepares the normal right track; the background does not animate during the retreat.
 
 | Mode | The track | The panel |
 |---|---|---|
 | `push` (default) | Panel width: the conversation makes room | In the track; its left edge and the conversation's right edge travel together, on the frame's own curve |
-| `fullscreen` | Retains the wide-screen normal track; automatic narrow-screen fullscreen takes no track | Covers the entire viewport |
+| `fullscreen` | Retains the wide-screen normal track; automatic narrow-screen fullscreen takes no track | Covers the viewport right of the left sidebar |
 
-In Windows Electron, `html[data-windows-titlebar]` keeps fullscreen panels below the caption and to the right of the expanded sidebar. The frame's `--dsh-windows-sidebar-width` supplies that inset and maximum width; `--dsh-windows-content-radius` supplies the top-left radius. Only fullscreen panels clip overflow for that corner.
+In Windows Electron, `html[data-windows-titlebar]` keeps fullscreen panels below the caption; `--dsh-windows-content-radius` supplies the top-left radius. Only fullscreen panels clip overflow for that corner.
 
 The seat reports presentation through `ctx.layout.openRightbar(track, fullscreen)` / `closeRightbar()`; the frame does not inject this package. Switching fullscreen on a wide viewport leaves the center width unchanged, and the width handle appears only in expanded normal mode. Independent floating panels and `float`/`dock` operations remain available.
 
