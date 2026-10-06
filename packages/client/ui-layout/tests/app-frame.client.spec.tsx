@@ -233,6 +233,15 @@ describe('AppFrame', () => {
     }
   })
 
+  it('publishes the left column width for fullscreen occupants', () => {
+    const { frame, instance } = mountFrame()
+    expect(frame.style.getPropertyValue('--dsh-sidebar-width')).toBe('280px')
+    act(() => { instance.actions.toggleSidebar() })
+    expect(frame.style.getPropertyValue('--dsh-sidebar-width')).toBe('56px')
+    resize(600)
+    expect(frame.style.getPropertyValue('--dsh-sidebar-width')).toBe('0px')
+  })
+
   it('keeps the closed sidebar mounted at its 56px rail without a handle', () => {
     const { frame, instance, sidebarOwner, getByTestId } = mountFrame()
     act(() => { instance.actions.toggleSidebar() })

@@ -26,7 +26,7 @@ import { afterAll, beforeAll, describe, expect, it, onTestFailed } from 'vitest'
 import { createMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
 import { acknowledgeReloadConnectionLoss, launchWebScaffold, watchConsole, type WebScaffold } from './scaffold.ts'
 import {
-  connectFreshWorkspace, newEnglishPage, saveFailureShot, ZH_BROWSER_LOCALE,
+  besideSidebar, connectFreshWorkspace, newEnglishPage, saveFailureShot, ZH_BROWSER_LOCALE,
 } from './support.ts'
 
 /** The produced file the seeded turn writes, and what the preview should show. */
@@ -437,7 +437,7 @@ describe('web e2e: shipped right Sidebar', () => {
       expect(tripwire.warnings).toEqual([])
     })
 
-    it('covers the viewport in fullscreen without changing the underlying columns', async () => {
+    it('covers the viewport beside the left sidebar in fullscreen without changing the underlying columns', async () => {
       onTestFailed(() => saveFailureShot(page, 'web-e2e-sidebar-right-mode'))
       const frame = page.locator('[class*="frame"]').first()
       const column = page.locator('[data-rightbar-col]')
@@ -454,7 +454,7 @@ describe('web e2e: shipped right Sidebar', () => {
       expect(await width(column)).toBe(trackWidth)
       const viewport = page.viewportSize()
       if (viewport === null) throw new Error('expected a fixed viewport')
-      await expect.poll(async () => await panel.boundingBox()).toEqual({ x: 0, y: 0, ...viewport })
+      await expect.poll(() => besideSidebar(page, panel)).toBe('beside sidebar')
       expect(await expandOf(page).count()).toBe(0)
       expect(await frame.locator('[data-side="rightbar"]').count()).toBe(0)
       await shot(page, '03-fullscreen-panel')
@@ -488,7 +488,7 @@ describe('web e2e: shipped right Sidebar', () => {
       await frame.evaluate(async (node) => { await Promise.allSettled(node.getAnimations().map(animation => animation.finished)) })
       const normalColumns = (await geometry()).columns
       await column.locator('[data-sidebar-right-mode="fullscreen"]').click()
-      await expect.poll(() => panel.boundingBox()).toEqual({ x: 0, y: 0, ...viewport })
+      await expect.poll(() => besideSidebar(page, panel)).toBe('beside sidebar')
       await column.locator('[data-sidebar-right-toggle]').click()
       await Promise.all([
         panel.evaluate(async (node) => { await Promise.allSettled(node.getAnimations().map(animation => animation.finished)) }),
@@ -514,7 +514,7 @@ describe('web e2e: shipped right Sidebar', () => {
 
         await held.evaluate((state) => { (state.animation as Animation).finish() })
         await expect.poll(() => frame.getAttribute('data-rightbar-fullscreen')).toBe('true')
-        expect(await panel.boundingBox()).toEqual({ x: 0, y: 0, ...viewport })
+        expect(await besideSidebar(page, panel)).toBe('beside sidebar')
         expect(await geometry()).toEqual({ columns: normalColumns, transition: 'none', handles: ['none'], animatingGrid: false })
 
         const exit = await holdPanelSlide(panel)
@@ -549,7 +549,7 @@ describe('web e2e: shipped right Sidebar', () => {
         await expect.poll(() => frame.getAttribute('data-rightbar-fullscreen')).toBeNull()
         await expandOf(page).click()
         await expect.poll(() => frame.getAttribute('data-rightbar-fullscreen')).toBe('true')
-        expect(await panel.boundingBox()).toEqual({ x: 0, y: 0, ...viewport })
+        expect(await besideSidebar(page, panel)).toBe('beside sidebar')
         expect((await geometry()).columns).toBe(normalColumns)
         expect((await geometry()).animatingGrid).toBe(false)
       } finally {
@@ -593,7 +593,7 @@ describe('web e2e: shipped right Sidebar', () => {
 
         await page.setViewportSize({ width: 767, height: viewport.height })
         await expect.poll(async () => await panel.getAttribute('data-sidebar-right-panel')).toBe('fullscreen')
-        await expect.poll(async () => await width(panel)).toBe(767)
+        await expect.poll(async () => await width(panel)).toBe(767 - await width(sidebar))
         await expect.poll(() => frame.getAttribute('data-rightbar-fullscreen')).toBe('true')
         expect(await frame.locator('[data-side="rightbar"]').count()).toBe(0)
         await column.locator('[data-sidebar-right-mode="push"]').click()

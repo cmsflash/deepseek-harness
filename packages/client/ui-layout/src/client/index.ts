@@ -67,8 +67,9 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
     /**
      * The right column: a track the centre makes room for, or nothing. OCCUPIED
      * by the right Sidebar, which uses the resolved column width in normal
-     * mode and covers the viewport in fullscreen, retaining the wide-screen
-     * column reservation underneath.
+     * mode and in fullscreen covers everything right of the left column
+     * (`--dsh-sidebar-width` on the frame), retaining the wide-screen column
+     * reservation underneath.
      *
      * Whether the panel is shown, and whether it takes a track, is the
      * occupant's own recorded business — it reports the composition of its

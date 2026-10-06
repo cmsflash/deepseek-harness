@@ -217,3 +217,25 @@ export async function saveFailureShot(page: Page, name: string): Promise<void> {
 export function conversationContextKey(kind: string, id: string): string {
   return `${kind.length}:${kind}${id}`
 }
+
+/**
+ * Whether a panel's box is exactly the viewport right of the left sidebar column,
+ * sampled together so a settling sidebar width cannot race the comparison.
+ * @param page - page hosting the AppFrame.
+ * @param panel - the right Sidebar panel.
+ * @returns `beside sidebar`, or a description of the mismatch.
+ */
+export async function besideSidebar(page: Page, panel: Locator): Promise<string> {
+  return await page.evaluate((target) => {
+    if (target === null) return 'panel not rendered'
+    const sidebar = document.querySelector('[class*="sidebarCol"]')
+    if (sidebar === null) return 'sidebar not rendered'
+    const left = sidebar.getBoundingClientRect().right
+    const box = target.getBoundingClientRect()
+    const actual = [box.x, box.y, box.width, box.height]
+    const expected = [left, 0, window.innerWidth - left, window.innerHeight]
+    return actual.every((value, index) => value === expected[index])
+      ? 'beside sidebar'
+      : `panel ${JSON.stringify(actual)} != ${JSON.stringify(expected)}`
+  }, await panel.elementHandle())
+}

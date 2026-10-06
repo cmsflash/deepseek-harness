@@ -18,7 +18,7 @@
   "mode": "push",
   "panelContentWidth": 756,
   "panelOuterWidth": 757,
-  "coversViewport": false,
+  "coversBesideSidebar": false,
   "resizeHandleWidth": 8,
   "expandedDirectories": [],
   "panes": [
@@ -64,9 +64,9 @@
   "columnTransition": "none",
   "expanded": true,
   "mode": "fullscreen",
-  "panelContentWidth": 1680,
-  "panelOuterWidth": 1680,
-  "coversViewport": true,
+  "panelContentWidth": 1400,
+  "panelOuterWidth": 1400,
+  "coversBesideSidebar": true,
   "resizeHandleWidth": 0,
   "expandedDirectories": [],
   "panes": [
@@ -114,7 +114,7 @@
   "mode": "fullscreen",
   "panelContentWidth": 0,
   "panelOuterWidth": 0,
-  "coversViewport": false,
+  "coversBesideSidebar": false,
   "resizeHandleWidth": 0,
   "expandedDirectories": [],
   "panes": [
@@ -162,7 +162,7 @@
   "mode": "push",
   "panelContentWidth": 0,
   "panelOuterWidth": 0,
-  "coversViewport": false,
+  "coversBesideSidebar": false,
   "resizeHandleWidth": 0,
   "expandedDirectories": [
     "workspace"
@@ -197,9 +197,9 @@
   "columnTransition": "none",
   "expanded": true,
   "mode": "fullscreen",
-  "panelContentWidth": 1680,
-  "panelOuterWidth": 1680,
-  "coversViewport": true,
+  "panelContentWidth": 1400,
+  "panelOuterWidth": 1400,
+  "coversBesideSidebar": true,
   "resizeHandleWidth": 0,
   "expandedDirectories": [],
   "panes": [
@@ -247,7 +247,7 @@
   "mode": "push",
   "panelContentWidth": 756,
   "panelOuterWidth": 757,
-  "coversViewport": false,
+  "coversBesideSidebar": false,
   "resizeHandleWidth": 8,
   "expandedDirectories": [],
   "panes": [
@@ -282,7 +282,7 @@
   "mode": "push",
   "panelContentWidth": 756,
   "panelOuterWidth": 757,
-  "coversViewport": false,
+  "coversBesideSidebar": false,
   "resizeHandleWidth": 8,
   "expandedDirectories": [],
   "panes": [
@@ -330,7 +330,7 @@
   "mode": "push",
   "panelContentWidth": 0,
   "panelOuterWidth": 0,
-  "coversViewport": false,
+  "coversBesideSidebar": false,
   "resizeHandleWidth": 0,
   "expandedDirectories": [],
   "panes": [
@@ -378,7 +378,7 @@
   "mode": "push",
   "panelContentWidth": 0,
   "panelOuterWidth": 0,
-  "coversViewport": false,
+  "coversBesideSidebar": false,
   "resizeHandleWidth": 0,
   "expandedDirectories": [],
   "panes": [
@@ -424,9 +424,9 @@
   "columnTransition": "none",
   "expanded": true,
   "mode": "fullscreen",
-  "panelContentWidth": 767,
-  "panelOuterWidth": 767,
-  "coversViewport": true,
+  "panelContentWidth": 711,
+  "panelOuterWidth": 711,
+  "coversBesideSidebar": true,
   "resizeHandleWidth": 0,
   "expandedDirectories": [],
   "panes": [
@@ -474,7 +474,7 @@
   "mode": "push",
   "panelContentWidth": 0,
   "panelOuterWidth": 0,
-  "coversViewport": false,
+  "coversBesideSidebar": false,
   "resizeHandleWidth": 0,
   "expandedDirectories": [],
   "panes": [
