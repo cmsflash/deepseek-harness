@@ -2,7 +2,8 @@
  * The Sidebar's seat in the frame, and the panel it draws.
  *
  * The frame owns the right column's geometry; this package owns one content
- * tree at the column width or spanning the viewport. A shown wide panel
+ * tree at the column width or spanning the viewport right of the left sidebar
+ * column (the frame's `--dsh-sidebar-width`). A shown wide panel
  * retains its track in fullscreen, preserving the conversation width. Below
  * 768px fullscreen is derived from viewport width, without changing manual mode.
  *
@@ -64,7 +65,7 @@ export interface SidebarRightPresentation {
   readonly shown: boolean
   /** Whether the drawn panel wants the conversation to make room for it. */
   readonly track: boolean
-  /** Whether the panel fills the viewport, independently of its retained track. */
+  /** Whether the panel fills the viewport beside the sidebar, independently of its retained track. */
   readonly fullscreen: boolean
 }
 
@@ -320,8 +321,8 @@ function SidebarPanel(panel: PanelProps & { width: number; panelRef: RefObject<H
     <div
       ref={panelRef}
       className={css.panel}
-      style={{ width: fullscreen ? '100vw' : width,
-        '--dsh-sidebar-width': fullscreen ? '100vw' : `${width}px` } as CSSProperties}
+      style={{ width: fullscreen ? 'calc(100vw - var(--dsh-sidebar-width, 0px))' : width,
+        '--dsh-sidebar-right-panel-width': fullscreen ? '100vw' : `${width}px` } as CSSProperties}
       data-sidebar-right-session={sessionId}
       data-sidebar-right-panel={fullscreen ? 'fullscreen' : 'push'}
       data-sidebar-right-open={expanded || undefined}

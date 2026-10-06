@@ -584,7 +584,7 @@ describe('RightbarSeat presentation', () => {
     expect(panel.hasAttribute('data-sidebar-right-opening')).toBe(false)
   })
 
-  it('fills the viewport without replacing the content tree or releasing the wide track', async () => {
+  it('spans the viewport beside the sidebar in fullscreen without replacing the content tree or releasing the wide track', async () => {
     const h = await mountSeat()
     const tab = h.open()
     const panel = element(h.view.container, '[data-sidebar-right-panel]')
@@ -592,7 +592,7 @@ describe('RightbarSeat presentation', () => {
     expect(panel.style.width).toBe('420px')
     fireEvent.click(element(h.view.container, '[data-sidebar-right-mode]'))
     expect(h.layout().mode).toBe('fullscreen')
-    expect(panel.style.width).toBe('100vw')
+    expect(panel.style.width).toBe('calc(100vw - var(--dsh-sidebar-width, 0px))')
     expect(panel.dataset['sidebarRightPanel']).toBe('fullscreen')
     expect(element(h.view.container, '[data-tab-body]')).toBe(body)
     expect(h.frame.openRightbar).toHaveBeenLastCalledWith(true, true)
