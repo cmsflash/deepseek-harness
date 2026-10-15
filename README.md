@@ -1,4 +1,4 @@
-# DeepSeek Harness
+# DeepSeek Harness - Zhuoran fork
 
 English | [中文](README.zh.md)
 
@@ -7,6 +7,24 @@ DeepSeek Harness (`dsh`) is an open-source agent harness developed by [DeepSeek 
 It is built on an **everything-is-a-plugin** architecture and powered by [Cordis](https://github.com/cordiverse/cordis), whose design is described in [_A Programming Paradigm for Spatiotemporal Composability_](https://arxiv.org/abs/2608.25512).
 
 Documentation: [https://deepseek-harness.github.io/deepseek-harness/](https://deepseek-harness.github.io/deepseek-harness/)
+
+## What this fork adds
+
+Each change is one commit on the `zhuoran` branch, which is rebased onto upstream `master`. Give [INSTALL.md](INSTALL.md) to a coding agent to install the fork, plus plugins that cap image sizes, read replies aloud, and render Mermaid diagrams.
+
+- **Billed cost everywhere**: each model call records its cost in USD when the provider publishes prices. A call through a gateway is priced at the origin model's rates when its model ID names that model, such as `anthropic/claude-opus-5`. The Web UI shows cost per turn, per session, and per subagent, and sidebar rows can show each session's total spend including its subagents (View options → Show → Total cost).
+- **Collapsed steps**: a Work details mode that folds the steps behind each reply into one summary row with the time, model calls, tokens, and changed lines and files, while the reply stays visible. In this mode the server sends folded steps only when you expand them, so scrolling back through a long session takes far fewer page loads.
+- **Phone layout**: on screens 640px wide or narrower, the UI is one full-width column and the session list opens as a drawer.
+- **Per-model reasoning effort**: switching to a model restores the effort you last used with it.
+- **Copy table as Markdown**: each rendered table has a button that copies its Markdown source.
+- **Session counts**: each Workspace shows how many sessions it holds, and the sidebar header shows the total.
+- **Sidebar beside fullscreen panels**: a fullscreen right panel leaves the left sidebar visible.
+
+It also fixes these upstream bugs, which are still open:
+
+- A plugin that injects only `connection` can register RPC channels with `connection.rpc.handle()` instead of throwing `cannot get property "webServer" without inject` ([report](https://github.com/deepseek-ai/deepseek-harness/discussions/6105)).
+- Sessions that 0.1.x releases wrote with subagents open instead of failing with `unsupported descriptor version 2` ([report](https://github.com/deepseek-ai/deepseek-harness/discussions/7995)).
+- The sign-in page accepts a pasted `token` value, so a web app added to the iOS Home Screen can sign in ([report](https://github.com/deepseek-ai/deepseek-harness/discussions/5519)).
 
 ## Developer preview
 
