@@ -1,4 +1,4 @@
-# DeepSeek Harness
+# DeepSeek Harness - Zhuoran fork
 
 [English](README.md) | 中文
 
@@ -7,6 +7,25 @@ DeepSeek Harness（`dsh`）是由 [DeepSeek AI](https://deepseek.com) 开发的�
 它构建于**一切皆插件**的架构之上，由 [Cordis](https://github.com/cordiverse/cordis) 驱动，其设计参见论文 [_A Programming Paradigm for Spatiotemporal Composability_](https://arxiv.org/abs/2608.25512)。
 
 文档：[https://deepseek-harness.github.io/deepseek-harness/](https://deepseek-harness.github.io/deepseek-harness/)
+
+## 本 fork 新增内容
+
+每项改动都是 `zhuoran` 分支上的一个提交，该分支变基在上游 `master` 之上。把 [INSTALL.md](INSTALL.md) 交给编程 agent，即可安装本 fork，以及限制图片尺寸、朗读回复和渲染 Mermaid 图表的插件。
+
+- **全程计费**：只要提供商公布价格，每次模型调用都会记录其美元费用。经由网关的调用，若模型 ID 指明了原始模型（例如 `anthropic/claude-opus-5`），则按该模型的价格计费。Web UI 按轮次、会话和 subagent 显示费用，侧栏行还可显示每个会话连同其 subagent 的总费用（视图选项 → 显示内容 → 总费用）。
+- **折叠步骤**：「工作步骤展示」中的一种模式，把每条回复背后的步骤折叠为一行摘要，显示耗时、模型调用、token 以及变更的行数和文件，回复本身保持可见。该模式下，服务器只在你展开时才发送被折叠的步骤，因此回看长会话所需的分页加载大幅减少。
+- **手机布局**：在宽度不超过 640px 的屏幕上，界面为单列全宽，会话列表以抽屉形式打开。
+- **按模型记住推理等级**：切换到某个模型时，会恢复你上次在该模型上使用的推理等级。
+- **将表格复制为 Markdown**：每个渲染出的表格都有一个按钮，可复制其 Markdown 源码。
+- **会话计数**：每个工作区显示其包含的会话数，侧栏标题显示总数。
+- **全屏面板旁保留侧栏**：右侧面板全屏时，左侧栏仍然可见。
+
+它还修复了以下在上游仍未解决的 bug：
+
+- 只注入 `connection` 的插件可以用 `connection.rpc.handle()` 注册 RPC 通道，不再抛出 `cannot get property "webServer" without inject`（[报告](https://github.com/deepseek-ai/deepseek-harness/discussions/6105)）。
+- 0.1.x 版本写入的、含 subagent 的会话可以打开，不再报错 `unsupported descriptor version 2`（[报告](https://github.com/deepseek-ai/deepseek-harness/discussions/7995)）。
+- 右侧面板隐藏时，composer 获得焦点不再让整个窗口横向偏移（[报告](https://github.com/deepseek-ai/deepseek-harness/discussions/9199)）。
+- 登录页接受粘贴的 `token` 值，因此添加到 iOS 主屏幕的 Web 应用也能登录（[报告](https://github.com/deepseek-ai/deepseek-harness/discussions/5519)）。
 
 ## 开发者预览
 
