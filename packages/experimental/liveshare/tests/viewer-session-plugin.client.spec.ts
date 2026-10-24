@@ -266,7 +266,7 @@ describe('viewer session plugin', () => {
             classNames: {}, editor: null, scrollRef: createRef<HTMLDivElement>(), editable: false,
             editorDisabled: true, phase: 'inert', placeholderText: reason, ariaLabel: reason,
             workspaceTrigger: false, workspacePickerOpen: false, onWorkspaceKeyDown: () => {},
-            hint: null, showPlaceholder: true,
+            hint: null, enterKeyHint: 'send', showPlaceholder: true,
           }))
           expect(editor.getByRole('textbox', { name: dictionary['viewer.writeUnavailableNote'] }).getAttribute('contenteditable'))
             .toBe('false')

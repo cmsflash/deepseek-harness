@@ -4,7 +4,7 @@ import type { LexicalEditor } from 'lexical'
 import { $getRoot } from 'lexical'
 import { focusWithoutRing, isMobileDevice } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { ComposerKeyboard } from '../../contract/draft-editor.ts'
-import type { BusyEnterBehavior } from '../../contract/composer-submission.ts'
+import type { BusyEnterBehavior, EnterKeyBehavior } from '../../contract/composer-submission.ts'
 import { resolveSubmitMode } from '../submission-policy.ts'
 import { registerComposerKeymap } from './keymap.ts'
 import { DRAFT_SUBMITTED_TAG } from './runtime.ts'
@@ -34,6 +34,7 @@ interface DraftViewGate {
   running: boolean
   steeringAvailable: boolean
   busyEnter: BusyEnterBehavior
+  enterKey: EnterKeyBehavior
   intakeFiles: (files: readonly File[], directories?: ReadonlySet<File>) => void
   uploadsPending: boolean
   /** Toast text explaining why pending uploads hold the send. */
@@ -137,6 +138,7 @@ export function installDraftKeymap(
     },
     dismissPopup: () => { keyboard.dismissPopup() },
     canSubmit: () => !gate.current.locked && !gate.current.machineBusy,
+    enterSends: () => gate.current.enterKey === 'send',
     submit: (accelerated) => {
       const g = gate.current
       // Empty-draft accelerated Enter acts on the queue instead of the

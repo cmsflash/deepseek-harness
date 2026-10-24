@@ -111,6 +111,7 @@ interface BenchOptions {
   addFiles?: (files: readonly File[], directories?: ReadonlySet<File>) => string | null
   commandMenuOpen?: boolean
   busyEnter?: 'queue' | 'steer'
+  enterKey?: 'send' | 'newline'
   toggleCommandMenu?: (selection: { start: number; end: number }) => void
 }
 
@@ -164,6 +165,7 @@ function bench(over?: BenchOptions) {
   const removeAttachment = vi.fn((id: DraftAttachmentId) => { shell.removeAttachment(id) })
   const menuLauncher = createSnapshotStore<string | null>(over?.commandMenuOpen === true ? 'command' : null)
   const busyEnter = createSnapshotStore<'queue' | 'steer'>(over?.busyEnter ?? 'queue')
+  const enterKey = createSnapshotStore<'send' | 'newline'>(over?.enterKey ?? 'send')
   const stopShortcut = createSnapshotStore<readonly string[]>(['Esc', 'Esc'])
   const slotCalls: { key: string; owner: unknown }[] = []
   const renderSlot = ((key: string, owner: object) => {
@@ -215,6 +217,7 @@ function bench(over?: BenchOptions) {
     }),
     toggleCommandMenu: over?.toggleCommandMenu ?? vi.fn(),
     useBusyEnter: bindSnapshotSelector(busyEnter),
+    useEnterKey: bindSnapshotSelector(enterKey),
     useStopShortcut: bindSnapshotSelector(stopShortcut),
     useNotices: bindSnapshotSelector(shell.notices),
     useLexicon: bindSnapshotSelector(shell.lexicon),
@@ -851,6 +854,19 @@ describe('Enter semantics', () => {
     const empty = bench({ draft: '   ' })
     fireEvent.keyDown(empty.textarea, { key: 'Enter' })
     expect(empty.sink).not.toHaveBeenCalled()
+  })
+
+  it('labels the keyboard Enter key after the Enter-key preference', () => {
+    expect(bench({ draft: 'hello' }).textarea.getAttribute('enterkeyhint')).toBe('send')
+    expect(bench({ draft: 'hello', enterKey: 'newline' }).textarea.getAttribute('enterkeyhint')).toBe('enter')
+  })
+
+  it('New line mode keeps plain Enter in the draft and sends Ctrl/Cmd+Enter with the busy preference', () => {
+    const { textarea, sink } = bench({ running: true, busyEnter: 'steer', enterKey: 'newline', draft: 'two lines' })
+    fireEvent.keyDown(textarea, { key: 'Enter' })
+    expect(sink).not.toHaveBeenCalled()
+    fireEvent.keyDown(textarea, { key: 'Enter', metaKey: true })
+    expect(sink).toHaveBeenCalledWith('two lines', [], 'steer', expect.any(AbortSignal), expect.any(Function))
   })
 
   it('non-Enter keys and Shift+Enter fall through to native behavior', () => {

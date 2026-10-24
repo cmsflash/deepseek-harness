@@ -21,6 +21,7 @@ export interface DraftEditorProps {
   readonly workspacePickerOpen: boolean
   readonly onWorkspaceKeyDown: KeyboardEventHandler<HTMLDivElement>
   readonly hint: string | null
+  readonly enterKeyHint: 'send' | 'enter'
   readonly showPlaceholder: boolean
 }
 
@@ -31,7 +32,7 @@ export interface DraftEditorProps {
  */
 export function DraftEditor({
   classNames: css, editor, scrollRef, editable, editorDisabled, phase, placeholderText, ariaLabel,
-  workspaceTrigger, workspacePickerOpen, onWorkspaceKeyDown, hint, showPlaceholder,
+  workspaceTrigger, workspacePickerOpen, onWorkspaceKeyDown, hint, enterKeyHint, showPlaceholder,
 }: DraftEditorProps): ReactNode {
   return (
     <div ref={scrollRef} className={css.scroll} data-input-scroll>
@@ -46,6 +47,7 @@ export function DraftEditor({
           // The placeholder was the textarea's accessible name; a div's
           // data attribute is not, so the label restores it.
           aria-label={ariaLabel}
+          enterKeyHint={enterKeyHint}
           aria-haspopup={workspaceTrigger ? 'menu' : undefined}
           aria-expanded={workspaceTrigger ? workspacePickerOpen : undefined}
           tabIndex={workspaceTrigger ? 0 : undefined}

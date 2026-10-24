@@ -19,6 +19,7 @@ Each change is one commit on the `zhuoran` branch, which is rebased onto upstrea
 - **Copy table as Markdown**: each rendered table has a button that copies its Markdown source.
 - **Session counts**: each Workspace shows how many sessions it holds, and the sidebar header shows the total.
 - **Sidebar beside fullscreen panels**: a fullscreen right panel leaves the left sidebar visible.
+- **Enter key choice**: each browser can make Enter add a new line instead of sending (Settings → General → Enter key); the Send button and Cmd/Ctrl+Enter still send.
 
 It also fixes these upstream bugs, which are still open:
 

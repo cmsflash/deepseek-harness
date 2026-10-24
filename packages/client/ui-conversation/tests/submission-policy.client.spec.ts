@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { stubConfigForm } from '@deepseek-ai/dsh-client-test-runtime'
 import {
-  ComposerSubmissionPolicy, DEFAULT_BUSY_ENTER_BEHAVIOR, resolveSubmitMode,
+  ComposerSubmissionPolicy, DEFAULT_BUSY_ENTER_BEHAVIOR, ENTER_KEY_STORAGE_KEY, resolveSubmitMode,
 } from '../src/client/input/submission-policy.ts'
 import type { ConversationSettings } from '../src/submission-settings.ts'
 
@@ -70,5 +70,30 @@ describe('ComposerSubmissionPolicy', () => {
     host.publish({ status: 'ready', value: { busyEnter: 'steer' }, revision: 1, writable: true })
     const policy = new ComposerSubmissionPolicy(host.scope)
     expect(policy.busyEnter.getSnapshot()).toBe('steer')
+  })
+})
+
+describe('ComposerSubmissionPolicy Enter key', () => {
+  afterEach(() => { localStorage.clear() })
+
+  it('defaults to Send and keeps a change in this browser only', () => {
+    const host = stubConfigForm<ConversationSettings>()
+    const policy = new ComposerSubmissionPolicy(host.scope)
+    expect(policy.enterKey.getSnapshot()).toBe('send')
+
+    const changed = vi.fn()
+    policy.enterKey.subscribe(changed)
+    policy.setEnterKey('newline')
+    policy.setEnterKey('newline')
+    expect(changed).toHaveBeenCalledTimes(1)
+    expect(localStorage.getItem(ENTER_KEY_STORAGE_KEY)).toBe('"newline"')
+    expect(host.set).not.toHaveBeenCalled()
+    expect(new ComposerSubmissionPolicy().enterKey.getSnapshot()).toBe('newline')
+  })
+
+  it('replaces an unrecognized stored value with Send', () => {
+    localStorage.setItem(ENTER_KEY_STORAGE_KEY, '"ctrl-enter"')
+    expect(new ComposerSubmissionPolicy().enterKey.getSnapshot()).toBe('send')
+    expect(localStorage.getItem(ENTER_KEY_STORAGE_KEY)).toBe('"send"')
   })
 })

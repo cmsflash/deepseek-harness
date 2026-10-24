@@ -114,7 +114,7 @@ Session 首次绑定或缓存的 Session 成为 current 时，shell 会在渲染
 
 窄屏浏览器设置中，繁忙时 Enter 偏好的标签与控件间距缩小；Windows 和 macOS 桌面窗口保留标准间距。
 
-普通 Enter 使用已配置的投递模式，严格的 Ctrl+Enter 或 Cmd+Enter 使用互补模式，Shift+Enter 插入换行。带 Alt、AltGraph、同时带 Ctrl 与 Cmd，或 Shift 与 Ctrl/Cmd 的 Enter 保持草稿和指令菜单不变，并将 DOM 事件留给应用快捷键。Conversation 插件注册发送、换行、互补投递、命令菜单和引用菜单的固定条目，并在卸载前保留这些键位。
+普通 Enter 使用已配置的投递模式，严格的 Ctrl+Enter 或 Cmd+Enter 使用互补模式，Shift+Enter 插入换行。浏览器本地的 Enter 键偏好（位于通用设置，保存在 `localStorage` 的 `dsh.composer.enterKey` 中，因此手机与桌面可以不同）可改为让普通 Enter 插入换行；此时 Ctrl+Enter 或 Cmd+Enter 使用已配置的投递模式发送，编辑器的 `enterkeyhint` 由 `send` 改为 `enter`。带 Alt、AltGraph、同时带 Ctrl 与 Cmd，或 Shift 与 Ctrl/Cmd 的 Enter 保持草稿和指令菜单不变，并将 DOM 事件留给应用快捷键。Conversation 插件注册发送、换行、互补投递、命令菜单和引用菜单的固定条目，并在卸载前保留这些键位。
 
 点击可编辑输入框内的留白时，已聚焦的输入框保留当前光标或选区，未聚焦的输入框恢复上次的光标或选区。文本选择、滚动条、控件和内嵌浮层保持各自的指针交互行为。
 

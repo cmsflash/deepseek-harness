@@ -1,19 +1,22 @@
 /**
- * Composer submission policy. It owns the live busy-Enter preference and
- * resolves submission gestures into queue/steer delivery modes; Host and
- * Agent keep the actual delivery-window authority.
+ * Composer submission policy. It owns the live busy-Enter and Enter-key
+ * preferences and resolves submission gestures into queue/steer delivery
+ * modes; Host and Agent keep the actual delivery-window authority.
  */
 import {
   createSnapshotStore, type SnapshotStore,
 } from '@deepseek-ai/dsh-client-store'
 import type { ConfigForm } from '@deepseek-ai/dsh-client-ui-settings/client'
 import type {
-  BusyEnterBehavior, ComposerSubmitGesture, InputSubmitMode,
+  BusyEnterBehavior, ComposerSubmitGesture, EnterKeyBehavior, InputSubmitMode,
 } from '../contract/composer-submission.ts'
 import { BUSY_ENTER_FIELD, DEFAULT_BUSY_ENTER_BEHAVIOR } from '../../submission-settings.ts'
 import type { ConversationSettings } from '../../submission-settings.ts'
 
 export { DEFAULT_BUSY_ENTER_BEHAVIOR } from '../../submission-settings.ts'
+
+/** localStorage key of the Enter-key preference, which each browser keeps separately. */
+export const ENTER_KEY_STORAGE_KEY = 'dsh.composer.enterKey'
 
 /**
  * Resolve one submission gesture against the busy-Enter preference. Plain
@@ -39,13 +42,18 @@ export function resolveSubmitMode(
 }
 
 /**
- * Busy-Enter preference shared by the composer bar inject face and its
- * Settings row: one live store the bar's submission gestures and Send label
- * read, backed by the Host user-settings document when one is composed.
+ * Submission preferences shared by the composer bar inject face and its
+ * Settings rows. The busy-Enter store is backed by the Host user-settings
+ * document when one is composed; the Enter-key store persists only in this
+ * browser's localStorage, so a phone and a desktop can differ.
  */
 export class ComposerSubmissionPolicy {
   /** Reactive preference source for the composer bar and the Settings row. */
   readonly busyEnter: SnapshotStore<BusyEnterBehavior> = createSnapshotStore(DEFAULT_BUSY_ENTER_BEHAVIOR)
+  /** Reactive browser-local meaning of plain Enter. */
+  readonly enterKey: SnapshotStore<EnterKeyBehavior> = createSnapshotStore<EnterKeyBehavior>(
+    'send', { persist: { name: ENTER_KEY_STORAGE_KEY } },
+  )
   private readonly unsubscribe: (() => void) | undefined
   private readonly host: ConfigForm<ConversationSettings> | undefined
 
@@ -54,6 +62,8 @@ export class ComposerSubmissionPolicy {
    */
   constructor(host?: ConfigForm<ConversationSettings>) {
     this.host = host
+    const stored: string = this.enterKey.getSnapshot()
+    if (stored !== 'send' && stored !== 'newline') this.enterKey.set('send')
     if (host !== undefined) {
       this.unsubscribe = host.subscribe(() => { this.adopt(host) })
       this.adopt(host)
@@ -72,6 +82,15 @@ export class ComposerSubmissionPolicy {
     if (this.busyEnter.getSnapshot() === behavior) return
     this.busyEnter.set(behavior)
     void this.host?.set(BUSY_ENTER_FIELD, behavior)
+  }
+
+  /**
+   * Change what plain Enter does in this browser.
+   * @param behavior - Send or New line.
+   */
+  setEnterKey(behavior: EnterKeyBehavior): void {
+    if (this.enterKey.getSnapshot() === behavior) return
+    this.enterKey.set(behavior)
   }
 
   /**

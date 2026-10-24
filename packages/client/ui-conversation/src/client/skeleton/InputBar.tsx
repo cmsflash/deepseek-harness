@@ -47,7 +47,7 @@ export const InputBar = memo(function InputBar({
   useSession, useInput, inputActions, keyboard, addFiles, removeAttachment, resolveDraftAttachments,
   retryFileUpload,
   toggleCommandMenu, stop, t,
-  renderSlot, useBusyEnter, useFileUploads, useNotices, useLexicon, useMenuLauncher, useStopShortcut,
+  renderSlot, useBusyEnter, useEnterKey, useFileUploads, useNotices, useLexicon, useMenuLauncher, useStopShortcut,
   useAccess,
   useProjection, sessionId, variant, disabled: inert = false, blocked,
   workspacePickerOpen = false, onRequestWorkspace,
@@ -56,6 +56,7 @@ export const InputBar = memo(function InputBar({
   const input = useInput(s => s)
   const notice = useNotices(s => s)
   const busyEnter = useBusyEnter(s => s)
+  const enterKey = useEnterKey(s => s)
   const stopKeys = useStopShortcut(keys => keys)
   // A page whose access snapshot excludes prompting, stopping, or uploading to this Session is offered
   // no Send, no Stop, or no file intake rather than a disabled control. `useAccess` is undefined only
@@ -286,11 +287,11 @@ export const InputBar = memo(function InputBar({
   // The keymap handlers read live bar state through this ref so the editor
   // registration survives re-renders without re-arming per keystroke.
   const gate = useRef({
-    locked, machineBusy, canSteerQueue, running, steeringAvailable, busyEnter,
+    locked, machineBusy, canSteerQueue, running, steeringAvailable, busyEnter, enterKey,
     intakeFiles, uploadsPending, uploadsHeldText, showToast, canAcceptDrop,
   })
   gate.current = {
-    locked, machineBusy, canSteerQueue, running, steeringAvailable, busyEnter,
+    locked, machineBusy, canSteerQueue, running, steeringAvailable, busyEnter, enterKey,
     intakeFiles, uploadsPending, uploadsHeldText, showToast, canAcceptDrop,
   }
 
@@ -479,6 +480,7 @@ export const InputBar = memo(function InputBar({
           workspacePickerOpen={workspacePickerOpen}
           onWorkspaceKeyDown={onWorkspaceKeyDown}
           hint={hint}
+          enterKeyHint={enterKey === 'send' ? 'send' : 'enter'}
           showPlaceholder={draft === '' && attachments.length === 0 && !claimActive}
         />
         <div ref={rowRef} className={css.row}>

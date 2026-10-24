@@ -140,7 +140,7 @@ describe('Chat apply wiring', () => {
     expect(b.runtime.slots.entries('conversation.composer.dock').map(row => row.options.id))
       .toEqual(['activity', 'usage'])
     expect(b.runtime.slots.entries('settings.general.item').map(row => row.options.id))
-      .toEqual(['transcript-view', 'link-opening', 'composer-enter', 'performance-usage'])
+      .toEqual(['transcript-view', 'link-opening', 'composer-enter-key', 'composer-enter', 'performance-usage'])
     await b.runtime.dispose()
   })
 
@@ -242,7 +242,7 @@ describe('Chat apply wiring', () => {
       expect(hooks.transcriptView.getSnapshot()).toBe('standard')
       expect(hooks.collapseTiming.getSnapshot()).toBe('next-input')
       expect(b.runtime.slots.entries('settings.general.item').map(entry => entry.options.id))
-        .toEqual(['transcript-view', 'link-opening', 'composer-enter', 'performance-usage'])
+        .toEqual(['transcript-view', 'link-opening', 'composer-enter-key', 'composer-enter', 'performance-usage'])
 
       await b.chat.dispose()
       expect(b.runtime.slots.entries('settings.general.item').some(entry => entry.options.id === 'transcript-view')).toBe(false)
@@ -256,7 +256,7 @@ describe('Chat apply wiring', () => {
       expect(remountedHooks.transcriptView.getSnapshot()).toBe('standard')
       expect(b.chatSettings.set).toHaveBeenCalledExactlyOnceWith('collapseTiming', 'next-input')
       expect(b.runtime.slots.entries('settings.general.item').map(entry => entry.options.id))
-        .toEqual(['transcript-view', 'link-opening', 'composer-enter', 'performance-usage'])
+        .toEqual(['transcript-view', 'link-opening', 'composer-enter-key', 'composer-enter', 'performance-usage'])
     } finally {
       await b.runtime.dispose()
     }

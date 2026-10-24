@@ -19,6 +19,7 @@ DeepSeek Harness（`dsh`）是由 [DeepSeek AI](https://deepseek.com) 开发的�
 - **将表格复制为 Markdown**：每个渲染出的表格都有一个按钮，可复制其 Markdown 源码。
 - **会话计数**：每个工作区显示其包含的会话数，侧栏标题显示总数。
 - **全屏面板旁保留侧栏**：右侧面板全屏时，左侧栏仍然可见。
+- **Enter 键行为**：每个浏览器可以让 Enter 换行而不是发送（设置 → 通用 → Enter 键）；发送按钮和 Cmd/Ctrl+Enter 仍然发送。
 
 它还修复了以下在上游仍未解决的 bug：
 
