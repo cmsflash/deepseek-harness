@@ -1,7 +1,8 @@
 /**
  * Composer keymap over the Lexical command layer: menu arbitration
- * (arrows/escape/enter), space adjudication, the Enter submit gesture, and
- * paste routing. Registered at CRITICAL priority so it decides before
+ * (arrows/escape/enter), space adjudication, the Enter submit gesture (plain
+ * Enter, or Ctrl/Cmd+Enter when plain Enter is set to insert a line break),
+ * and paste routing. Registered at CRITICAL priority so it decides before
  * @lexical/plain-text's own Enter/paste defaults; a handler returning false
  * falls through to those defaults (Shift+Enter's line break, ordinary
  * spaces, text paste the bar routes itself).
@@ -32,6 +33,11 @@ export interface ComposerKeymapHandlers {
   dismissPopup(): void
   /** Whether Enter may submit right now (locked/busy states refuse). */
   canSubmit(): boolean
+  /**
+   * Whether plain Enter submits. When false, plain Enter falls through to the
+   * editor's line break and Ctrl/Cmd+Enter submits without acceleration.
+   */
+  enterSends(): boolean
   /** Plain Enter submits; exactly Ctrl+Enter or Cmd+Enter selects accelerated delivery. */
   submit(accelerated: boolean): void
   /**
@@ -150,10 +156,13 @@ export function registerComposerKeymap(editor: LexicalEditor, handlers: Composer
         event?.preventDefault()
         return true
       }
+      const accelerated = event?.ctrlKey === true || event?.metaKey === true
+      const enterSends = handlers.enterSends()
+      if (!enterSends && !accelerated) return false
       event?.preventDefault()
       if (event?.repeat === true) return true // held-down Enter must not machine-gun sends
       if (!handlers.canSubmit()) return true
-      handlers.submit(event?.ctrlKey === true || event?.metaKey === true)
+      handlers.submit(enterSends && accelerated)
       return true
     }, COMMAND_PRIORITY_CRITICAL),
     editor.registerCommand(PASTE_COMMAND, (event) => {

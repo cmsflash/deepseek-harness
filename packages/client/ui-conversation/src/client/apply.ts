@@ -36,6 +36,8 @@ import { ComposerSubmissionPolicy } from './input/submission-policy.ts'
 import { queueDockEntry } from './queue/QueueDock.tsx'
 import { EnterBehaviorRow } from './settings/EnterBehaviorRow.tsx'
 import type { EnterBehaviorRowInjected } from './settings/EnterBehaviorRow.tsx'
+import { EnterKeyRow } from './settings/EnterKeyRow.tsx'
+import type { EnterKeyRowInjected } from './settings/EnterKeyRow.tsx'
 import { ConversationRoot } from './skeleton/ConversationRoot.tsx'
 import { ConversationContent } from './skeleton/ConversationContent.tsx'
 import { ConversationPanel } from './skeleton/ConversationPanel.tsx'
@@ -203,6 +205,17 @@ export function apply(ctx: Context, config: Config = Config({})): void {
       setBusyEnter: (behavior) => { submissionPolicy.setBusyEnter(behavior) },
     }),
   }, EnterBehaviorRow))
+
+  ctx.slots.inject('settings.general.item', () => ctx.slots.register({
+    name: 'settings.general.item',
+    id: 'composer-enter-key',
+    order: 19,
+    locale: NS,
+    inject: (): EnterKeyRowInjected => ({
+      hooks: { enterKey: submissionPolicy.enterKey },
+      setEnterKey: (behavior) => { submissionPolicy.setEnterKey(behavior) },
+    }),
+  }, EnterKeyRow))
 
   const viewTabs = (): ViewTab[] => {
     const tabs: ViewTab[] = []
@@ -472,6 +485,7 @@ export function apply(ctx: Context, config: Config = Config({})): void {
           hooks: {
             stopShortcut,
             busyEnter: submissionPolicy.busyEnter,
+            enterKey: submissionPolicy.enterKey,
             fileUploads: ABSENT_FILE_UPLOADS,
             notices: ABSENT_NOTICES,
             lexicon: ABSENT_LEXICON,
@@ -548,6 +562,7 @@ export function apply(ctx: Context, config: Config = Config({})): void {
         hooks: {
           stopShortcut,
           busyEnter: submissionPolicy.busyEnter,
+          enterKey: submissionPolicy.enterKey,
           fileUploads: conversation.fileUploads,
           notices: shell.notices,
           lexicon: shell.lexicon,
