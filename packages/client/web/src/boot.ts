@@ -11,6 +11,7 @@ import type {
 } from '@deepseek-ai/dsh-client-modules/client'
 import { bootClient } from './boot-client.ts'
 import { BootPage } from './boot-page.ts'
+import { installKeyboardFit } from './keyboard-fit.ts'
 import { mountClient } from './mount.ts'
 import { getStaticModules } from './seed.ts'
 import { installWindowDragRecall } from './window-drag/recall.ts'
@@ -26,6 +27,7 @@ export class AppWebEntry {
   private readonly page: BootPage
   private ctx: Context | undefined
   private stopDragRecall: (() => void) | undefined
+  private stopKeyboardFit: (() => void) | undefined
   private modules!: ClientModuleSystem
   private manifest!: BootManifest
 
@@ -94,6 +96,7 @@ export class AppWebEntry {
       // know that trap. It installs before the first mount, so the surface the
       // renderer draws is the one the first frame measures.
       this.stopDragRecall = installWindowDragRecall({ document: this.container.ownerDocument })
+      this.stopKeyboardFit = installKeyboardFit({ container: this.container })
       await mountClient(ctx, this.container)
     } catch (reason) {
       console.error(reason)
@@ -106,6 +109,8 @@ export class AppWebEntry {
   async dispose(): Promise<void> {
     this.stopDragRecall?.()
     this.stopDragRecall = undefined
+    this.stopKeyboardFit?.()
+    this.stopKeyboardFit = undefined
     const ctx = this.ctx
     this.ctx = undefined
     if (ctx !== undefined) await ctx.fiber.dispose()

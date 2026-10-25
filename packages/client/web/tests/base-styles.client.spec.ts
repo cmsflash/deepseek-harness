@@ -5,6 +5,7 @@
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
+import { KEYBOARD_FIT_PROPERTY } from '../src/keyboard-fit.ts'
 import { INTERACTIVE_SELECTOR } from '../src/window-drag/regions.ts'
 
 const THEME_PACKAGE = '@deepseek-ai/dsh-client-ui-theme'
@@ -37,6 +38,10 @@ describe('web shell base.css', () => {
   it('leaves theme styles to the dynamic ui-theme client entry', () => {
     expect(imports).toEqual([])
     expect(baseCss).not.toContain(THEME_PACKAGE)
+  })
+
+  it('sizes the mount point by the keyboard fit height, else the full layout viewport', () => {
+    expect(normalizedCss).toContain(`#root { height: var(${KEYBOARD_FIT_PROPERTY}, 100%); }`)
   })
 
   it('declares exactly the interactive subtraction the drag contract publishes', () => {

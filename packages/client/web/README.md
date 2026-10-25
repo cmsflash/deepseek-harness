@@ -31,6 +31,8 @@ Static application pages install `__DSH_BOOT_READY__` before the entry runs. The
 
 The shell base styles apply automatic CJK/Latin spacing to ordinary content in supporting browsers. Semantic code and terminal, diff, read, and search output containers retain literal source spacing and column alignment; browsers without `text-autospace` support ignore both declarations.
 
+An on-screen keyboard shrinks the application instead of pushing it off the top of the screen. The [Web page](../../../apps/web/index.html) asks the browser to resize the layout viewport for the keyboard (`interactive-widget=resizes-content`). Where the browser keeps the layout viewport at full height and pans the page instead, as iOS Safari does, the shell sizes the mount point to the visible height while a keyboard-sized area is hidden at zoom 1, and scrolls the pan back to the top unless focus is on an element outside the mount point, such as a dialog's field.
+
 Web and Desktop mathematical rendering requires WOFF2 support. The [Web build](../../../apps/web/katex-fonts.ts) retains every KaTeX font face in WOFF2 and omits WOFF/TTF fallbacks; a face without WOFF2 rejects the build. Font glyphs, weights, styles, and layout rules are preserved.
 
 ### What boot looks like
@@ -83,7 +85,7 @@ The boot kernel delegates manifest entry creation to Client Modules so live grap
 | File | Role |
 |---|---|
 | [`src/index.ts`](src/index.ts) | Library entry: `AppWebEntry`, `getStaticModules`, platform tables |
-| [`src/boot.ts`](src/boot.ts) | `AppWebEntry`: module stage, boot page, immediate-tier prefetch, window drag-rect watcher install, then `bootClient` + `mountClient` |
+| [`src/boot.ts`](src/boot.ts) | `AppWebEntry`: module stage, boot page, immediate-tier prefetch, window drag-rect watcher and keyboard fit install, then `bootClient` + `mountClient` |
 | [`src/boot-client.ts`](src/boot-client.ts) | `bootClient` / `assertEntriesActive`: Loader mount, one entry per manifest row, activation audit |
 | [`src/mount.ts`](src/mount.ts) | `mountClient`: renderer handoff through a `uiRenderer` dependency fiber |
 | [`src/boot-page.ts`](src/boot-page.ts) | Framework-free boot page: spinner, per-entry status, failure rendering |
@@ -91,6 +93,7 @@ The boot kernel delegates manifest entry creation to Client Modules so live grap
 | [`src/seed.ts`](src/seed.ts) | Static module table handed to the loader at boot |
 | [`src/window-drag/regions.ts`](src/window-drag/regions.ts) | The darwin app-region composition model, and the interactive selector `base.css` subtracts |
 | [`src/window-drag/recall.ts`](src/window-drag/recall.ts) | The shell's one window drag-rect watcher (electron/electron#32341): measure the marked rows per frame and pulse the recall mark while they move |
+| [`src/keyboard-fit.ts`](src/keyboard-fit.ts) | The on-screen keyboard fit: publish the visual viewport height as `--dsh-keyboard-fit-height`, which `base.css` applies to the mount point, and reset the page pan |
 
 </details>
 
