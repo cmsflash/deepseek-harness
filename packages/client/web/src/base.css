@@ -8,6 +8,12 @@ body,
   margin: 0;
 }
 
+/* Set only while an on-screen keyboard covers a layout viewport the browser
+   keeps at full height (src/keyboard-fit.ts). */
+#root {
+  height: var(--dsh-keyboard-fit-height, 100%);
+}
+
 body {
   font-family: var(
     --dsw-font-family,

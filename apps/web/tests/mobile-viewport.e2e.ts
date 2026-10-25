@@ -23,12 +23,91 @@ import { connectFreshWorkspace, newEnglishPage, saveFailureShot } from './suppor
 
 const SNAPSHOT_DIR = fileURLToPath(new URL('./expected/mobile-viewport', import.meta.url))
 const LAYOUT_EXPECTED = join(SNAPSHOT_DIR, 'layout.expected.md')
+const KEYBOARD_EXPECTED = join(SNAPSHOT_DIR, 'keyboard.expected.md')
 const MODE = webSnapshotMode()
 
 /** iPhone 14/15 logical width — the reported phone case. */
 const PHONE = { width: 390, height: 844 } as const
 /** Smallest phone still in common use; the drawer is peek-bound at this width. */
 const SMALL_PHONE = { width: 375, height: 812 } as const
+/** An iPhone keyboard with its suggestion bar, in CSS pixels. */
+const KEYBOARD_HEIGHT = 380
+
+/** The stand-in keyboard the init script installs, as the page sees it. */
+interface KeyboardStandIn {
+  /** Open the keyboard at `height`, or close it with 0, panning the page the way iOS Safari does. */
+  show(height: number): void
+  /** The current page pan. */
+  pan(): number
+}
+
+/**
+ * Replace the visual viewport with one that reports an on-screen keyboard the
+ * way iOS Safari does: the layout viewport keeps its height, the visual
+ * viewport shrinks, and the page pans down by the keyboard height until
+ * `scrollTo` moves it back. Chromium has no on-screen keyboard to emulate.
+ */
+function installKeyboardStandIn(): void {
+  const native = window.visualViewport!
+  const viewport = new EventTarget()
+  let keyboard = 0
+  let pan = 0
+  for (const name of ['width', 'offsetLeft', 'pageLeft', 'scale'] as const) {
+    Object.defineProperty(viewport, name, { get: () => native[name] })
+  }
+  Object.defineProperty(viewport, 'height', { get: () => native.height - keyboard })
+  Object.defineProperty(viewport, 'offsetTop', { get: () => pan })
+  Object.defineProperty(viewport, 'pageTop', { get: () => window.scrollY + pan })
+  Object.defineProperty(window, 'visualViewport', { configurable: true, get: () => viewport })
+  const scrollTo = window.scrollTo.bind(window)
+  window.scrollTo = ((...args: Parameters<typeof window.scrollTo>) => {
+    pan = 0
+    scrollTo(...args)
+    viewport.dispatchEvent(new Event('scroll'))
+  }) as typeof window.scrollTo
+  const standIn: KeyboardStandIn = {
+    show: (height) => {
+      keyboard = height
+      pan = height
+      viewport.dispatchEvent(new Event('resize'))
+    },
+    pan: () => pan,
+  }
+  ;(window as { __dshKeyboard?: KeyboardStandIn }).__dshKeyboard = standIn
+}
+
+/** Where the keyboard leaves the phone's application, as the browser resolved it. */
+interface KeyboardGeometry {
+  viewportMeta: string
+  rootHeight: number
+  frameBottom: number
+  composerBottom: number
+  openerTop: number
+  pan: number
+}
+
+/**
+ * Read the mount point, frame, composer, and drawer opener boxes and the page pan.
+ * @param page - the page under test.
+ * @returns the measured geometry.
+ */
+async function readKeyboardGeometry(page: Page): Promise<KeyboardGeometry> {
+  return page.evaluate(() => {
+    const box = (selector: string): DOMRect => {
+      const element = document.querySelector(selector)
+      if (element === null) throw new Error(`no ${selector}`)
+      return element.getBoundingClientRect()
+    }
+    return {
+      viewportMeta: document.querySelector('meta[name="viewport"]')?.getAttribute('content') ?? '',
+      rootHeight: Math.round(box('#root').height),
+      frameBottom: Math.round(box('[class*="frame"]').bottom),
+      composerBottom: Math.round(box('[data-composer-input]').bottom),
+      openerTop: Math.round(box('[class*="drawerOpener"]').top),
+      pan: (window as { __dshKeyboard?: KeyboardStandIn }).__dshKeyboard!.pan(),
+    }
+  })
+}
 
 /** Frame geometry as the browser resolved it. */
 interface FrameGeometry {
@@ -176,4 +255,42 @@ describe('web e2e: the phone viewport renders one full-width column', () => {
     expect(geometry.centerWidth).toBeLessThan(1280)
     expect(geometry.openerPresent).toBe(false)
   }, 60_000)
+
+  // Last: it reloads the page with the stand-in visual viewport installed.
+  it('shrinks the frame above an on-screen keyboard instead of panning it off the top', async () => {
+    onTestFailed(() => saveFailureShot(page, 'web-e2e-mobile-viewport-keyboard'))
+    await page.setViewportSize(PHONE)
+    await page.addInitScript(installKeyboardStandIn)
+    await page.reload({ waitUntil: 'load' })
+    await expect.poll(async () => (await readFrame(page)).overlay, { timeout: 30_000 }).toBe(true)
+    const composer = page.locator('[data-composer-input][contenteditable="true"]')
+    await composer.click()
+
+    await page.evaluate((height) => {
+      (window as { __dshKeyboard?: KeyboardStandIn }).__dshKeyboard!.show(height)
+    }, KEYBOARD_HEIGHT)
+    const visible = PHONE.height - KEYBOARD_HEIGHT
+    await expect.poll(async () => (await readKeyboardGeometry(page)).rootHeight, { timeout: 10_000 }).toBe(visible)
+    const open = await readKeyboardGeometry(page)
+    expect(open.viewportMeta).toContain('interactive-widget=resizes-content')
+    expect(open.frameBottom).toBe(visible)
+    expect(open.composerBottom).toBeLessThanOrEqual(visible)
+    expect(open.openerTop).toBeGreaterThanOrEqual(0)
+    expect(open.pan).toBe(0)
+
+    await page.evaluate(() => { (window as { __dshKeyboard?: KeyboardStandIn }).__dshKeyboard!.show(0) })
+    await expect.poll(async () => (await readKeyboardGeometry(page)).rootHeight, { timeout: 10_000 }).toBe(PHONE.height)
+
+    const golden = [
+      `# Frame geometry under a ${String(KEYBOARD_HEIGHT)}px on-screen keyboard at the 390×844 phone viewport`,
+      '',
+      '- Viewport meta asks for a content resize: ' + String(open.viewportMeta.includes('interactive-widget=resizes-content')),
+      '- Frame ends at the keyboard: ' + String(open.frameBottom === visible),
+      '- Composer above the keyboard: ' + String(open.composerBottom <= visible),
+      '- Drawer opener on screen: ' + String(open.openerTop >= 0),
+      '- Page pan scrolled back to the top: ' + String(open.pan === 0),
+      '- Full height after the keyboard closes: true',
+    ].join('\n')
+    await compareOrRefreshGolden(KEYBOARD_EXPECTED, golden, MODE)
+  }, 90_000)
 })

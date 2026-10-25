@@ -47,7 +47,7 @@ function svgUrl(svg: string): string {
 
 it('ships install metadata with the built web application', async () => {
   const index = await readFile(join(DIST_ROOT, 'index.html'), 'utf8')
-  expect(index).toContain('<meta name="viewport" content="width=device-width, initial-scale=1" />')
+  expect(index).toContain('<meta name="viewport" content="width=device-width, initial-scale=1, interactive-widget=resizes-content" />')
   expect(index).toContain('<link rel="manifest" href="./manifest.webmanifest" />')
   expect(index).toContain('<link rel="apple-touch-icon" href="./apple-touch-icon.png" />')
   expect(index).toContain('<meta name="mobile-web-app-capable" content="yes" />')

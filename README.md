@@ -20,6 +20,7 @@ Each change is one commit on the `zhuoran` branch, which is rebased onto upstrea
 - **Session counts**: each Workspace shows how many sessions it holds, and the sidebar header shows the total.
 - **Sidebar beside fullscreen panels**: a fullscreen right panel leaves the left sidebar visible.
 - **Enter key choice**: each browser can make Enter add a new line instead of sending (Settings → General → Enter key); the Send button and Cmd/Ctrl+Enter still send.
+- **Phone keyboard fit**: on a phone, the app shrinks above the on-screen keyboard instead of panning it out of view.
 
 It also fixes these upstream bugs, which are still open:
 

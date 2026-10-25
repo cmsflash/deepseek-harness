@@ -40,7 +40,10 @@ function describeSelection(state: Awaited<ReturnType<typeof selectionState>>): s
 }
 
 /**
- * Keep the visible composer still when keyboard panning changes viewport coordinates.
+ * Keep the visible composer still when keyboard panning changes viewport
+ * coordinates. The shell's keyboard fit scrolls the browser's reveal pan back
+ * to the top and sizes the mount point by the visible height, so the composer
+ * stays on screen and still while typing.
  * @param page - Page with the focused composer.
  * @returns The observed page and composer scroll behavior.
  */
@@ -71,8 +74,9 @@ async function exerciseKeyboardViewport(page: Page): Promise<string> {
     }
   })
   try {
+    // The fit resets the pan on a later animation frame than the pan itself.
+    await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0)
     const before = await input.evaluate(el => ({ top: el.getBoundingClientRect().top, scroll: window.scrollY }))
-    expect(before.scroll).toBeGreaterThan(0)
     expect(before.top).toBeGreaterThanOrEqual(0)
     await page.keyboard.insertText('z')
     const after = await input.evaluate(el => new Promise<{ top: number; scroll: number }>((resolve) => {
@@ -81,7 +85,7 @@ async function exerciseKeyboardViewport(page: Page): Promise<string> {
       }))
     }))
     expect(after).toEqual(before)
-    return '- typing with a keyboard-panned viewport preserves page scroll and composer position'
+    return '- typing with a keyboard-panned viewport keeps the pan reset and the composer still'
   } finally {
     await restore.evaluate((dispose) => { dispose() })
     await restore.dispose()

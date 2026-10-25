@@ -12,6 +12,7 @@ This branch (`zhuoran` on [cmsflash/deepseek-harness](https://github.com/cmsflas
 - **Copy table as Markdown**: copying a rendered table yields its Markdown source.
 - **Sidebar beside fullscreen panels**: a fullscreen right panel leaves the left sidebar visible.
 - **Enter key choice** per browser: Enter can add a new line instead of sending.
+- **Phone keyboard fit**: the app shrinks above a phone's on-screen keyboard.
 - **Plugins**: [dsh-image-side-limit](https://github.com/cmsflash/dsh-image-side-limit) caps each request image's long edge at 2000px, which Anthropic requires once a request carries more than twenty images; [dsh-read-aloud](https://github.com/cmsflash/dsh-read-aloud) reads replies aloud; [dsh-mermaid](https://github.com/AKS1st/dsh-mermaid) (third-party) renders `mermaid` code blocks as diagrams.
 
 ## Instructions for the agent

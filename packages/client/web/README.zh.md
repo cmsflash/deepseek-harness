@@ -31,6 +31,8 @@ kind: "package-library"
 
 外壳基础样式会在支持的浏览器中为普通内容自动添加中西文间距。语义化代码以及终端、diff、读取和搜索输出容器会保留源码中的原始间距和列对齐；不支持 `text-autospace` 的浏览器会忽略这两项声明。
 
+屏幕键盘弹出时，应用会缩小，而不是被整体推出屏幕顶部。[Web 页面](../../../apps/web/index.html)请求浏览器为键盘缩小布局视口（`interactive-widget=resizes-content`）。若浏览器像 iOS Safari 那样保持布局视口全高并平移页面，则在缩放为 1 且被遮住的区域达到键盘高度时，外壳将挂载点高度设为可见高度，并把平移滚回顶部；焦点位于挂载点之外的元素（例如对话框中的输入框）时保留平移。
+
 Web 和 Desktop 的数学公式渲染要求支持 WOFF2。[Web 构建](../../../apps/web/katex-fonts.ts)以 WOFF2 保留全部 KaTeX 字体样式，并排除 WOFF/TTF 后备格式；任一字体样式缺少 WOFF2 都会使构建失败。字体的字形、字重、样式和布局规则保持不变。
 
 ### 启动过程是怎样的
@@ -83,7 +85,7 @@ Web 和 Desktop 的数学公式渲染要求支持 WOFF2。[Web 构建](../../../
 | 文件 | 职责 |
 |---|---|
 | [`src/index.ts`](src/index.ts) | 库入口：`AppWebEntry`、`getStaticModules`、平台表 |
-| [`src/boot.ts`](src/boot.ts) | `AppWebEntry`：模块阶段、启动页、immediately 层级预取、安装窗口拖拽矩形 watcher，随后调用 `bootClient` + `mountClient` |
+| [`src/boot.ts`](src/boot.ts) | `AppWebEntry`：模块阶段、启动页、immediately 层级预取、安装窗口拖拽矩形 watcher 与键盘适配，随后调用 `bootClient` + `mountClient` |
 | [`src/boot-client.ts`](src/boot-client.ts) | `bootClient` / `assertEntriesActive`：挂载 Loader、每个 manifest 行一个 entry、激活审计 |
 | [`src/mount.ts`](src/mount.ts) | `mountClient`：经 `uiRenderer` 依赖 fiber 完成渲染器交接 |
 | [`src/boot-page.ts`](src/boot-page.ts) | 无框架启动页：spinner、逐 entry 状态、失败渲染 |
@@ -91,6 +93,7 @@ Web 和 Desktop 的数学公式渲染要求支持 WOFF2。[Web 构建](../../../
 | [`src/seed.ts`](src/seed.ts) | 启动时交给 loader 的静态模块表 |
 | [`src/window-drag/regions.ts`](src/window-drag/regions.ts) | darwin app-region 组合模型，以及 `base.css` 减除的交互元素选择器 |
 | [`src/window-drag/recall.ts`](src/window-drag/recall.ts) | 外壳唯一的窗口拖拽矩形 watcher（electron/electron#32341）：逐帧测量被打标行，并在它们移动期间脉冲 recall 标记 |
+| [`src/keyboard-fit.ts`](src/keyboard-fit.ts) | 屏幕键盘适配：将可视视口高度发布为 `--dsh-keyboard-fit-height`，由 `base.css` 应用于挂载点，并重置页面平移 |
 
 </details>
 

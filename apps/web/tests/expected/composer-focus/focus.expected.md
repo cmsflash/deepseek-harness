@@ -9,7 +9,7 @@
 - return from outside: focused; selection "beta" (10 → 6)
 - typing replaces the restored selection and resumes at the restored caret: alpha BET!A gamma
 - resizing through 390px, 768px and 1680px preserves the editor, focus, draft and caret
-- typing with a keyboard-panned viewport preserves page scroll and composer position
+- typing with a keyboard-panned viewport keeps the pan reset and the composer still
 
 ## Existing session
 
@@ -20,4 +20,4 @@
 - return from outside: focused; selection "beta" (10 → 6)
 - typing replaces the restored selection and resumes at the restored caret: alpha BET!A gamma
 - resizing through 390px, 768px and 1680px preserves the editor, focus, draft and caret
-- typing with a keyboard-panned viewport preserves page scroll and composer position
+- typing with a keyboard-panned viewport keeps the pan reset and the composer still
