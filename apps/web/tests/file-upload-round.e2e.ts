@@ -237,7 +237,7 @@ describe('web e2e: generic file upload through the real assembly', () => {
     const imageBytes = await readFile(IMAGE_FIXTURE)
     // Pick through the composer's hidden file input: the upload RPC runs
     // immediately and the pending card appears before any prompt is typed.
-    await page.locator('input[type="file"]').setInputFiles([
+    await page.locator('input[data-composer-file-input]').setInputFiles([
       { name: FILE_NAME, mimeType: 'text/plain', buffer: Buffer.from(FILE_TEXT) },
       ...IMAGE_NAMES.map(name => ({ name, mimeType: 'image/png', buffer: imageBytes })),
     ])

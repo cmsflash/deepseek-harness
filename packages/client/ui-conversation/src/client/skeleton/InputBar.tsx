@@ -31,17 +31,25 @@ import type { Translate } from '@deepseek-ai/dsh-client-ui-slots'
 import type { ComposerBarProps } from '../contract/slots.ts'
 import { DraftEditor } from '../input/editor/DraftEditor.tsx'
 import {
-  focusDraftEditor, installDraftFilePicker, installDraftKeyboardDismissal, installDraftKeymap, installDraftWheel,
+  focusDraftEditor, installDraftFilePicker, installDraftImagePicker, installDraftKeyboardDismissal, installDraftKeymap,
+  installDraftWheel,
   keepDraftFocus, revealDraftSelection,
 } from '../input/editor/view-binding.ts'
 import { resolveSubmitMode } from '../input/submission-policy.ts'
 import { attachmentErrorText, imageSizeText } from '../image-labels.ts'
-import { isImageMediaType } from '../service.ts'
+import { IMAGE_MEDIA_TYPES, isImageMediaType } from '../service.ts'
 import { ContextMeter } from './ContextMeter.tsx'
 import { observeControlRow } from './control-row-layout.ts'
 import css from './InputBar.module.css'
 
 export type InputBarProps = ComposerBarProps
+
+function takePickedFiles(e: ChangeEvent<HTMLInputElement>): File[] {
+  const picked = e.target.files === null ? [] : [...e.target.files]
+  // Reset so picking the same file again re-fires the change event.
+  e.target.value = ''
+  return picked
+}
 
 export const InputBar = memo(function InputBar({
   useSession, useInput, inputActions, keyboard, addFiles, removeAttachment, resolveDraftAttachments,
@@ -278,10 +286,20 @@ export const InputBar = memo(function InputBar({
 
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const onPickFiles = (e: ChangeEvent<HTMLInputElement>): void => {
-    const picked = e.target.files === null ? [] : [...e.target.files]
-    // Reset so picking the same file again re-fires the change event.
-    e.target.value = ''
+    const picked = takePickedFiles(e)
     if (picked.length > 0) intakeFiles(picked)
+  }
+
+  const imageInputRef = useRef<HTMLInputElement | null>(null)
+  const imageAccept = (imageLimits?.mediaTypes ?? IMAGE_MEDIA_TYPES).join(',')
+  const onPickImages = (e: ChangeEvent<HTMLInputElement>): void => {
+    const picked = takePickedFiles(e)
+    if (picked.length === 0) return
+    if (picked.some(file => !isImageMediaType(file.type))) {
+      showToast(t('image.unsupportedType'))
+      return
+    }
+    intakeFiles(picked)
   }
 
   // The keymap handlers read live bar state through this ref so the editor
@@ -298,6 +316,11 @@ export const InputBar = memo(function InputBar({
   useEffect(() => {
     if (keyboard === undefined) return
     return installDraftFilePicker(keyboard, gate, fileInputRef)
+  }, [keyboard])
+
+  useEffect(() => {
+    if (keyboard === undefined) return
+    return installDraftImagePicker(keyboard, gate, imageInputRef)
   }, [keyboard])
 
   useEffect(() => {
@@ -505,7 +528,17 @@ export const InputBar = memo(function InputBar({
               multiple
               disabled={!canAcceptDrop || subagent !== null}
               hidden
+              data-composer-file-input
               onChange={onPickFiles}
+            />
+            <input
+              ref={imageInputRef}
+              type="file"
+              accept={imageAccept}
+              multiple
+              hidden
+              data-composer-image-input
+              onChange={onPickImages}
             />
             <div className={css.modes}>
               {sessionId === undefined ? null : renderSlot('conversation.input.permission', { locked })}

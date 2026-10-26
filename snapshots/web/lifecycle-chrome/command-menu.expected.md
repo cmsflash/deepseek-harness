@@ -1,6 +1,7 @@
 - listbox "Trigger suggestions":
   - text: Add
   - option "File" [selected]
+  - option "Image"
   - option "Goal Set or view the goal for a long-running task"
   - option "Plan Enter or leave plan mode"
   - option "Feedback Record feedback about this session"

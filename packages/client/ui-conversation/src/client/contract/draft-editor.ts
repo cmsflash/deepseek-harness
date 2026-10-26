@@ -103,6 +103,12 @@ export interface ComposerKeyboard {
    * @returns the unbind disposer.
    */
   bindFilePicker(picker: { available(): boolean; open(): void }): () => void
+  /**
+   * Bind the mounted composer's image action and live intake availability.
+   * @param picker - availability query and native image-dialog opener.
+   * @returns the unbind disposer.
+   */
+  bindImagePicker(picker: { available(): boolean; open(): void }): () => void
 }
 
 /** Half-open [start, end) range/selection in detect-projection coordinates. */

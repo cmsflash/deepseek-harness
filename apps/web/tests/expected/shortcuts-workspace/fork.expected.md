@@ -1,4 +1,4 @@
-- text: Workspaces
+- text: Workspaces2
 - button "Search sessions"
 - textbox "Search session names"
 - button "View options"

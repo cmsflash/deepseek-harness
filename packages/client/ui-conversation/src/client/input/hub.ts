@@ -227,6 +227,25 @@ export class InputHub implements SessionInputResolver {
   }
 
   /**
+   * Query image intake without creating a Session input.
+   * @param id - target Session.
+   * @returns whether its mounted composer currently accepts images.
+   */
+  canPickImages(id: SessionId): boolean {
+    const binding = this.sessions().binding(id)
+    return binding !== undefined && this.shells.get(binding)?.canPickImages() === true
+  }
+
+  /**
+   * Open the target composer's image dialog under its live intake policy.
+   * @param id - target Session.
+   */
+  pickImages(id: SessionId): void {
+    const binding = this.sessions().binding(id)
+    if (binding !== undefined) this.shells.get(binding)?.pickImages()
+  }
+
+  /**
    * Resolve the optional slash controller for composer chrome that launches
    * the shared candidate menu without typing a trigger.
    * @param id - session id.

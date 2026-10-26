@@ -41,6 +41,7 @@ const CONNECTION_ERROR_EXPECTED = join(SNAPSHOT_DIR, 'connection-error.expected.
 // persistence + history — byte-equal rendering is exactly the recovery claim.
 const RELOADED_EXPECTED = join(SNAPSHOT_DIR, 'reloaded.expected.md')
 const RELOADED_EXPANDED_EXPECTED = join(SNAPSHOT_DIR, 'reloaded-expanded.expected.md')
+const IMAGE_FIXTURE = fileURLToPath(new URL('../../../snapshots/session/read-image/workspace/red.png', import.meta.url))
 const MODE = webSnapshotMode()
 
 const PROMPT = 'Reply with the single word LIGHTHOUSE and stop.'
@@ -112,6 +113,34 @@ describe('web e2e: lifecycle & chrome (workspace flow / reload / dark mode)', ()
     await compareOrRefreshGolden(FUZZY_COMMAND_MENU_EXPECTED, fuzzySnapshot, MODE)
     await writeComposerDraft(page, input, '')
     await expect.poll(() => menu.count()).toBe(0)
+  })
+
+  it.skipIf(MODE === 'record')('picks images from the Image row in the plus menu', async () => {
+    onTestFailed(() => saveFailureShot(page, 'web-e2e-image-picker'))
+    await page.getByRole('button', { name: 'Add files or run commands', exact: true }).click()
+    const menu = page.getByRole('listbox', { name: 'Trigger suggestions' })
+    const fileRow = menu.getByRole('option', { name: 'File', exact: true })
+    const imageRow = menu.getByRole('option', { name: 'Image', exact: true })
+    const goalRow = menu.getByRole('option', { name: 'Goal Set or view the goal for a long-running task' })
+    await goalRow.waitFor()
+    const fileBox = await fileRow.boundingBox()
+    const imageBox = await imageRow.boundingBox()
+    const goalBox = await goalRow.boundingBox()
+    expect(imageBox).not.toBeNull()
+    expect(imageBox!.y).toBeGreaterThan(fileBox!.y)
+    expect(imageBox!.y - (fileBox!.y + fileBox!.height)).toBeLessThan(2)
+    expect(goalBox!.y).toBeGreaterThan(imageBox!.y)
+    await imageRow.click()
+    await expect.poll(() => menu.count()).toBe(0)
+    expect(await page.locator('input[data-composer-image-input]').getAttribute('accept'))
+      .toBe('image/png,image/jpeg,image/webp,image/gif')
+    await page.locator('input[data-composer-image-input]').setInputFiles([
+      { name: 'red.png', mimeType: 'image/png', buffer: await readFile(IMAGE_FIXTURE) },
+    ])
+    const rail = page.getByRole('group', { name: 'Pending attachments' })
+    await expect.poll(() => rail.locator(':scope > *').count(), { timeout: 10_000 }).toBe(1)
+    await page.getByRole('button', { name: 'Remove image red.png' }).click({ force: true })
+    await expect.poll(() => rail.count()).toBe(0)
   })
 
   it.skipIf(MODE === 'record')('localizes slash-command descriptions from the browser language', async () => {

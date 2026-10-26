@@ -16,6 +16,7 @@ Each change is one commit on the `zhuoran` branch, which is rebased onto upstrea
 - **Collapsed steps**: a Work details mode that folds the steps behind each reply into one summary row with the time, model calls, tokens, and changed lines and files, while the reply stays visible. In this mode the server sends folded steps only when you expand them, so scrolling back through a long session takes far fewer page loads.
 - **Phone layout**: on screens 640px wide or narrower, the UI is one full-width column and the session list opens as a drawer.
 - **Offline reading**: already-loaded content supports local read-only access.
+- **Image row**: inside the composer's **+** menu, an Image row under File opens a picker limited to PNG, JPEG, WebP, and GIF images, so phones offer their photo library instead of a file browser.
 - **Per-model reasoning effort**: switching to a model restores the effort you last used with it.
 - **Copy table as Markdown**: each rendered table has a button that copies its Markdown source.
 - **Session counts**: each Workspace shows how many sessions it holds, and the sidebar header shows the total.

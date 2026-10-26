@@ -14,6 +14,7 @@ This branch (`zhuoran` on [cmsflash/deepseek-harness](https://github.com/cmsflas
 - **Enter key choice** per browser: Enter can add a new line instead of sending.
 - **Phone keyboard fit**: the app shrinks above a phone's on-screen keyboard.
 - **Offline reading**: threads already opened stay readable while the server is unreachable.
+- **Image row** in the composer's **+** menu, which opens a picker limited to images (the photo library on phones).
 - **Plugins**: [dsh-image-side-limit](https://github.com/cmsflash/dsh-image-side-limit) caps each request image's long edge at 2000px, which Anthropic requires once a request carries more than twenty images; [dsh-read-aloud](https://github.com/cmsflash/dsh-read-aloud) reads replies aloud; [dsh-mermaid](https://github.com/AKS1st/dsh-mermaid) (third-party) renders `mermaid` code blocks as diagrams.
 
 ## Instructions for the agent

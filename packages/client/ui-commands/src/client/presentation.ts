@@ -17,7 +17,7 @@ export type MenuSection = 'add' | 'commands'
 
 /** Row names per section, highest usage first; rows outside both lists close the Commands section in catalog order. */
 const SECTION_ROWS: Readonly<Record<MenuSection, readonly string[]>> = {
-  add: ['file', 'goal', 'plan', 'feedback'],
+  add: ['file', 'image', 'goal', 'plan', 'feedback'],
   commands: ['compact', 'permission', 'model', 'export'],
 }
 

@@ -31,6 +31,8 @@
   - text: Keyboard shortcuts
   - paragraph: View and edit available shortcuts and input actions
   - button "Edit shortcuts"
+  - text: Enter key Applies to this browser only; with New line, send with the Send button or Cmd/Ctrl+Enter
+  - button "Send"
   - text: Send behavior while busy What Enter and the Send button do while the agent is running; Cmd/Ctrl+Enter uses the other behavior
   - button "Queue"
   - text: Performance & usage Choose how much performance and usage information to show

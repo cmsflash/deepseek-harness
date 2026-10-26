@@ -183,7 +183,7 @@ it.each([false, true])('keeps actions and focus usable with touch=%s across layo
   expect(await row.getAttribute('aria-selected')).toBe('true')
 
   const image = fileURLToPath(new URL('../../../snapshots/session/read-image/workspace/red.png', import.meta.url))
-  await page.locator('input[type="file"]').setInputFiles(image)
+  await page.locator('input[data-composer-file-input]').setInputFiles(image)
   const remove = page.getByRole('button', { name: 'Remove image red.png', exact: true })
   await remove.waitFor({ state: 'visible' })
   if (hasTouch) {

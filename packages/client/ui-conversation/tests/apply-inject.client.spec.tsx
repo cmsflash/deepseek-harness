@@ -213,6 +213,42 @@ describe('Conversation inject API', () => {
     expect(contributions.size).toBe(0)
   })
 
+  it('owns the Image action, reads its mounted composer availability, and unregisters on disposal', async () => {
+    const b = await bench()
+    onTestFinished(() => b.runtime.dispose())
+    const contributions = new Map<string, CommandContribution>()
+    const registry = {
+      register: (contribution: CommandContribution) => {
+        contributions.set(contribution.name, contribution)
+        return () => { contributions.delete(contribution.name) }
+      },
+    } satisfies Pick<CommandUiContract, 'register'>
+    b.runtime.ctx.provide('commandUi', registry)
+    await vi.waitFor(() => { expect(contributions.has('image')).toBe(true) })
+    const image = contributions.get('image')!
+    const target = { sessionId: ROOT }
+    expect(image.label!()).toBe('图片')
+    expect(image.available(target)).toBe(false)
+    expect(image.available({ sessionId: 'missing' as SessionId })).toBe(false)
+    if (image.ui.kind !== 'action') throw new Error('Image must be an action')
+    image.ui.run({ sessionId: 'missing' as SessionId })
+    const keyboard = b.composerApi(ROOT).keyboard!
+    const open = vi.fn()
+    let available = true
+    const unbind = keyboard.bindImagePicker({ open, available: () => available })
+    expect(image.available(target)).toBe(true)
+    image.ui.run(target)
+    expect(open).toHaveBeenCalledOnce()
+    available = false
+    expect(image.available(target)).toBe(false)
+    image.ui.run(target)
+    expect(open).toHaveBeenCalledOnce()
+    unbind()
+    expect(image.available(target)).toBe(false)
+    await b.feature.dispose()
+    expect(contributions.size).toBe(0)
+  })
+
   it('assembles the target-neutral read face without Session side effects', async () => {
     const b = await bench()
     const { injected } = b.conversationApi(ROOT)
