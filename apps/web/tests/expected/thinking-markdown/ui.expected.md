@@ -196,6 +196,7 @@
       - cell "Row 20 column 4"
       - cell "Row 20 column 5"
       - cell "Row 20 column 6"
+- button "Copy"
 - paragraph:
   - text: "Short subscript:"
   - math: x j

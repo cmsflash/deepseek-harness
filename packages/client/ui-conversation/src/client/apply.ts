@@ -1,9 +1,11 @@
 /** Registers the target-neutral Conversation assembly, shell, input, and docks. */
+import { createElement } from 'react'
+import type { ReactElement } from 'react'
 import type {} from '@deepseek-ai/dsh-client-product-analytics/client'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import type { ISessions, SessionBinding } from '@deepseek-ai/dsh-api-session-controller/client'
-import { IconPaperclipOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconPaperclipOutlineRegular, LinkIconMedium, type IconProps } from '@deepseek-ai/dsh-client-ui-primitives'
 import { createSnapshotStore, type BoundActions } from '@deepseek-ai/dsh-client-store'
 import { resolveSlotLabel } from '@deepseek-ai/dsh-client-ui-slots'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
@@ -131,6 +133,10 @@ interface FileCommandRegistry {
     ui: { kind: 'action'; run(session: { sessionId: SessionId }): void }
   }): () => void
 }
+
+/** The Add group's image glyph, the medium link-category photo. */
+const imageRowIcon = (props: IconProps): ReactElement =>
+  createElement(LinkIconMedium, { kind: 'image', ...props })
 
 /** Resolve the session-scoped Conversation action face, failing loud. */
 function scopedConversation(sessions: ISessions, id: SessionId): IConversation {
@@ -317,6 +323,13 @@ export function apply(ctx: Context, config: Config = Config({})): void {
       available: session => inputHub.canPickFiles(session.sessionId),
       ui: { kind: 'action', run: (session) => { inputHub.pickFiles(session.sessionId) } },
     }), 'ui-conversation: File action')
+    scope.effect(() => commands.register({
+      name: 'image',
+      label: () => t('input.image'),
+      icon: imageRowIcon,
+      available: session => inputHub.canPickImages(session.sessionId),
+      ui: { kind: 'action', run: (session) => { inputHub.pickImages(session.sessionId) } },
+    }), 'ui-conversation: Image action')
   })
 
   // Conversation assembly and input share the Session binding lifecycle. The

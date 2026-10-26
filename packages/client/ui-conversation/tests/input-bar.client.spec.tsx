@@ -1892,6 +1892,121 @@ describe('command launcher chrome and control seats', () => {
   })
 })
 
+describe('image picker input', () => {
+  it('keeps an image-only multi-select input behind the generic file input', () => {
+    const { view } = bench({
+      imageLimits: {
+        maxImageBytes: 1024 * 1024,
+        maxImagesPerMessage: 2,
+        maxMessageImageBytes: 2 * 1024 * 1024,
+        maxImagePixels: 40_000_000,
+        maxImageDimension: 2000,
+        mediaTypes: ['image/png', 'image/jpeg'] as const,
+      },
+    })
+    const file = view.container.querySelector<HTMLInputElement>('input[data-composer-file-input]')!
+    const image = view.container.querySelector<HTMLInputElement>('input[data-composer-image-input]')!
+    expect(file.compareDocumentPosition(image) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(image.accept).toBe('image/png,image/jpeg')
+    expect(image.multiple).toBe(true)
+    expect(image.hasAttribute('capture')).toBe(false)
+    expect(file.getAttribute('accept')).toBe(null)
+  })
+
+  it('falls back to the supported raster types when no image limits are published', () => {
+    const { view } = bench()
+    expect(view.container.querySelector<HTMLInputElement>('input[data-composer-image-input]')!.accept)
+      .toBe('image/png,image/jpeg,image/webp,image/gif')
+  })
+
+  it('exposes the image pick through the keyboard face and opens the input', () => {
+    const { view, shell } = bench()
+    const input = view.container.querySelector<HTMLInputElement>('input[data-composer-image-input]')!
+    const click = vi.spyOn(input, 'click')
+    onTestFinished(() => { click.mockRestore() })
+    expect(shell.canPickImages()).toBe(true)
+    expect(shell.pickImages()).toBe(true)
+    expect(click).toHaveBeenCalledOnce()
+  })
+
+  it('hands picked images to the composer intake and resets for a repeat pick', () => {
+    const addFiles = vi.fn(() => null)
+    const { view } = bench({ addFiles })
+    const input = view.container.querySelector<HTMLInputElement>('input[data-composer-image-input]')!
+    const png = new File([Uint8Array.of(1)], 'a.png', { type: 'image/png' })
+    fireEvent.change(input, { target: { files: [png] } })
+    expect(addFiles).toHaveBeenCalledWith([png], undefined)
+    expect(input.value).toBe('')
+    fireEvent.change(input, { target: { files: [] } })
+    expect(addFiles).toHaveBeenCalledTimes(1)
+  })
+
+  it('refuses a batch containing a non-image and announces it', () => {
+    const addFiles = vi.fn(() => null)
+    const { view } = bench({ addFiles })
+    const input = view.container.querySelector<HTMLInputElement>('input[data-composer-image-input]')!
+    fireEvent.change(input, { target: { files: [
+      new File([Uint8Array.of(1)], 'a.png', { type: 'image/png' }),
+      new File(['x'], 'notes.txt', { type: 'text/plain' }),
+    ] } })
+    expect(addFiles).not.toHaveBeenCalled()
+    expect(view.getByRole('alert').textContent).toContain('仅支持 PNG、JPG、WebP、GIF 格式的图片')
+  })
+
+  it('applies the projected image limits to picked images', () => {
+    const addFiles = vi.fn(() => null)
+    const { view } = bench({
+      addFiles,
+      imageLimits: {
+        maxImageBytes: 1024 * 1024,
+        maxImagesPerMessage: 1,
+        maxMessageImageBytes: 2 * 1024 * 1024,
+        maxImagePixels: 40_000_000,
+        maxImageDimension: 2000,
+        mediaTypes: ['image/png'] as const,
+      },
+    })
+    const input = view.container.querySelector<HTMLInputElement>('input[data-composer-image-input]')!
+    fireEvent.change(input, { target: { files: [
+      new File([Uint8Array.of(1)], 'a.png', { type: 'image/png' }),
+      new File([Uint8Array.of(1)], 'b.png', { type: 'image/png' }),
+    ] } })
+    expect(addFiles).not.toHaveBeenCalled()
+    expect(view.getByRole('alert').textContent).toContain('一条消息最多添加 1 张图片')
+  })
+
+  it.each([
+    ['removed session', { disabled: true }],
+    ['inert composer', { inert: true }],
+    ['blocked composer', { blocked: { reason: 'waiting' } }],
+    ['a one-shot child', { subagent: { ...CONTINUABLE_CHILD, address: { ...CONTINUABLE_CHILD.address, mode: 'one-shot' as const } } }],
+    ['an offline parent', { subagent: { ...CONTINUABLE_CHILD, parentAvailable: false } }],
+  ])('%s withdraws the image pick', (_name, state) => {
+    const { view, shell } = bench(state)
+    const input = view.container.querySelector<HTMLInputElement>('input[data-composer-image-input]')!
+    const open = vi.spyOn(input, 'click')
+    expect(shell.canPickImages()).toBe(false)
+    expect(shell.pickImages()).toBe(false)
+    expect(open).not.toHaveBeenCalled()
+  })
+
+  it('lets a continuable child pick images though it has no File action', () => {
+    const addFiles = vi.fn(() => null)
+    const { view, shell } = bench({ subagent: CONTINUABLE_CHILD, addFiles })
+    expect(view.container.querySelector<HTMLInputElement>('input[data-composer-file-input]')!.disabled).toBe(true)
+    expect(shell.canPickFiles()).toBe(false)
+    expect(shell.canPickImages()).toBe(true)
+    fireEvent.change(view.container.querySelector<HTMLInputElement>('input[data-composer-image-input]')!, {
+      target: { files: [new File([Uint8Array.of(1)], 'a.png', { type: 'image/png' })] },
+    })
+    expect(addFiles).toHaveBeenCalledOnce()
+  })
+
+  it('labels the image row in English', () => {
+    expect(en['input.image']).toBe('Image')
+  })
+})
+
 it('lets a toolbar activity replace accessories without replacing the draft editor or send action', () => {
   const { view } = bench({ draft: 'keep this draft', modelEntry: <button>model choice</button>,
     activityEntry: owner => <>

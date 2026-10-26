@@ -151,6 +151,8 @@ export class SessionInputShell implements SessionInput {
   private persistDraft: ((draft: DraftSnapshot) => void) | undefined
   /** The mounted composer's file-picker opener (scoped pick-files event target). */
   private filePicker: Parameters<ComposerKeyboard['bindFilePicker']>[0] | undefined
+  /** The mounted composer's image-picker opener (accept-limited companion input). */
+  private imagePicker: Parameters<ComposerKeyboard['bindImagePicker']>[0] | undefined
   /** Default sends retained until admission settles or scope disposal releases their attachments. */
   private readonly detachedDrafts = new Map<number, DetachedDraft>()
   /** Failed default sends waiting to be restored together in submission order. */
@@ -611,6 +613,36 @@ export class SessionInputShell implements SessionInput {
   pickFiles(): boolean {
     if (this.filePicker === undefined || !this.filePicker.available()) return false
     this.filePicker.open()
+    return true
+  }
+
+  /**
+   * Bind the mounted composer's image action and live intake availability.
+   * @param picker - availability query and native image-dialog opener.
+   * @returns the unbind disposer.
+   */
+  bindImagePicker(picker: Parameters<ComposerKeyboard['bindImagePicker']>[0]): () => void {
+    this.imagePicker = picker
+    return () => {
+      if (this.imagePicker === picker) this.imagePicker = undefined
+    }
+  }
+
+  /**
+   * Read the mounted composer's live image-intake availability.
+   * @returns false when no accepting composer is mounted.
+   */
+  canPickImages(): boolean {
+    return this.imagePicker?.available() === true
+  }
+
+  /**
+   * Open the native image dialog when the mounted composer accepts images.
+   * @returns whether the opener was called.
+   */
+  pickImages(): boolean {
+    if (this.imagePicker === undefined || !this.imagePicker.available()) return false
+    this.imagePicker.open()
     return true
   }
 

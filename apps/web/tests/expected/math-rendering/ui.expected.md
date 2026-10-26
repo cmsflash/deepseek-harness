@@ -29,6 +29,7 @@
         - math: θ
       - cell:
         - math: 1 5
+- button "Copy"
 - paragraph: MATH_RENDERING_DONE
 - button "Copy"
 - button "Good response"

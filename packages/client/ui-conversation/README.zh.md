@@ -74,7 +74,7 @@ Queue 预览启用空白折叠和文档边缘 trim，保留 emoji，并使用 CS
 
 关闭代码工作工具时，外壳仅隐藏 Trajectory；其他插件贡献的 View 仍然可用。可用 View 少于两个时隐藏 View 标签栏。在 Trajectory 激活时关闭代码工作工具会返回 Chat；已保存的 View 偏好和 Session 记录保持不变。开启后，Trajectory 恢复可用。View 所有者接收可用列表，使导航操作跟随相同的可见性。
 
-输入框注册「文件」命令动作，负责其标题、可用性和原生文件选择器回调。菜单可用性与实际调用都读取已挂载输入框当前的附件接收策略。输入框卸载或锁定后该动作不可用，插件 dispose（资源释放）时移除注册。回调绑定留在输入模块内部。
+输入框注册「文件」命令动作，负责其标题、可用性和原生文件选择器回调。菜单可用性与实际调用都读取已挂载输入框当前的附件接收策略。输入框卸载或锁定后该动作不可用，插件 dispose（资源释放）时移除注册。回调绑定留在输入模块内部。加号菜单 Add 组中「文件」行下一行的「图片」命令动作打开原生文件选择器，只允许部署接受的图片类型（来自图片限制投影，缺省为 PNG、JPEG、WebP 和 GIF），所选图片与粘贴、拖放走同一接收路径，因此限制和拒绝提示一致；含非图片文件的一批会被整批拒绝。其可用性跟随拖放目标而非通用文件输入，因此没有「文件」行的可续写子代理仍有「图片」行。
 
 `SessionInputShell` 通过私有 [DraftEditorRuntime](src/client/input/editor/runtime.ts) 为每个 Session 持有一个 Lexical editor，同时保留提交、附件选择和恢复决策。[DraftEditor](src/client/input/editor/DraftEditor.tsx) 呈现借用的 editor；InputBar 保留钩子与 refs，并通过 [view-binding](src/client/input/editor/view-binding.ts) 安装 DOM 行为。编辑器类型位于 [draft-editor.ts](src/client/contract/draft-editor.ts)，共享输入和提交类型位于 [input.ts](src/client/contract/input.ts)。编辑器后台更新会保留草稿选区，不修改文档选区或从其他控件夺回焦点；显式聚焦 Composer 时恢复其选区。这一拆分不支持同一 Session 同时挂载多个可编辑 root；[两阶段隔离提案](../../../.agents/notes/proposed/architecture/2026-09-14-composer-model-and-draft-editor.zh.md) 定义剩余工作。
 

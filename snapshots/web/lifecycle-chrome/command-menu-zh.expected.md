@@ -1,6 +1,7 @@
 - listbox "触发候选建议":
   - text: 添加
   - option "文件 file" [selected]
+  - option "图片 image"
   - option "目标 goal 设置或查看长期任务目标"
   - option "计划 plan 进入或退出计划模式"
   - option "反馈 feedback 发送关于当前会话的反馈"

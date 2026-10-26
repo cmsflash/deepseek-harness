@@ -587,13 +587,16 @@ function imageMediaType(value: string): ImageMediaType {
   }
 }
 
+/** Raster image media types the composer treats as image attachments. */
+export const IMAGE_MEDIA_TYPES: readonly ImageMediaType[] = ['image/png', 'image/jpeg', 'image/webp', 'image/gif']
+
 /**
  * Whether a browser-declared MIME selects the image draft path (all other files upload verbatim).
  * @param value - the browser's declared MIME type.
  * @returns whether the file is an accepted raster image.
  */
 export function isImageMediaType(value: string): boolean {
-  return value === 'image/png' || value === 'image/jpeg' || value === 'image/webp' || value === 'image/gif'
+  return (IMAGE_MEDIA_TYPES as readonly string[]).includes(value)
 }
 
 function revokePreview(url: string): void {

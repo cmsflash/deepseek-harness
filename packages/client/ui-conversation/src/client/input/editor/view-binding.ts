@@ -98,6 +98,25 @@ export function installDraftFilePicker(
 }
 
 /**
+ * Bind this view's image dialog through the existing keyboard face.
+ * @param keyboard - the Session-owned composer operations.
+ * @param gate - live intake availability retained by InputBar.
+ * @param imageInputRef - the view's native image input (never input-disabled;
+ * subagents may keep picking images even though the generic file input is off).
+ * @returns the picker unbind disposer.
+ */
+export function installDraftImagePicker(
+  keyboard: ComposerKeyboard,
+  gate: MutableRefObject<Pick<DraftViewGate, 'canAcceptDrop'>>,
+  imageInputRef: RefObject<HTMLInputElement>,
+): () => void {
+  return keyboard.bindImagePicker({
+    available: () => gate.current.canAcceptDrop && imageInputRef.current !== null,
+    open: () => { imageInputRef.current?.click() },
+  })
+}
+
+/**
  * Bind editor gestures to the view's live guards and Session operations.
  * @param editor - the borrowed Session-owned editor.
  * @param keyboard - the existing composer keyboard operations.

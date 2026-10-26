@@ -375,6 +375,13 @@ describe('candidates', () => {
       available: () => true,
       ui: { kind: 'action', run },
     })
+    const imageContribution = (): CommandContribution => ({
+      name: 'image',
+      label: () => 'command:label.image',
+      icon: Glyph,
+      available: () => true,
+      ui: { kind: 'action', run: vi.fn() },
+    })
     const modelContribution = (): CommandContribution => ({
       name: 'model',
       label: () => '模型',
@@ -387,16 +394,17 @@ describe('candidates', () => {
     it('an empty query lists Add then Commands in usage order; built-in rows carry their localized face, other rows their own text', async () => {
       const { command, source } = await bench({ commands: () => Promise.resolve({ commands: SHIPPED }) })
       command.register(modelContribution())
+      command.register(imageContribution())
       command.register(fileContribution())
       const rows = await source.candidates(proj('s1'), req(''))
       expect(rows.map(row => row.name)).toEqual([
-        'file', 'goal', 'plan', 'feedback', 'compact', 'permission', 'model', 'export', 'deploy',
+        'file', 'image', 'goal', 'plan', 'feedback', 'compact', 'permission', 'model', 'export', 'deploy',
       ])
       expect(rows.map(row => row.section)).toEqual([
-        ...Array<string>(4).fill('command:section.add'),
+        ...Array<string>(5).fill('command:section.add'),
         ...Array<string>(5).fill('command:section.commands'),
       ])
-      expect(rows[1]).toEqual({
+      expect(rows[2]).toEqual({
         name: 'goal',
         label: 'command:label.goal',
         description: 'command:description.goal',
@@ -405,9 +413,10 @@ describe('candidates', () => {
         section: 'command:section.add',
       })
       expect(rows[0]).toEqual({ name: 'file', label: 'command:label.file', icon: Glyph, section: 'command:section.add' })
-      expect(rows[6]).toMatchObject({ name: 'model', label: '模型', description: '选择本会话使用的模型', icon: Glyph })
+      expect(rows[1]).toEqual({ name: 'image', label: 'command:label.image', icon: Glyph, section: 'command:section.add' })
+      expect(rows[7]).toMatchObject({ name: 'model', label: '模型', description: '选择本会话使用的模型', icon: Glyph })
       // A third-party command keeps its catalog text and gets no glyph.
-      expect(rows[8]).toEqual({ name: 'deploy', description: 'third-party command', section: 'command:section.commands' })
+      expect(rows[9]).toEqual({ name: 'deploy', description: 'third-party command', section: 'command:section.commands' })
     })
 
     it('a same-name override keeps its own presentation even when it copies the first-party description', async () => {
