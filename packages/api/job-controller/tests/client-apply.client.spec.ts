@@ -28,6 +28,7 @@ async function mount(): Promise<{ ctx: Context; observeCalls: unknown[]; rowsCal
     state: { getSnapshot: () => 'connected' as const, subscribe: () => () => {} },
     rpc: { call: () => Promise.reject(new Error('unexpected generic RPC call')) },
     reconnect: () => {},
+    holdNetworkAvailable: () => {},
     registerGenerationSource: () => () => {},
     start: () => ({ stop: () => {} }),
   }

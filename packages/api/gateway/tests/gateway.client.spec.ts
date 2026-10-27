@@ -356,6 +356,7 @@ async function benchFiber(
     generation: { getSnapshot: () => undefined, subscribe: () => () => {} },
     state: { getSnapshot: () => undefined, subscribe: () => () => {} },
     reconnect: () => {},
+    holdNetworkAvailable: () => {},
     rpc,
     registerGenerationSource: generation.register,
     start,
@@ -465,6 +466,7 @@ async function loaderReadinessBench(
     generation: { getSnapshot: () => undefined, subscribe: () => () => {} },
     state: { getSnapshot: () => undefined, subscribe: () => () => {} },
     reconnect: () => {},
+    holdNetworkAvailable: () => {},
     rpc: carrier === 'web' ? { call } : { call, open: () => unexpectedInProcessStream() },
     registerGenerationSource: generation.register,
     start,
@@ -608,6 +610,7 @@ describe('Client Remote transport readiness', () => {
       generation: { getSnapshot: () => live.snapshot, subscribe: () => () => {} },
       state: { getSnapshot: () => undefined, subscribe: () => () => {} },
       reconnect: () => {},
+      holdNetworkAvailable: () => {},
       rpc: {
         call: vi.fn<ConnectionHandle['rpc']['call']>(),
         open: () => unexpectedInProcessStream(),

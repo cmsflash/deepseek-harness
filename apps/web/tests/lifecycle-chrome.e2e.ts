@@ -491,6 +491,11 @@ describe('web e2e: lifecycle & chrome (workspace flow / reload / dark mode)', ()
 
   it.skipIf(MODE === 'record')('shows automatic and user-requested connection recovery beside Settings', async () => {
     const recoveryPage = await newEnglishPage(browser)
+    // Without IndexedDB the Gateway keeps no offline record, so going offline
+    // disconnects instead of replaying recorded threads.
+    await recoveryPage.addInitScript(() => {
+      Object.defineProperty(window, 'indexedDB', { value: undefined, configurable: true })
+    })
     const recoveryTripwire = watchConsole(recoveryPage)
     const sockets: WebSocketRoute[] = []
     let rejectConnections = false

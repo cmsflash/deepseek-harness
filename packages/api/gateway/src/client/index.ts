@@ -29,6 +29,7 @@ import {
   RemoteStreamMuxClient,
 } from './stream-client.ts'
 import { ClientRemoteEvents } from './remote-events.ts'
+import { OfflineReplay, browserReplayEnvironment, openIndexedDbReplayStore } from './offline-replay.ts'
 import {
   RemoteStream,
   type RemoteStreamOptions,
@@ -149,6 +150,7 @@ class ClientRemoteService extends Service implements ClientRemote {
   private hostFacts: RemoteHostFacts | undefined
   private readonly streams: RemoteStreamMuxClient
   private readonly events: ClientRemoteEvents | undefined
+  private readonly replay: OfflineReplay | undefined
   private mutations = Promise.resolve()
 
   constructor(ctx: Context) {
@@ -167,6 +169,7 @@ class ClientRemoteService extends Service implements ClientRemote {
         (endpoint, payload, signal) => this.openRemoteStream(endpoint, payload, signal),
       )
     }
+    this.replay = createOfflineReplay(connection)
     // API callers retain a lifecycle socket even when they do not receive events.
     // HTTP dispatch never waits for this independent connection attempt.
     if (connection.rpc.open === undefined) this.streams.start()
@@ -187,6 +190,7 @@ class ClientRemoteService extends Service implements ClientRemote {
     else void loader.await().then(start, () => {})
     ctx.effect(() => async () => {
       disposed = true
+      this.replay?.dispose()
       loop?.stop()
       await this.events?.dispose()
       await this.streams.close()
@@ -240,9 +244,10 @@ class ClientRemoteService extends Service implements ClientRemote {
     const connection = this.ownerCtx.get('connection') as ConnectionHandle | undefined
     if (connection === undefined) throw new Error(noConnection)
     const local = connection.rpc.open?.('/api', endpoint, payload, signal, uplink)
-    return local === undefined
-      ? this.streams.open(endpoint, payload, signal, uplink)
-      : normalizeConnectionStream(local)
+    if (local !== undefined) return normalizeConnectionStream(local)
+    const replay = this.replay
+    if (replay === undefined) return this.streams.open(endpoint, payload, signal, uplink)
+    return replay.stream(endpoint, payload, signal, () => this.streams.open(endpoint, payload, signal, uplink))
   }
 
   private enqueue<T>(operation: () => T | Promise<T>): Promise<T> {
@@ -455,7 +460,11 @@ class ClientRemoteService extends Service implements ClientRemote {
     const connection = this.ownerCtx.get('connection') as ConnectionHandle | undefined
     if (connection === undefined) throw new Error(`client api: ${endpoint} has no active Connection`)
     try {
-      const result = await connection.rpc.call('/api', endpoint, { args: prepared.args }, prepared.signal)
+      const live = (): ReturnType<typeof connection.rpc.call> =>
+        connection.rpc.call('/api', endpoint, { args: prepared.args }, prepared.signal)
+      const result = this.replay === undefined
+        ? await live()
+        : await this.replay.call(endpoint, prepared.args, live, prepared.signal)
       if (!mountActive(token)) return withdrawn(endpoint)
       prepared.signal.throwIfAborted()
       if (!result.ok) return { ok: false, error: rebuiltFailure(result.error) }
@@ -764,6 +773,19 @@ const REMOTE_NAMESPACE_FIELDS = new Set(['ctx', 'empty', 'invokeRemote', 'method
 
 function remoteServiceKey(namespace: string): string {
   return `remote.${namespace}`
+}
+
+/**
+ * Offline replay applies to an answering page whose streams use the Gateway
+ * WebSocket and whose browser offers IndexedDB.
+ */
+function createOfflineReplay(connection: ConnectionHandle): OfflineReplay | undefined {
+  if (connection.interactions !== 'answer' || connection.rpc.open !== undefined) return undefined
+  const store = openIndexedDbReplayStore()
+  const environment = typeof document === 'undefined'
+    ? undefined
+    : browserReplayEnvironment(new URL('api/offline-probe', document.baseURI).href)
+  return store === undefined || environment === undefined ? undefined : new OfflineReplay(store, connection, environment)
 }
 
 function endpointOf(descriptor: Pick<InvocationDescriptor, 'namespace' | 'method'>): string {

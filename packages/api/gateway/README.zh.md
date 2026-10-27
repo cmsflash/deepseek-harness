@@ -69,6 +69,8 @@ Host 组合可通过 `registerRemoteEvents()` 注册唯一的应用事件 source
 
 Client waterfall 的 Context 解析保持同步。解析器可以返回借用的 Context 或 `TypertOwnedValue<Context>`；Gateway 仅在处理器使用和回复结算均结束后释放 owned value。Context 解析失败保留既有的记录错误并委托语义，处理器失败产生拒绝回复。取消会抑制迟到回复，但不会释放处理器仍在使用的 Context。每个 handler 都必须响应 `request.signal` 并在取消后结束；插件销毁与 Connection generation 替换会等待未结束的 handler 结算。Session Context 的获取本身不执行历史 I/O。
 
+在通过 Gateway WebSocket 回答事件和打开流的浏览器页面中，Client 会把一组固定读端点（Session 列表、历史分页、投影、目录与设置描述）的成功结果，以及 `session/follow`、`session/control`、`workspace/follow`、`job/list` 自最近一次开启以来的流项日志和 `$events` 的 ready 项，记录在页面的 IndexedDB 中。载体失败会触发一次 Host 探测，代理返回的 502、503 或 504 视为探测失败；探测失败或浏览器离线时，Client 让 Connection 保持网络可用并重连，于是记录的 `$events` 首项建立一个 generation，调用改由记录回答。已记录的流回放其日志并保持打开；其余调用都按载体失败返回，因此发送和未读过的历史会明确失败。每 5 秒一次的探测在 Host 恢复后让页面重连，以实时 generation 取代回放的 generation，并以载体失败结束每条回放的流，使其消费方在实时 Host 上重新打开。记录按端点与精确参数作键，永不淘汰。
+
 `ctx.remote` 不暴露 Connection 生命周期控制。只有职责包含恢复的消费方才直接读取 `ctx.connection.state` 并调用 `ctx.connection.reconnect()`；普通 Remote 消费方仍只使用生成的 namespace 与 `$stream()`。
 
 生成的声明合并通过共享的 `TypertClientRemote` 约定提供 TypeScript API。Client 入口不包含 Host 服务或 Host Cordis 接口合并；方法查找和调用使用普通对象与函数，而不使用 JavaScript Proxy。
@@ -92,6 +94,7 @@ Client waterfall 的 Context 解析保持同步。解析器可以返回借用的
 - `$stream()` 监督载体替换，但不推断回放语义；各领域自行拥有恢复 cursor 或替换 baseline 的校验，以及正常结束的分类。Connection generation 会重开内部 `$events` 流；单向通知不会重放，仍处于 pending 的 scoped waterfall 则沿用同一个 event id 重放。
 - lookup 解析器按 key 配置；当前无法让单个 Remote 参数或 endpoint 在同一 `agent`/`session` key 下选择 live-only 策略。
 - 被转发的事件到达 `$on` 时不做业务载荷投影或脱敏。普通通知在重连后不重放；Agent-scoped waterfall 只投影选择 Client Context 所需的顶层 Agent 身份，并自行携带 pending 生命周期。
+- 离线回放把 Session 内容以明文存放在浏览器配置中，直到清除站点数据为止；除每条流日志 20,000 项的上限外没有容量限制。页面把记录的数据当作实时数据展示，没有标识说明正在回放。
 - `websocketHeartbeatIntervalMs` 同时是 Ping 周期和活动截止时间。对端连续两个周期没有活动时，Host 会终止连接；如果部署的事件循环或网络可能停顿超过该间隔，必须调大此配置。
 - `websocketCompression` 默认 `'deflate'`，会协商 `permessage-deflate`；Host 压缩自己发出的、JSON 文本达到 1024 个字符 的帧，更短的帧不压缩，因为 `ws` 在默认上下文接管下会忽略自己的 `threshold` 选项。压缩后的下行写入完成会计入心跳规则中的缓冲活动，而阈值以下的写入只有在本机发送缓冲区已满时才计入；换不到带宽的 loopback 部署可设为 `'none'`。
 - 未压缩的排队写入完成说明 TCP 对端确认了数据；压缩写入则在 `ws` 完成 deflate 并写出后即完成，只证明本地流水线已排空。经过带缓冲的反向代理时，该对端是代理，因此持续下行期间 Client 消失，要等代理不再接收数据后才会被检测到。
