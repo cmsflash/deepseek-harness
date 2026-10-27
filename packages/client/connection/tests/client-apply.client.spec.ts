@@ -312,6 +312,39 @@ describe('connection client apply', () => {
     }
   })
 
+  it('keeps attempting while the network is held available, whatever the browser reports', async () => {
+    vi.useFakeTimers()
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const browser = new BrowserNetworkProbe()
+    vi.stubGlobal('window', browser)
+    ;(globalThis as Win).location = { hostname: 'localhost' }
+    const handle = await mount()
+    let calls = 0
+    handle.registerGenerationSource((signal, ready) => new Promise<void>((resolve) => {
+      calls++
+      ready({ home: '/h' })
+      signal.addEventListener('abort', () => { resolve() }, { once: true })
+    }))
+    const loop = handle.start({})
+    try {
+      await vi.advanceTimersByTimeAsync(0)
+      browser.setOnline(false)
+      expect(handle.state.getSnapshot()).toBe('disconnected')
+
+      handle.holdNetworkAvailable(true)
+      handle.reconnect()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(calls).toBe(2)
+      expect(handle.state.getSnapshot()).toBe('connected')
+
+      handle.holdNetworkAvailable(false)
+      expect(handle.state.getSnapshot()).toBe('disconnected')
+    } finally {
+      loop.stop()
+      warnSpy.mockRestore()
+    }
+  })
+
   it('does not announce a generation synchronously stopped by a generation subscriber', async () => {
     ;(globalThis as Win).location = { hostname: 'localhost' }
     const handle = await mount()

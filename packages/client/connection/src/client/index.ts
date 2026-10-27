@@ -164,6 +164,12 @@ export interface ConnectionHandle {
   /** Reset retry progression and replace the current attempt immediately. */
   reconnect(): void
   /**
+   * Declare that the generation source can serve a generation without the network
+   * (an offline replay carrier). While held, browser `offline` does not suspend attempts.
+   * @param held - whether attempts proceed regardless of browser network availability.
+   */
+  holdNetworkAvailable(held: boolean): void
+  /**
    * Register the sole source defining Host generations. The source reports
    * ready only after its incremental listeners are attached.
    * @param source - long-lived generation source owned by the push carrier.
@@ -193,19 +199,28 @@ interface ConnectionOwner {
   readonly stopNetworkWatch: () => void
 }
 
+interface NetworkAvailability {
+  held: boolean
+  browser: boolean
+}
+
 interface BrowserNetworkTarget {
   readonly navigator?: { readonly onLine?: boolean }
   addEventListener(type: 'online' | 'offline', listener: () => void): void
   removeEventListener(type: 'online' | 'offline', listener: () => void): void
 }
 
-function watchBrowserNetwork(controller: ConnectionController): () => void {
+function watchBrowserNetwork(controller: ConnectionController, network: NetworkAvailability): () => void {
   const browser = (globalThis as { readonly window?: BrowserNetworkTarget }).window
   const initiallyAvailable = browser?.navigator?.onLine
   if (browser === undefined || initiallyAvailable === undefined) return () => {}
-  const online = (): void => { controller.setNetworkAvailable(true) }
-  const offline = (): void => { controller.setNetworkAvailable(false) }
-  controller.setNetworkAvailable(initiallyAvailable)
+  const apply = (available: boolean): void => {
+    network.browser = available
+    controller.setNetworkAvailable(network.held || available)
+  }
+  const online = (): void => { apply(true) }
+  const offline = (): void => { apply(false) }
+  apply(initiallyAvailable)
   browser.addEventListener('online', online)
   browser.addEventListener('offline', offline)
   return () => {
@@ -230,6 +245,7 @@ export function installConnection(ctx: Context, options: ConnectionInstallOption
   let generationId = 0
   let generation: ConnectionGeneration | undefined
   let state: ConnectionState | undefined
+  const network: NetworkAvailability = { held: false, browser: true }
   const generationListeners = new Set<() => void>()
   const stateListeners = new Set<() => void>()
   const publishGeneration = (next: ConnectionGeneration | undefined): void => {
@@ -284,6 +300,10 @@ export function installConnection(ctx: Context, options: ConnectionInstallOption
     reconnect() {
       owner?.controller.reconnect()
     },
+    holdNetworkAvailable(held) {
+      network.held = held
+      owner?.controller.setNetworkAvailable(held || network.browser)
+    },
     registerGenerationSource(source) {
       if (generationSource !== undefined) {
         throw new Error('connection: a generation source is already registered')
@@ -319,7 +339,7 @@ export function installConnection(ctx: Context, options: ConnectionInstallOption
           sinks.onStateChange?.(state)
         },
       }, { ...recovery, ...config })
-      const current = { token, source, controller, stopNetworkWatch: watchBrowserNetwork(controller) }
+      const current = { token, source, controller, stopNetworkWatch: watchBrowserNetwork(controller, network) }
       owner = current
       controller.start()
       return {

@@ -14,6 +14,12 @@ const reportFailure = (reason: unknown): void => {
   void desktop.failed(reason instanceof Error ? reason.message : String(reason)).catch(console.error)
 }
 
+if (desktop === undefined && 'serviceWorker' in navigator && window.isSecureContext) {
+  navigator.serviceWorker
+    .register(new URL('sw.js', document.baseURI), { scope: new URL('./', document.baseURI).pathname })
+    .catch((error: unknown) => { console.warn('web app: offline shell unavailable', error) })
+}
+
 try {
   const el = document.getElementById('root')
   if (el === null) throw new Error('web app: missing #root')
