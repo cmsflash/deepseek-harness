@@ -81,6 +81,27 @@ export function registerToasts(
       }),
     }, ToastEntry<PropsRuntime<'workspace.toast', 'forkRequiresOpen'>>)
     yield ctx.slots.register({
+      name: 'workspace.toast', key: 'interruptedContinued', locale: 'workspace',
+      inject: (): ToastDisplayInjected<'interruptedContinued'> => ({
+        display: (notice, t) => ({
+          text: t(notice.count === 1 ? 'toast.interruptedContinued.one' : 'toast.interruptedContinued.other', { n: notice.count }),
+          tone: 'success',
+        }),
+      }),
+    }, ToastEntry<PropsRuntime<'workspace.toast', 'interruptedContinued'>>)
+    yield ctx.slots.register({
+      name: 'workspace.toast', key: 'interruptedContinueFailed', locale: 'workspace',
+      inject: (): ToastDisplayInjected<'interruptedContinueFailed'> => ({
+        display: (notice, t) => ({
+          text: t(
+            notice.count === 1 ? 'toast.interruptedContinueFailed.one' : 'toast.interruptedContinueFailed.other',
+            { n: notice.count },
+          ),
+          tone: 'warning',
+        }),
+      }),
+    }, ToastEntry<PropsRuntime<'workspace.toast', 'interruptedContinueFailed'>>)
+    yield ctx.slots.register({
       name: 'workspace.toast', key: 'archived', locale: 'workspace', store: viewStore,
       inject: (): ArchiveToastInjected => ({
         display: (notice, t, dismiss) => ({

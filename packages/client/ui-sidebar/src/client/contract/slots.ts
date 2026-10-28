@@ -29,6 +29,13 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
      */
     'sidebar.brand.name': { kind: 'single'; scope: 'root'; owner: SidebarBrandNameOwnerProps }
     /**
+     * Compact actions in the expanded brand row, after the brand and before
+     * the collapse toggle, in ascending `order`. Declared by this package's
+     * `sidebar` entry; the collapsed rail renders none. Each entry owns its
+     * control, its visibility, and its action.
+     */
+    'sidebar.brand.action': { kind: 'list'; scope: 'root'; owner: SidebarBrandActionOwnerProps }
+    /**
      * Global panel icons. Each list id addresses the matching main panel;
      * the sidebar owns the button and resolves its label from list metadata.
      */
@@ -58,6 +65,12 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
 export interface SidebarBrandMarkOwnerProps {
   /** Requested square edge in pixels. */
   size: number
+}
+
+/** Empty owner share for a sidebar brand-row action. */
+export interface SidebarBrandActionOwnerProps {
+  /** Marker field: the occupant owns its own content and width. */
+  children?: never
 }
 
 /** Empty owner share for the sidebar brand-name occupant. */
@@ -139,6 +152,7 @@ export type SidebarRootComponentProps =
   & PropsRenderSlots<
     | 'sidebar.brand.mark'
     | 'sidebar.brand.name'
+    | 'sidebar.brand.action'
     | 'sidebar.toggle.badge'
     | 'sidebar.panellist'
     | 'sidebar.workspaces'

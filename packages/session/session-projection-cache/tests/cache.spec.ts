@@ -229,6 +229,22 @@ describe('SessionProjectionCache write policy', () => {
       .toEqual({ ver: 1, seq: end.seq, val: { marks: ['a'] } })
   })
 
+  it('writes a durable checkpoint at turn/start (mandatory point)', async () => {
+    const { ctx, root } = await harness()
+    // A Host that stops before the interval fires must still list the open turn.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const id = SessionId('turn-start')
+    const created = whenWritten(ctx, id)
+    const session = ctx.sessions.create(id)
+    await created
+    mark(session, ['before'])
+    const written = whenWritten(ctx, id)
+    const start = session.append('turn/start', { turn: 1 })
+    await written
+    expect((await storedRows(root, session.id))?.['cache-test/marks'])
+      .toEqual({ ver: 1, seq: start.seq, val: { marks: ['before'] } })
+  })
+
   it('writes a checkpoint at session creation, capturing the seed-derived cut', async () => {
     const { ctx, root } = await harness()
     // A forked child seeded with its ancestor's title-like event: no

@@ -15,12 +15,13 @@ import { LocaleRuntime } from '@deepseek-ai/dsh-client-locale/client'
 import { apply, inject } from '@deepseek-ai/dsh-client-ui-workspace/client'
 import type { WorkspaceBrowserInjected, WorkspacePickerInjected } from '@deepseek-ai/dsh-client-ui-workspace/client'
 import {
-  type ArchiveSessionInjected, type ForkSessionInjected, menuOpenStateFactory, type PinSessionInjected,
-  type RenameSessionInjected, type RowToastInjected, type SessionArchiveConfirmInjected, type SessionRenameDialogInjected,
-  type SessionIdInjected, type WorkspaceViewStoreHandle,
+  type ArchiveSessionInjected, type ContinueInterruptedInjected, type ForkSessionInjected, menuOpenStateFactory,
+  type PinSessionInjected, type RenameSessionInjected, type RowToastInjected, type SessionArchiveConfirmInjected,
+  type SessionRenameDialogInjected, type SessionIdInjected, type WorkspaceViewStoreHandle,
 } from '../src/client/contract/slots.ts'
 import { WorkspaceBrowser } from '../src/client/rows/WorkspaceBrowser.tsx'
 import { ArchiveSessionMenuItem, ArchiveSessionRowButton, SessionArchiveConfirmDialog } from '../src/client/session-actions/ArchiveSession.tsx'
+import { ContinueInterruptedButton } from '../src/client/session-actions/ContinueInterrupted.tsx'
 import { ForkSessionMenuItem } from '../src/client/session-actions/ForkSession.tsx'
 import { PinSessionMenuItem, PinSessionRowButton } from '../src/client/session-actions/PinSession.tsx'
 import { RenameSessionMenuItem, SessionRenameDialog } from '../src/client/session-actions/RenameSession.tsx'
@@ -153,7 +154,8 @@ async function bench() {
   } as never)
   const pickDirectory = vi.fn(() => Promise.resolve({ ok: true as const, value: '/projects/picked' }))
   const directoryPicker = { pick: pickDirectory }
-  Object.assign(new TestRemote(ctx), { directoryPicker })
+  const prompt = vi.fn(async (_request: { sessionId: string }) => ({ ok: true as const, value: { accepted: true as const } }))
+  Object.assign(new TestRemote(ctx, { session: { prompt } }), { directoryPicker })
   ctx.provide('remote.directoryPicker', directoryPicker as never)
   const locale = new LocaleRuntime(ctx)
   // These specs assert the shipped Chinese copy. There is no jsdom `window`
@@ -164,7 +166,7 @@ async function bench() {
   return {
     ctx, slots: ctx.get('slots') as SlotRegistry, locale, create, rename, commands, accessSource,
     retain, using, selectPanel, search, renameSession, binding, fork, pickDirectory, pinSession, unpinSession,
-    workspacesSubscribe, initializeDefault, history, scope, sessionOf,
+    workspacesSubscribe, initializeDefault, history, scope, sessionOf, prompt,
     setWorkspaces: (snapshot: WorkspaceSnapshot): void => { workspaceSnapshot = snapshot },
     setSessions: (snapshot: SessionListState): void => { sessionSnapshot = snapshot },
   }
@@ -174,7 +176,7 @@ type HoleName = 'sidebar.workspaces' | 'conversation.hero.workspace' | 'conversa
 
 const MENU_ITEM = 'sidebar.workspaces.session.menu.item'
 const ROW_ACTION = 'sidebar.workspaces.session.row.action'
-type RowListName = typeof MENU_ITEM | typeof ROW_ACTION | 'shell.overlay'
+type RowListName = typeof MENU_ITEM | typeof ROW_ACTION | 'shell.overlay' | 'sidebar.brand.action'
 
 /** Declare any subset of the holes with a single root registration ('root' is a single slot); the overlay is a list. */
 function declare(slots: SlotRegistry, ...names: HoleName[]): () => void {
@@ -219,7 +221,8 @@ describe('ui-workspace apply', () => {
 
   it('declares the services it drives', () => {
     expect(inject).toEqual([
-      'slots', 'sessions', 'workspaces', 'locale', 'remote', 'remote.directoryPicker', 'layout', 'shortcuts', 'remoteAccess',
+      'slots', 'sessions', 'workspaces', 'locale', 'remote', 'remote.directoryPicker', 'remote.session', 'layout', 'shortcuts',
+      'remoteAccess',
     ])
   })
 
@@ -307,7 +310,8 @@ describe('ui-workspace apply', () => {
     expect(rowToastEntry.store).toBeUndefined()
     expect(b.slots.entries('workspace.toast').map(row => row.options.key)).toEqual([
       'sessionIdCopied', 'sessionIdCopyFailed', 'pinFailed', 'unpinFailed', 'archivedNotOpenable',
-      'defaultWorkspaceFailed', 'shortcutForkFailed', 'createFailed', 'forkRequiresOpen', 'archived', 'stoppedAndArchived',
+      'defaultWorkspaceFailed', 'shortcutForkFailed', 'createFailed', 'forkRequiresOpen',
+      'interruptedContinued', 'interruptedContinueFailed', 'archived', 'stoppedAndArchived',
     ])
     for (const registration of b.slots.entries('workspace.toast')) {
       expect(registration.locale).toBe('workspace')
@@ -322,6 +326,86 @@ describe('ui-workspace apply', () => {
       expect(faceOf(entry(b.slots, MENU_ITEM, id))).not.toHaveProperty('notify')
       expect(faceOf(entry(b.slots, ROW_ACTION, id))).not.toHaveProperty('notify')
     }
+  })
+
+  describe('Continue control', () => {
+    const turn = (status: string, cancelCause: string | null = null) => ({ latestTurn: { status, cancelCause } }) as NonNullable<SessionSummary['projectionValues']>
+    const interrupted = (id: string, extra: Partial<SessionSummary> = {}): SessionSummary => ({
+      ...summary(id, 1), projectionValues: turn('error'), ...extra,
+    })
+
+    async function continueBench() {
+      const b = await bench()
+      onTestFinished(() => b.ctx.fiber.dispose())
+      b.slots.register({
+        name: 'root',
+        children: { 'sidebar.brand.action': { kind: 'list', scope: 'root' }, 'shell.overlay': { kind: 'list', scope: 'root' } },
+      } as never, () => null)
+      return b
+    }
+
+    it('joins the brand row and sends Continue. to each interrupted Session, then reports the admitted count', async () => {
+      const b = await continueBench()
+      b.setSessions(sessionState([
+        interrupted('errored'),
+        interrupted('stopped', { projectionValues: turn('aborted', 'disposed') }),
+        interrupted('running', { running: true }),
+        interrupted('archived'),
+        interrupted('child', { origin: 'subagent' }),
+        interrupted('cancelled', { projectionValues: turn('aborted', 'user') }),
+      ]))
+      b.setWorkspaces(workspaceState([], [sid('archived')]))
+      await b.ctx.plugin({ inject: [...inject], apply }).await()
+      const registration = b.slots.entries('sidebar.brand.action')[0]!
+      expect([registration.options.id, registration.options.order, registration.component, registration.locale])
+        .toEqual(['continue-interrupted', 100, ContinueInterruptedButton, 'workspace'])
+      const face = faceOf(registration) as ContinueInterruptedInjected
+      expect(face.hooks.interruptedSessions.getSnapshot()).toEqual({ sessionIds: ['errored', 'stopped'], continuing: false })
+
+      face.continueInterruptedSessions()
+      await settled()
+      expect(b.prompt.mock.calls.map(([request]) => request)).toEqual(['errored', 'stopped'].map(sessionId => ({
+        requestId: expect.any(String) as string,
+        sessionId,
+        mode: 'queue',
+        content: [{ type: 'text', text: 'Continue.' }],
+        clientTimeZone: expect.any(String) as string,
+      })))
+      const toast = faceOf(entry(b.slots, 'shell.overlay', 'workspace.row-toast')) as RowToastInjected
+      expect(toast.hooks.toast.getSnapshot()).toMatchObject({ kind: 'interruptedContinued', count: 2 })
+      expect(face.hooks.interruptedSessions.getSnapshot().sessionIds).toEqual([])
+    })
+
+    it('counts rejected and failed prompts in one warning and keeps offering those Sessions', async () => {
+      const b = await continueBench()
+      b.setSessions(sessionState([interrupted('rejected'), interrupted('unreachable')]))
+      b.prompt.mockResolvedValueOnce({ ok: false, error: new RemoteError('session/agent-busy', 'busy', { reason: 'x' }) } as never)
+      b.prompt.mockRejectedValueOnce(new Error('wire down'))
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      onTestFinished(() => { warn.mockRestore() })
+      await b.ctx.plugin({ inject: [...inject], apply }).await()
+      const face = faceOf(entry(b.slots, 'sidebar.brand.action', 'continue-interrupted')) as ContinueInterruptedInjected
+
+      face.continueInterruptedSessions()
+      await settled()
+      const toast = faceOf(entry(b.slots, 'shell.overlay', 'workspace.row-toast')) as RowToastInjected
+      expect(toast.hooks.toast.getSnapshot()).toMatchObject({ kind: 'interruptedContinueFailed', count: 2 })
+      expect(face.hooks.interruptedSessions.getSnapshot()).toEqual({ sessionIds: ['rejected', 'unreachable'], continuing: false })
+      expect(warn).toHaveBeenCalledTimes(2)
+    })
+
+    it('removes the control and its list watcher with the plugin', async () => {
+      const b = await continueBench()
+      const unsubscribe = vi.fn()
+      const subscribe = vi.spyOn(b.ctx.get('sessions')!.list, 'subscribe').mockImplementation(() => unsubscribe)
+      const fiber = b.ctx.plugin({ inject: [...inject], apply })
+      await fiber.await()
+      expect(b.slots.entries('sidebar.brand.action')).toHaveLength(1)
+      expect(subscribe).toHaveBeenCalled()
+      await fiber.dispose()
+      expect(b.slots.entries('sidebar.brand.action')).toHaveLength(0)
+      expect(unsubscribe).toHaveBeenCalledTimes(subscribe.mock.calls.length)
+    })
   })
 
   it.each([true, false])('copies an ID directly without loading its Session (clipboard accepted: %s)', async (accepted) => {

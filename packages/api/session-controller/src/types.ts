@@ -7,7 +7,7 @@ import type {
 import type { Branded } from '@deepseek-ai/dsh-brand'
 import type { LlmAttemptId, MessageId } from '@deepseek-ai/dsh-llm/brand'
 import type { TextBlock } from '@deepseek-ai/dsh-llm'
-import type { SessionId, SessionSeqCursor } from '@deepseek-ai/dsh-session/types'
+import type { SessionId, SessionSeqCursor, TurnEndCancelCause, TurnEndReason } from '@deepseek-ai/dsh-session/types'
 import type { SessionProjectionMap } from '@deepseek-ai/dsh-session-projection/types'
 import type { Principal } from '@deepseek-ai/dsh-typert-protocol'
 import type { TurnTokenUsage } from '@deepseek-ai/dsh-token-meter/turn-usage'
@@ -18,6 +18,8 @@ declare module '@deepseek-ai/dsh-session-projection/types' {
   interface SessionProjectionStateMap {
     /** Host state persisted for cold Session list summaries. */
     sessionListMetadata: SessionListMetadata
+    /** Latest turn boundary persisted for cold Session list summaries; null before the first turn. */
+    latestTurn: LatestTurnState | null
     /** Host state for the boot-constant image-limit view. */
     imageLimits: null
     /** Durable model selection already used by a request and still pending for a later request. */
@@ -26,6 +28,8 @@ declare module '@deepseek-ai/dsh-session-projection/types' {
   interface SessionProjectionMap {
     /** Persisted facts used to summarize a Session without activating it. */
     sessionListMetadata: SessionListMetadata
+    /** Whether the latest turn is open or how it ended; null before the first turn. */
+    latestTurn: LatestTurnState | null
     /** Image-intake limits enforced by the Session prompt endpoint. */
     imageLimits: ImageAttachmentLimits
     /** Durable model selection already used and selected for the next request. */
@@ -49,6 +53,20 @@ export interface SessionListMetadata {
   readonly blank: boolean
   /** Latest human-authored prompt time in the folded prefix. */
   readonly lastPromptAt: number | null
+}
+
+/** `open` from a `turn/start` until its `turn/end`, then that end's reason kind. */
+export type LatestTurnStatus = 'open' | TurnEndReason['kind']
+
+/**
+ * The latest turn boundary in a Session log. A cold Session-list row reports
+ * an `open` turn as `interrupted`: no Agent runs it, and the next resume
+ * appends that closer.
+ */
+export interface LatestTurnState {
+  readonly status: LatestTurnStatus
+  /** Cancellation cause kind of an `aborted` end; null for every other status. */
+  readonly cancelCause: TurnEndCancelCause['kind'] | null
 }
 
 /**

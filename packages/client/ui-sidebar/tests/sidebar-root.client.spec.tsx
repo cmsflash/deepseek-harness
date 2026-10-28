@@ -62,6 +62,7 @@ function mountShell({ collapsed = false, width = 300, shortcuts = [] }: {
       ) => {
         if (key === 'sidebar.brand.mark') return brandMark
         if (key === 'sidebar.brand.name') return brandName
+        if (key === 'sidebar.brand.action') return <span data-testid="brand-action-seat" />
         if (key === 'sidebar.toggle.badge') return null
         if (key === 'sidebar.settings') {
           settingsOwner = owner
@@ -215,6 +216,19 @@ describe('SidebarRoot shell', () => {
     expect(screen.getByTestId('region')).toBeTruthy()
     b.regionOwner().expandSidebar()
     expect(b.toggleSidebar).toHaveBeenCalledOnce()
+  })
+
+  it('places the brand-row actions before the toggle and leaves them out of the rail', () => {
+    vi.useFakeTimers()
+    const b = mountShell()
+    const seat = screen.getByTestId('brand-action-seat')
+    const toggle = screen.getByRole('button', { name: 'Collapse sidebar' })
+    expect(seat.compareDocumentPosition(toggle) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(seat.parentElement).toBe(toggle.parentElement)
+    b.rerender({ collapsed: true })
+    vi.advanceTimersByTime(200)
+    b.rerender({})
+    expect(screen.queryByTestId('brand-action-seat')).toBeNull()
   })
 
   it('renders statically collapsed on a cold start (no crossfade classes)', () => {

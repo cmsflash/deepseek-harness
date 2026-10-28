@@ -5,7 +5,7 @@ import { scheduler } from 'node:timers/promises'
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-agent-preset-registry'
 import type { ImageAttachmentLimits } from '@deepseek-ai/dsh-attachment'
-import type { Session, SessionEvent, SessionHeader, SessionId } from '@deepseek-ai/dsh-session'
+import type { Session, SessionEvent, SessionHeader, SessionId, TurnEndCancelCause } from '@deepseek-ai/dsh-session'
 import type { ProjectionSnapshot } from '@deepseek-ai/dsh-session-projection'
 import type {} from '@deepseek-ai/dsh-session-projection-cache'
 import { SessionQueryError, type SessionRecord, type SessionSearchCursor } from '@deepseek-ai/dsh-session-query'
@@ -16,8 +16,8 @@ import {
   SESSION_SEARCH_SNIPPET_MAX_CODE_POINTS,
 } from './types.ts'
 import type {
-  SessionListMetadata, SessionProjectionHints, SessionProjectionValues, SessionSearchItem,
-  SessionSearchValue, SessionSummary,
+  LatestTurnState, LatestTurnStatus, SessionListMetadata, SessionProjectionHints, SessionProjectionValues,
+  SessionSearchItem, SessionSearchValue, SessionSummary,
 } from './types.ts'
 
 const SEARCH_PROVIDER_CALL_LIMIT = 100
@@ -28,6 +28,34 @@ const sessionListMetadataSchema: z.ZodType<SessionListMetadata> = z.object({
   blank: z.boolean(),
   lastPromptAt: z.number().nullable(),
 })
+
+const isString = (value: unknown): boolean => typeof value === 'string'
+
+// Turn-end reason kinds are merge-extensible, so any string is accepted.
+const latestTurnSchema: z.ZodType<LatestTurnState | null> = z.object({
+  status: z.custom<LatestTurnStatus>(isString),
+  cancelCause: z.custom<TurnEndCancelCause['kind']>(isString).nullable(),
+}).nullable()
+
+/**
+ * Advance the latest-turn projection by one committed event.
+ * @param state - latest turn before the event, or null before the first turn.
+ * @param event - next committed Session event.
+ * @returns the original or advanced latest turn.
+ */
+export function applyLatestTurn(state: LatestTurnState | null, event: SessionEvent): LatestTurnState | null {
+  switch (event.type) {
+    case 'turn/start':
+      return state?.status === 'open' ? state : { status: 'open', cancelCause: null }
+    case 'turn/end': {
+      const { reason } = event.data
+      return { status: reason.kind, cancelCause: reason.kind === 'aborted' ? reason.reason.kind : null }
+    }
+    // Other events do not move the turn boundary.
+    default:
+      return state
+  }
+}
 
 const imageLimitsSchema = z.object({
   maxImageBytes: z.number().int().positive(),
@@ -87,6 +115,14 @@ export class ApiSessionList {
       init: () => ({ blank: true, lastPromptAt: null }),
       apply: applySessionListMetadata,
       wire: { viewSchema: sessionListMetadataSchema, view: state => state },
+      stateVersion: 1,
+    })
+    ctx.sessionProjections.register<'latestTurn', LatestTurnState | null>({
+      key: 'latestTurn',
+      stateSchema: latestTurnSchema,
+      init: () => null,
+      apply: applyLatestTurn,
+      wire: { viewSchema: latestTurnSchema, view: state => state },
       stateVersion: 1,
     })
     ctx.inject(['attachments'], (attachmentCtx) => {
@@ -165,7 +201,7 @@ export class ApiSessionList {
   }
 
   private summarizeCold({ header, formatStatus }: SessionRecord): SessionSummary {
-    const projections = this.projectionsFor(header, undefined)
+    const projections = closeOpenTurn(this.projectionsFor(header, undefined))
     const metadata = projections?.values.sessionListMetadata
     return {
       sessionId: header.id,
@@ -326,6 +362,20 @@ function hintsOf(
   // Listing hints contain every wire value the source currently holds but
   // remain partial: missing cells and cache rows are never materialized here.
   return { kind, asOfSeq: block.asOfSeq, values: block.values as SessionProjectionValues }
+}
+
+/**
+ * Report a cold row's cached open turn as the `interrupted` end that cold reads
+ * and the next resume append: no Agent runs a cold Session, so a checkpoint
+ * taken mid-turn means the Host stopped before that turn ended.
+ * @param hints - the cold row's cached hints.
+ * @returns the hints, with an open latest turn closed as interrupted.
+ */
+function closeOpenTurn(hints: SessionProjectionHints | undefined): SessionProjectionHints | undefined {
+  if (hints?.values.latestTurn?.status !== 'open') return hints
+  const latestTurn = { status: 'interrupted', cancelCause: null } as const satisfies LatestTurnState
+  // A spread would drop the index signature that lets interface-typed values coexist.
+  return { ...hints, values: Object.assign({}, hints.values, { latestTurn }) }
 }
 
 function normalizeSearchQuery(query: string): string {

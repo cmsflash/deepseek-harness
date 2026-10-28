@@ -29,7 +29,7 @@ The read and write faces of `SessionProjectionCache` and their callers:
 
 | Face | What it does with the record | Writes back | Callers |
 |---|---|---|---|
-| `write(session)` | writes the checkpoint at three mandatory points plus a throttle | yes | the cache's own listeners |
+| `write(session)` | writes the checkpoint at four mandatory points plus a throttle | yes | the cache's own listeners |
 | `hydratePrepared(session, events)` | uses `rows` as the fold starting point and applies events from `row.seq + 1`; the result lands in live cells | the next checkpoint | `session-query/src/observation.ts` |
 | `coldSnapshot(meta, cut, events)` | fold starting point plus write-back | yes | no production caller |
 | `cachedSnapshot(meta, cut, keys?)` | `viewCheckpoint`: each row passes `ver` and `stateSchema`, is `view`ed, and returned | no | `list.ts`, `session-reference` |

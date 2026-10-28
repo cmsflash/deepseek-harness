@@ -45,6 +45,8 @@ Client journal 在发布 follow 快照、live entry 或历史页之前验证当�
 
 列表行在状态可用时携带 `formatStatus`，Client 无需请求其投影即可识别需要迁移的 Session。
 
+`latestTurn` 投影从 `turn/start` 起为 `open`，直到对应的 `turn/end`，之后为该结束原因的种类，`aborted` 时另带取消原因；首个 turn 之前为 null。冷列表行把缓存中的 `open` turn 报告为 `interrupted`，即冷读取与下次恢复会追加的收尾，因此 Client 无需加载日志即可找出最后一个 turn 被中断的 Session。
+
 Host 仅在配置的工作时间片耗尽时，于完整条目之间让出事件循环；剩余工作较少时直接返回，不强制让出。每行及每次让出之后检查请求取消，取消时拒绝返回部分结果。每行同步计算；列表不承诺跨 Session 的统一快照。已经进入冷态队列的 Session 若在让出期间接入，仍返回缓存行：Client 对进行中请求的变更重放会纠正其可用性，带序号的投影会覆盖缓存提示。
 
 `sessions.setStepDetail` 修改阅读偏好，但不丢弃已加载事件。消费者的 `requireFullHistory()` 要求在该 Session 对象的生命周期内优先，通过精确区间读取恢复已加载窗口。恢复保留活动 assistant 的流式内容与已有分页，拒绝过期窗口响应，并通过 `loadingStepDetail`、`stepDetailError` 报告状态；调用方可以重试失败的读取。这一策略由[完整历史读取决策](../../../.agents/notes/implemented/bug-fix/2026-09-10-consumer-required-full-history.zh.md)拥有。
@@ -134,6 +136,7 @@ GUI 模型选择要求确切提供方／模型对出现在可用目录中；不�
 - 文件引用补全使用共享 Agent lookup，因此可能恢复冷 Session；`skills/list` 目录是不激活 Agent 的 skill 元数据读取路径。
 - 受理/运行的展示记忆只存在于客户端内存，页面重载后即丢失。
 - 该记忆不在 tab 之间共享：同一会话可能在一个 tab 中已转正，在另一个 tab 中仍显示为 `New Session`。
+- 冷列表行只有在注册了 `latestTurn` 的 Host 为该会话写过检查点后才报告该值；此后未再活动的较旧会话不报告它。
 
 
 <a id="dev-note"></a>

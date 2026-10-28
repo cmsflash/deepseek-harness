@@ -12,7 +12,8 @@
  * `shell.overlay` (see the contract module doc). It also declares two
  * Session-row seats: the leading decoration a row renders only while its own
  * primary state is idle, and the section the row's hover card renders between
- * its relative time and its trailing status line. Export discipline:
+ * its relative time and its trailing status line. The Continue control joins
+ * the shell's `sidebar.brand.action` list. Export discipline:
  * packages/client/AGENTS.md.
  */
 import type {} from '@deepseek-ai/dsh-client-product-analytics/client'
@@ -23,10 +24,12 @@ import type {
   IWorkspaces, SessionActivity, WorkspaceArchiveError, WorkspaceId, WorkspaceSnapshot,
 } from '@deepseek-ai/dsh-api-workspace-controller/client'
 import type { RemoteEndpoint } from '@deepseek-ai/dsh-api-remote-access/client'
+import type { SessionRequestId } from '@deepseek-ai/dsh-api-session-controller/types'
 import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
 import { writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { HostObservable, SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
+import { randomUUID } from '@deepseek-ai/dsh-util-crypto'
 // Type-only: pulls the Controller service merges.
 import type {} from '@deepseek-ai/dsh-api-session-controller/client'
 import type {} from '@deepseek-ai/dsh-api-workspace-controller/client'
@@ -38,8 +41,8 @@ import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 // Type-only: pulls the Session root standard-hook merge.
 import type {} from '@deepseek-ai/dsh-client-ui-session/client'
 import {
-  type ArchiveSessionInjected, type ForkSessionInjected, menuOpenStateFactory, type PinSessionInjected,
-  type SessionArchiveConfirmInjected, type SessionArchiveConfirmRequest,
+  type ArchiveSessionInjected, type ContinueInterruptedInjected, type ForkSessionInjected, menuOpenStateFactory,
+  type PinSessionInjected, type SessionArchiveConfirmInjected, type SessionArchiveConfirmRequest,
   type RenameSessionInjected, type RowToast, type RowToastInjected, type RowToastState, type SessionRenameDialogInjected,
   type SessionIdInjected, type WorkspaceBrowserInjected, type WorkspacePickerInjected,
 } from './contract/slots.ts'
@@ -48,6 +51,8 @@ import { UiWorkspaceService } from './navigation.ts'
 import { createWorkspaceViewStore } from './stores.ts'
 import { WorkspaceBrowser } from './rows/WorkspaceBrowser.tsx'
 import { ArchiveSessionMenuItem, ArchiveSessionRowButton, SessionArchiveConfirmDialog } from './session-actions/ArchiveSession.tsx'
+import { ContinueInterruptedButton } from './session-actions/ContinueInterrupted.tsx'
+import { createInterruptedSessions } from './session-actions/continue-interrupted.ts'
 import { derive } from './session-actions/derived.ts'
 import { ForkSessionMenuItem } from './session-actions/ForkSession.tsx'
 import { PinSessionMenuItem, PinSessionRowButton } from './session-actions/PinSession.tsx'
@@ -91,6 +96,9 @@ declare module '@deepseek-ai/dsh-api-session-controller/client' {
 /** Dictionary namespace owned by this plugin. */
 const NS = 'workspace'
 
+/** The prompt the Continue control sends to each interrupted Session. */
+const CONTINUE_PROMPT = 'Continue.'
+
 /**
  * Required services (cordis fiber inject). The target slots are declared by
  * the ui-sidebar / ui-conversation applies, whose activation order relative
@@ -100,7 +108,8 @@ const NS = 'workspace'
  * declaration through `slots.inject()` instead of assuming order.
  */
 export const inject = [
-  'slots', 'sessions', 'workspaces', 'locale', 'remote', 'remote.directoryPicker', 'layout', 'shortcuts', 'remoteAccess',
+  'slots', 'sessions', 'workspaces', 'locale', 'remote', 'remote.directoryPicker', 'remote.session', 'layout', 'shortcuts',
+  'remoteAccess',
 ]
 
 /**
@@ -261,6 +270,36 @@ export function apply(ctx: Context): void {
     hooks: { toast: rowToast },
     dismissToast: () => { rowToast.set(null) },
   })
+  const interruptedSessions = createInterruptedSessions(
+    sessions.list,
+    workspaces.list,
+    async (sessionId) => {
+      try {
+        const result = await ctx.remote.session.prompt({
+          requestId: randomUUID() as SessionRequestId,
+          sessionId,
+          mode: 'queue',
+          content: [{ type: 'text', text: CONTINUE_PROMPT }],
+          clientTimeZone: new Intl.DateTimeFormat().resolvedOptions().timeZone,
+        })
+        if (!result.ok) console.warn(`continue ${sessionId} rejected:`, result.error)
+        return result.ok
+      } catch (reason: unknown) {
+        console.warn(`continue ${sessionId} failed:`, reason)
+        return false
+      }
+    },
+    ({ continued, failed }) => {
+      notify(failed > 0
+        ? { kind: 'interruptedContinueFailed', count: failed }
+        : { kind: 'interruptedContinued', count: continued })
+    },
+  )
+  ctx.effect(() => interruptedSessions.watch(), 'ui-workspace: continued Sessions')
+  const continueInterruptedInjected = (): ContinueInterruptedInjected => ({
+    hooks: { interruptedSessions: interruptedSessions.state },
+    continueInterruptedSessions: () => { void interruptedSessions.continueAll() },
+  })
   const browserInjected = (): WorkspaceBrowserInjected => ({
     // Explicit group actions keep their target; unscoped New Session inherits
     // the current Session Workspace before the recent-Workspace fallback.
@@ -324,6 +363,9 @@ export function apply(ctx: Context): void {
     yield ctx.slots.register({ name: 'sidebar.workspaces.session.row.action', id: 'archive', order: 100, locale: NS, inject: archiveInjected }, ArchiveSessionRowButton)
     yield ctx.slots.register({ name: 'sidebar.workspaces.session.row.action', id: 'pin', order: 200, locale: NS, inject: pinInjected }, PinSessionRowButton)
   })
+  ctx.slots.inject('sidebar.brand.action', () => ctx.slots.register({
+    name: 'sidebar.brand.action', id: 'continue-interrupted', order: 100, locale: NS, inject: continueInterruptedInjected,
+  }, ContinueInterruptedButton))
   // The surfaces the actions raise live in the frame-wide layer: they must
   // outlive the row menu the action sat in.
   ctx.slots.inject('shell.overlay', function* () {
