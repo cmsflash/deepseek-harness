@@ -23,12 +23,13 @@ import type { ArchiveToastEntryProps } from '../src/client/contract/toast.ts'
 import { en as commonEn } from '@deepseek-ai/dsh-client-locale/src/locales/en.ts'
 import { zh as commonZh } from '@deepseek-ai/dsh-client-locale/src/locales/zh.ts'
 import type {
-  MenuOpenState, RowToast, RowToastState, SessionArchiveConfirmInjected, SessionArchiveConfirmRequest,
-  SessionRenameDialogInjected, SessionRenameTarget,
+  InterruptedSessionsState, MenuOpenState, RowToast, RowToastState, SessionArchiveConfirmInjected,
+  SessionArchiveConfirmRequest, SessionRenameDialogInjected, SessionRenameTarget,
 } from '../src/client/contract/slots.ts'
 import {
   ArchiveSessionMenuItem, ArchiveSessionRowButton, SessionArchiveConfirmDialog,
 } from '../src/client/session-actions/ArchiveSession.tsx'
+import { ContinueInterruptedButton } from '../src/client/session-actions/ContinueInterrupted.tsx'
 import { ForkSessionMenuItem } from '../src/client/session-actions/ForkSession.tsx'
 import { PinSessionMenuItem, PinSessionRowButton } from '../src/client/session-actions/PinSession.tsx'
 import { RenameSessionMenuItem, SessionRenameDialog } from '../src/client/session-actions/RenameSession.tsx'
@@ -195,6 +196,38 @@ describe('pin action', () => {
     const button = render(<PinSessionRowButton {...actionRow} {...pin} />)
     expect(button.container.childElementCount).toBe(0)
     expect(screen.queryByRole('button')).toBeNull()
+  })
+})
+
+describe('Continue control', () => {
+  const brandAction: PropsRuntime<'sidebar.brand.action'> & PropsLocale<'workspace'> = { t, ...standard }
+  /** The Continue share over a fixed state: the bound state hook and the bulk callback. */
+  const continueShare = (sessionIds: readonly string[], continuing = false) => ({
+    useInterruptedSessions: hook<InterruptedSessionsState>({ sessionIds: sessionIds.map(sid), continuing }),
+    continueInterruptedSessions: vi.fn(),
+  })
+
+  it('renders nothing while no Session is interrupted', () => {
+    const view = render(<ContinueInterruptedButton {...brandAction} {...continueShare([])} />)
+    expect(view.container.childElementCount).toBe(0)
+  })
+
+  it.each([t, tEn])('shows an icon-only button that continues every interrupted Session on click', (translate) => {
+    const share = continueShare(['a', 'b'])
+    render(<ContinueInterruptedButton {...brandAction} t={translate} {...share} />)
+    const button = screen.getByRole('button', { name: translate('continueInterrupted') })
+    expect(button.textContent).toBe('')
+    fireEvent.click(button)
+    expect(share.continueInterruptedSessions).toHaveBeenCalledOnce()
+  })
+
+  it('ignores clicks while sending', () => {
+    const share = continueShare(['a'], true)
+    render(<ContinueInterruptedButton {...brandAction} t={tEn} {...share} />)
+    const button = screen.getByRole('button', { name: 'Send “Continue.” to interrupted sessions' })
+    expect(button.getAttribute('aria-disabled')).toBe('true')
+    fireEvent.click(button)
+    expect(share.continueInterruptedSessions).not.toHaveBeenCalled()
   })
 })
 
@@ -796,6 +829,18 @@ describe('RowActionToast', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it.each([t, tEn])('reports bulk continue outcomes with singular and plural counts', async (translate) => {
+    const { notify } = await toastSurface(undefined, translate)
+    notify({ kind: 'interruptedContinued', count: 1 })
+    expect(screen.getByRole('alert').textContent).toBe(translate('toast.interruptedContinued.one', { n: 1 }))
+    notify({ kind: 'interruptedContinued', count: 3 })
+    expect(screen.getByRole('alert').textContent).toBe(translate('toast.interruptedContinued.other', { n: 3 }))
+    notify({ kind: 'interruptedContinueFailed', count: 1 })
+    expect(screen.getByRole('alert').textContent).toBe(translate('toast.interruptedContinueFailed.one', { n: 1 }))
+    notify({ kind: 'interruptedContinueFailed', count: 2 })
+    expect(screen.getByRole('alert').textContent).toBe(translate('toast.interruptedContinueFailed.other', { n: 2 }))
   })
 
   it('shows a refused creation with the Host reason and holds it as long as the archived notice', async () => {

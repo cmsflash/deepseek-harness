@@ -31,6 +31,7 @@ import {
   mountAgentLoopTestDependencies,
   mountAgentLoopTestHarness,
 } from '@deepseek-ai/dsh-agent-loop-testkit'
+import { applyLatestTurn } from '../src/list.ts'
 import { createSessionTestRemote, testSessionPersistence, type TestSessionRemote } from './test-remote.ts'
 
 const ownedContexts = new Set<Context>()
@@ -570,6 +571,82 @@ describe('session.list projections column', () => {
     expect(seenKeys).toBe(ctx.sessionProjections.summaryKeys())
   })
 
+  it('lists a live Session\'s open turn as open', async () => {
+    const { ctx, session } = await harness(true)
+    const gateway = await remote(ctx)
+    await new Promise(resolve => setTimeout(resolve, 0))
+    session.append('turn/start', { turn: 1 })
+    const response = await gateway.list(request({}))
+    if (!response.ok) throw new Error('unreachable')
+    const row = response.value.items.find(item => item.sessionId === session.id)
+    expect(row?.projections?.values.latestTurn).toEqual({ status: 'open', cancelCause: null })
+  })
+
+  it('reports a cold row\'s cached open turn as interrupted and passes ended turns through', async () => {
+    const { ctx } = await harness(true)
+    const openId = SessionId('session-cold-open-turn')
+    const endedId = SessionId('session-cold-ended-turn')
+    const load = () => { throw new Error('list must not load event logs') }
+    ctx.provide('sessionPersistence', testSessionPersistence(ctx, {
+      list: async () => [openId, endedId].map((id, index) => ({
+        version: SESSION_FORMAT_VERSION, id, createdAt: index + 1, isSeeded: false, cwd: '/tmp',
+      })),
+      inspect: load,
+      open: load,
+    }) as never)
+    const cached = new Map<unknown, object>([
+      [openId, { status: 'open', cancelCause: null }],
+      [endedId, { status: 'aborted', cancelCause: 'disposed' }],
+    ])
+    ctx.provide('sessionProjectionCache', {
+      cachedSnapshot: (meta: { id: unknown }) => ({ asOfSeq: SessionSeq(3), values: { latestTurn: cached.get(meta.id) } }),
+    } as never)
+    const response = await (await remote(ctx)).list(request({}))
+    if (!response.ok) throw new Error('unreachable')
+    const latestTurn = (id: SessionId) => response.value.items.find(item => item.sessionId === id)?.projections?.values.latestTurn
+    expect(latestTurn(openId)).toEqual({ status: 'interrupted', cancelCause: null })
+    expect(latestTurn(endedId)).toEqual({ status: 'aborted', cancelCause: 'disposed' })
+  })
+
+  it('lists a Session the Host stopped mid-turn as interrupted from its persisted checkpoint', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dsh-api-projcache-'))
+    const ctx = new Context()
+    try {
+      await ctx.plugin(Storage)
+      await ctx.plugin(StorageJson, { root })
+      await ctx.plugin(StorageDomain, { backend: 'json' })
+      await ctx.plugin(SessionStore)
+      await ctx.plugin(AgentRegistry)
+      await ctx.plugin(SessionProjectionRegistry)
+      await ctx.plugin(SessionProjectionCache, { writeEveryEvents: 100, writeIntervalMs: 60_000 })
+      const gateway = await remote(ctx)
+      await new Promise(resolve => setTimeout(resolve, 0))
+
+      const id = SessionId('session-cold-stopped-mid-turn')
+      let session: Session | undefined
+      const owner = await ctx.plugin(Object.assign((sessionCtx: Context) => {
+        session = sessionCtx.sessions.create(id, { meta: { createdAt: 5, cwd: '/workspace' } })
+      }, { inject: ['sessions'] }))
+      if (session === undefined) throw new Error('session was not created')
+      session.append('turn/start', { turn: 1 })
+      await ctx.sessionProjectionCache.write(session)
+      const header = session.header
+      await owner.dispose()
+      ctx.provide('sessionPersistence', {
+        list: async () => [{ header, revision: 'test:cold-stopped-mid-turn:1' }],
+      } as never)
+
+      const response = await gateway.list(request({}))
+      if (!response.ok) throw new Error('unreachable')
+      const row = response.value.items.find(item => item.sessionId === id)
+      expect(row?.running).toBe(false)
+      expect(row?.projections?.values.latestTurn).toEqual({ status: 'interrupted', cancelCause: null })
+    } finally {
+      await ctx.fiber.dispose()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('keeps persisted host-only state out of a cold session.list response', async () => {
     const root = await mkdtemp(join(tmpdir(), 'dsh-api-projcache-'))
     const ctx = new Context()
@@ -761,7 +838,7 @@ describe('Session control projection frames', () => {
     await new Promise(resolve => setTimeout(resolve, 0))
     const abort = new AbortController()
     const stream = proxy.control(abort.signal)
-    const collected = collect(stream, 5, abort)
+    const collected = collect(stream, 6, abort)
 
     const now = vi.spyOn(Date, 'now').mockReturnValue(100)
     seedMessages(session, 1)
@@ -789,8 +866,33 @@ describe('Session control projection frames', () => {
       { type: 'projection', sessionId: session.id, key: 'sessionListMetadata', value: { blank: false, lastPromptAt: 100 }, seq: 1 },
       { type: 'projection', sessionId: session.id, key: 'sessionListMetadata', value: { blank: false, lastPromptAt: 300 }, seq: 2 },
     ])
+    expect(frames.filter(
+      (f): f is Extract<SessionControlFrame, { type: 'projection' }> =>
+        f.type === 'projection' && f.key === 'latestTurn',
+    )).toEqual([
+      { type: 'projection', sessionId: session.id, key: 'latestTurn', value: { status: 'open', cancelCause: null }, seq: 1 },
+    ])
     // Frame seq aligns with the tail block's asOfSeq vocabulary (higher-seq-wins compatible).
     const tail = await opening(proxy, session.id)
     expect(tail.projections.asOfSeq).toBe(pushes.at(-1)?.seq)
+  })
+})
+
+describe('latestTurn fold', () => {
+  const event = (type: SessionEvent['type'], data: object): SessionEvent =>
+    ({ type, seq: SessionSeq(0), time: 0, data }) as SessionEvent
+
+  it('is open from turn/start until turn/end, then carries the end reason and an aborted end\'s cause', () => {
+    const opened = applyLatestTurn(null, event('turn/start', { turn: 1 }))
+    expect(opened).toEqual({ status: 'open', cancelCause: null })
+    expect(applyLatestTurn(opened, event('turn/start', { turn: 2 }))).toBe(opened)
+    expect(applyLatestTurn(opened, event('step/start', { turn: 1, step: 1 }))).toBe(opened)
+    expect(applyLatestTurn(opened, event('turn/end', {
+      turn: 1, reason: { kind: 'error', error: { message: 'overloaded', code: 'UNKNOWN' } },
+    }))).toEqual({ status: 'error', cancelCause: null })
+    expect(applyLatestTurn(opened, event('turn/end', { turn: 1, reason: { kind: 'aborted', reason: { kind: 'disposed' } } })))
+      .toEqual({ status: 'aborted', cancelCause: 'disposed' })
+    expect(applyLatestTurn(null, event('turn/end', { turn: 1, reason: { kind: 'completed' } })))
+      .toEqual({ status: 'completed', cancelCause: null })
   })
 })

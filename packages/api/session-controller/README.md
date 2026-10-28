@@ -49,6 +49,8 @@ Every Remote endpoint is access-controlled: a Peer whose principal is not the ow
 
 List rows carry `formatStatus` when available, so Clients can identify migration-required Sessions without requesting their projections.
 
+The `latestTurn` projection is `open` from a `turn/start` until its `turn/end`, then that end's reason kind, plus the cancellation cause for `aborted`; it is null before the first turn. A cold list row reports a cached `open` turn as `interrupted`, the closer that cold reads and the next resume append, so Clients can find Sessions whose last turn was cut off without loading their logs.
+
 Host list generation yields between complete rows only when its configured work slice is exhausted; cheap remaining work returns without a forced yield. Request cancellation is checked per row and after each yield and rejects without partial results. Each row is synchronous; the list does not promise one cross-Session snapshot. A Session already queued as cold remains a cached row if it attaches during a yield: Client in-flight mutation replay corrects its availability, and sequenced projections supersede cached hints.
 
 `sessions.setStepDetail` changes the reading preference without discarding loaded events. A consumer's `requireFullHistory()` takes precedence for that Session object's lifetime and recovers the loaded interval through an exact range read. Recovery preserves the live assistant prefix and existing pages, rejects stale window responses, and reports `loadingStepDetail` and `stepDetailError`; callers can retry failed reads. This policy is owned by the [full-history reader decision](../../../.agents/notes/implemented/bug-fix/2026-09-10-consumer-required-full-history.md).
@@ -140,6 +142,7 @@ No direct effect; model requests remain owned by the Agent and LLM packages.
 - File-reference completion uses the shared Agent lookup and can resume a cold Session; the `skills/list` catalog is the non-activating alternative for skill metadata.
 - Accepted/running display memory lives only in Client memory and is lost on page reload.
 - That memory is not shared between tabs: one tab can show a converted row while another still shows `New Session` for the same Session.
+- A cold row reports `latestTurn` only after a Host that registers it has written a checkpoint for that Session; older Sessions untouched since then report none.
 
 
 <a id="dev-note"></a>

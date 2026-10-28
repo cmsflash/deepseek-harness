@@ -29,7 +29,7 @@ Host 进程重启后，所有 fork 出来的会话（`SessionHeader.isSeeded ===
 
 | 面 | 对记录做什么 | 写回 | 调用方 |
 |---|---|---|---|
-| `write(session)` | 三个强制点加节流写 checkpoint | 有 | 缓存内部监听 |
+| `write(session)` | 四个强制点加节流写 checkpoint | 有 | 缓存内部监听 |
 | `hydratePrepared(session, events)` | 把 `rows` 当 fold 起点，从 `row.seq + 1` 继续 apply，结果进 live cell | 后续 checkpoint 写回 | `session-query/src/observation.ts` |
 | `coldSnapshot(meta, cut, events)` | fold 起点加回写 | 有 | 无生产调用方 |
 | `cachedSnapshot(meta, cut, keys?)` | `viewCheckpoint`：每行过 `ver` 和 `stateSchema`，`view` 后返回 | 无 | `list.ts`、`session-reference` |

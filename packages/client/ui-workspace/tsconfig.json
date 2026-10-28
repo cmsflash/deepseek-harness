@@ -75,6 +75,9 @@
       "path": "../ui-session"
     },
     {
+      "path": "../../util/crypto"
+    },
+    {
       "path": "../../util/values"
     },
     {

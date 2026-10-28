@@ -69,9 +69,9 @@ declare module '@deepseek-ai/cordis' {
 /**
  * Plugin config. Both throttle triggers are deployment choices with no
  * universally correct value, so the composition states them explicitly
- * (cordis.yml); the three mandatory write points (session creation,
- * `turn/end`, and session disposal) are policy, not tunables, and always
- * fire.
+ * (cordis.yml); the four mandatory write points (session creation,
+ * `turn/start`, `turn/end`, and session disposal) are policy, not tunables,
+ * and always fire.
  */
 export interface Config {
   /** Committed events per session that force a durable checkpoint write between mandatory points. */
@@ -96,9 +96,9 @@ interface DirtyState {
 /**
  * The persisted projection cache service. Opens the `session_projcache`
  * domain at init, checkpoints live sessions on a throttled write-behind
- * (count/interval triggers from {@link Config}) plus three mandatory points —
- * session creation, `turn/end`, and session disposal (the live-to-cold
- * moment) — and serves the
+ * (count/interval triggers from {@link Config}) plus four mandatory points —
+ * session creation, `turn/start`, `turn/end`, and session disposal (the
+ * live-to-cold moment) — and serves the
  * cached rows for a session header. Every durable write is fail-soft:
  * failures log a warning and the cache self-heals on the next write.
  */
@@ -310,12 +310,13 @@ export class SessionProjectionCache extends Service {
   // --- write-behind (throttle + mandatory points) ---
 
   private installWritePath(): void {
-    // Every committed event advances the dirty counter; turn/end is a
-    // mandatory point (the durable value most reads want is the turn-final
-    // one), count/interval throttle the in-turn stream.
+    // Every committed event advances the dirty counter; turn boundaries are
+    // mandatory points (turn/start so a Host that stops mid-turn still lists
+    // the turn as open; turn/end because the durable value most reads want is
+    // the turn-final one), count/interval throttle the in-turn stream.
     this.ctx.on('session/event', (session: Session, event: SessionEvent) => {
-      if (event.type === 'turn/end') {
-        void this.flushSoft(session, 'turn/end')
+      if (event.type === 'turn/start' || event.type === 'turn/end') {
+        void this.flushSoft(session, event.type)
         return
       }
       const state = this.dirty.get(session) ?? { pending: 0, timer: undefined }

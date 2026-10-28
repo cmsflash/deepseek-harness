@@ -1,5 +1,5 @@
 /**
- * ui-workspace contracts. Two registrations share this package:
+ * ui-workspace contracts. Three registrations share this package:
  *
  * - WorkspaceBrowser fills the sidebar shell's `sidebar.workspaces` hole —
  *   the whole browsing region (section header, search, grouped/flat session
@@ -7,6 +7,8 @@
  *   consumes the shell's two-fact owner share (wide / expandSidebar).
  * - WorkspacePicker fills the conversation empty-state hole (menu + error
  *   dialog shared with the browser).
+ * - The Continue control joins the shell's `sidebar.brand.action` list and
+ *   resumes interrupted Sessions in bulk.
  *
  * Both registrations declare a **directory-flow hole** (`single` kind): the
  * slot a composed picker package's client half fills with its
@@ -323,6 +325,10 @@ export type RowToast =
    * a report can be searched by it — and any other failure's own message.
    */
   | { kind: 'createFailed'; message: string }
+  /** A bulk continue whose `count` prompts the Host admitted, none failing. */
+  | { kind: 'interruptedContinued'; count: number }
+  /** A bulk continue in which `count` prompts failed; admitted ones are not counted. */
+  | { kind: 'interruptedContinueFailed'; count: number }
 
 /** The notice on display; `seq` keys remounts so a repeated notice restarts its hold. */
 export type RowToastState = RowToast & { seq: number }
@@ -400,6 +406,40 @@ export interface SessionArchiveConfirmInjected {
    */
   stopAndArchiveSession: (sessionId: SessionId) => Promise<void>
 }
+
+/** The Sessions the brand-row Continue control would resume. */
+export interface InterruptedSessionsState {
+  /**
+   * Host-list order. Each Session is an ordinary, unarchived, idle Session
+   * whose latest turn failed, was closed as interrupted, or was cancelled by
+   * its Agent's disposal, and that this page has not already sent
+   * `Continue.` since it last ran.
+   */
+  readonly sessionIds: readonly SessionId[]
+  /** True while a bulk continue is sending its prompts. */
+  readonly continuing: boolean
+}
+
+/** Continue control share: the interrupted Sessions and the bulk action over them. */
+export interface ContinueInterruptedInjected {
+  hooks: {
+    /** The current interrupted Sessions and bulk-continue state. */
+    interruptedSessions: HostObservable<InterruptedSessionsState>
+  }
+  /**
+   * Send `Continue.` to each interrupted Session in turn, skipping any that
+   * resumed meanwhile, then raise one outcome notice. Ignored while a bulk
+   * continue is already sending.
+   */
+  continueInterruptedSessions: () => void
+}
+
+/** Props of the brand-row Continue control. */
+export type ContinueInterruptedProps =
+  PropsRuntime<'sidebar.brand.action'>
+  & PropsLocale<'workspace'>
+  & Omit<ContinueInterruptedInjected, 'hooks'>
+  & PropsHooks<ContinueInterruptedInjected['hooks']>
 
 /** Fork action share. */
 export interface ForkSessionInjected {
