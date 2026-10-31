@@ -37,6 +37,21 @@ kind: "package-reference"
 
 `distIndex` 是组合应用的组装事实：[`dsh-web-app`](../../bundle/web-app/README.zh.md) 通过前端包的 exports 解析它并挂载本插件；部署绝不硬编码它。
 
+<a id="branding-a-deployment"></a>
+### 为部署定制品牌
+
+三个可选设置让一个部署安装后的 Web 应用看起来与另一个部署的不同，例如同一部手机上笔记本与 VM 的应用，且无需重新构建 dist。`dsh-web-app` 从它的 `web-runtime` 行转发这些设置，因此部署在其 profile 对该行的覆盖中设置它们，而该覆盖需要重述该行的其他设置：
+
+```yaml
+- id: web-runtime
+  config:
+    icon: /home/me/.dsh/logo-vm.svg
+    appName: DSH VM
+    appShortName: DSH VM
+```
+
+`icon` 是一个正方形 SVG 的绝对路径，它替换 dist 声明的每一个图标：index 中的 `icon` 与 `apple-touch-icon` 链接，以及 index 所链接的 manifest 中的图标。SVG 图标直接以该文件提供，PNG 图标则以它按所替换 dist 文件的像素尺寸渲染的结果提供。启动器会给安装图标加遮罩：iOS 会圆化四角，Android 可能只保留直径为边长 80% 的中心圆，因此请画一个铺满画布的不透明正方形，并把图案放在该圆内。插件在启动时读取并渲染该文件，因此修改后的文件在下次启动时生效。`appName` 与 `appShortName` 替换每个所提供 `.webmanifest` 文件中的 `name` 与 `short_name`，`appShortName` 还会替换 index 中的 `apple-mobile-web-app-title`，即 iOS 把应用添加到主屏幕时建议的名称。已安装的应用保留安装时的图标与名称；重新安装才能看到变化。
+
 ### 服务器实施的约束
 
 请求从 dist 根目录（包含 `distIndex` 的目录）提供。dist 根目录与配置的 index 路径以 HTTP 200 渲染 `index.html`；任何其他已有文件按自身 MIME 类型直接提供，未知扩展名按 `application/octet-stream` 提供。解析到根目录之外的路径以 403 拒绝，因此精心构造的路径无法读取 dist 之上的文件。dist 根目录内不存在或不是文件的目标——文件缺失、目录或配置的 index 缺失——返回空 404。没有匹配具名路由的非 GET／HEAD 请求返回 405。回退是一个 webserver resource。每个成功的 index 响应都经 webserver 的 `renderIndex` 渲染——经 HTTP 时为 `connection.browserPeer`（Connection 浏览器认证所准入的 Peer），在 `webServer.readResource(request, peer)` 读取中为 `peer` 且跳过浏览器认证——因此启动 manifest（元数据清单）与该 Peer 的访问快照会通过 `/` 与配置的 index 路径送达页面。
@@ -49,7 +64,7 @@ kind: "package-reference"
 
 ### 可观察的失败
 
-遍历返回 403 而不是错误页。dist 根目录内不存在或不是文件的目标返回空 404，因此失效链接或拼错的 pathname 是显式失败，而不是静默的 SPA 回退。第二次占据席位会抛错，而席位无人占据时 webserver 返回 404——本插件的 fiber 被 dispose（资源释放）后，浏览器看到的就是该响应。
+遍历返回 403 而不是错误页。dist 根目录内不存在或不是文件的目标返回空 404，因此失效链接或拼错的 pathname 是显式失败，而不是静默的 SPA 回退。第二次占据席位会抛错，而席位无人占据时 webserver 返回 404——本插件的 fiber 被 dispose（资源释放）后，浏览器看到的就是该响应。设置 `icon` 时，若文件无法读取或无法解码为 SVG、dist 未声明任何图标，或某个声明的图标位于 dist 之外或既不是 SVG 也不是 PNG，插件启动失败且不占据席位；`dsh-web-app` 会等待这次启动，因此其必需的 `web-runtime` 行随之失败。为不是 JSON 对象的 `.webmanifest` 文件改名会使该请求失败。
 
 -----
 
@@ -61,7 +76,7 @@ kind: "package-reference"
 
 ### 设计理念
 
-本包是围绕 `serveStatic` 的一个函数插件，`serveStatic` 把 Fetch `Request` 映射为 `Response`：`apply` 从 `distIndex` 解析出 dist 根目录，并在 effect 作用域下注册回退 resource。每个请求中，resource 交给 `serveStatic` 一个 `authorizeIndex` 闭包——只在请求没有携带 Peer 时运行 `ctx.connection.authorizeIndex`——以及一个 `renderIndex` 闭包：它为该 Peer 或浏览器 Peer 对原始 `index.html` 运行 `ctx.webServer.renderIndex`，并把文档 base 拼接在起始 head 标签之后（在原始转换之后执行，因此也先于其标记）。按 webserver 的约定，席位只有单一所有者——第二次注册会抛错——且受 effect 作用域约束，因此 dispose fiber 即释放席位。
+本包是围绕 `serveStatic` 的一个函数插件，`serveStatic` 把 Fetch `Request` 映射为 `Response`：`apply` 从 `distIndex` 解析出 dist 根目录，并在 effect 作用域下注册回退 resource。每个请求中，resource 交给 `serveStatic` 一个 `authorizeIndex` 闭包——只在请求没有携带 Peer 时运行 `ctx.connection.authorizeIndex`——以及一个 `renderIndex` 闭包：它为该 Peer 或浏览器 Peer 对原始 `index.html` 运行 `ctx.webServer.renderIndex`，并把文档 base 拼接在起始 head 标签之后（在原始转换之后执行，因此也先于其标记）。按 webserver 的约定，席位只有单一所有者——第二次注册会抛错——且受 effect 作用域约束，因此 dispose fiber 即释放席位。设置 `icon` 时，`apply` 先用 `sharp`（仅在此时导入）构建每个替换图标，之后才占据席位；未设置时，`apply` 在返回前占据席位。其他文件经由 `readBrandedAsset`：它提供替换图标、为 manifest 改名，或原样读取文件。
 
 ### 遍历栅栏
 
@@ -71,7 +86,7 @@ kind: "package-reference"
 
 | 文件 | 职责 |
 |---|---|
-| [`src/index.ts`](src/index.ts) | `serveStatic` 与 `apply`：回退 resource、遍历拒绝、index 鉴权与渲染、重新验证、MIME 表 |
+| [`src/index.ts`](src/index.ts) | `serveStatic` 与 `apply`：回退 resource、遍历拒绝、index 鉴权与渲染、重新验证、MIME 表、部署品牌定制 |
 
 </details>
 

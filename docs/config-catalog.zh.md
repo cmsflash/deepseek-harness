@@ -1757,13 +1757,25 @@ export interface Config {
 ## `@deepseek-ai/dsh-host-frontend-static`
 
 - `inject`: `webServer` · `connection`
-- `source`: [`packages/host/frontend-static/src/index.ts:34`](../packages/host/frontend-static/src/index.ts)
+- `source`: [`packages/host/frontend-static/src/index.ts:36`](../packages/host/frontend-static/src/index.ts)
 
 ```ts config-catalog
-/** Plugin config: the dist anchor. */
+/** Plugin config: the dist anchor and optional deployment branding. */
 export interface Config {
   /** Absolute path of index.html inside the dist root. */
   distIndex: string
+  /**
+   * Absolute path of a square SVG that replaces every icon the index declares
+   * through `icon` and `apple-touch-icon` links and every icon of the Web app
+   * manifest it links: SVG icons are served as this file and PNG icons as
+   * renders of it at their dist pixel size. The plugin reads and renders it
+   * when it starts; an unreadable or undecodable file fails the start.
+   */
+  icon?: string
+  /** Replaces `name` in every served Web app manifest. */
+  appName?: string
+  /** Replaces `short_name` in every served Web app manifest and the iOS home-screen title of the index. */
+  appShortName?: string
 }
 ```
 <!-- END GENERATED config-catalog:@deepseek-ai/dsh-host-frontend-static -->
@@ -4581,6 +4593,16 @@ export interface Config {
    * Absent or YAML `null` advertises the bind-address URL.
    */
   publicUrl?: string
+  /**
+   * Absolute path of a square SVG that replaces the installed app's icons;
+   * see [branding](../../host/frontend-static/README.md#branding-a-deployment).
+   * A file that cannot be read or decoded fails this row.
+   */
+  icon?: string
+  /** Installed app name, replacing the manifest `name`. */
+  appName?: string
+  /** Installed app short name, replacing the manifest `short_name` and the iOS home-screen title. */
+  appShortName?: string
 }
 ```
 <!-- END GENERATED config-catalog:@deepseek-ai/dsh-web-app -->

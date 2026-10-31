@@ -125,7 +125,7 @@ describe('web-app runtime glue', () => {
     const log = vi.spyOn(console, 'log').mockImplementation((message) => { lifecycle.push(String(message)) })
     const openBrowser = vi.fn(async (url: string) => { lifecycle.push(`open:${url}`) })
     internals.openBrowser = openBrowser
-    apply(ctx, new Config({ openBrowser: true, printUrl: true, surfaceContext: true }))
+    void apply(ctx, new Config({ openBrowser: true, printUrl: true, surfaceContext: true }))
     await vi.waitFor(() => { expect(openBrowser).toHaveBeenCalled() })
 
     expect(log).toHaveBeenCalledWith('dsh web: http://127.0.0.1:4567/?token=test-token')
@@ -160,7 +160,7 @@ describe('web-app runtime glue', () => {
     vi.spyOn(console, 'log').mockImplementation((message) => { lifecycle.push(String(message)) })
     const openBrowser = vi.fn(async (url: string) => { lifecycle.push(`open:${url}`) })
     internals.openBrowser = openBrowser
-    apply(ctx, new Config({
+    void apply(ctx, new Config({
       openBrowser: true,
       printUrl: true,
       surfaceContext: true,
@@ -187,7 +187,7 @@ describe('web-app runtime glue', () => {
     const log = vi.spyOn(console, 'log').mockImplementation(() => {})
     const openBrowser = vi.fn(async () => {})
     internals.openBrowser = openBrowser
-    apply(ctx, new Config({ openBrowser: false, printUrl: false, surfaceContext: true }))
+    void apply(ctx, new Config({ openBrowser: false, printUrl: false, surfaceContext: true }))
     await new Promise(resolve => setTimeout(resolve, 0))
     expect(log).not.toHaveBeenCalled()
     expect(openBrowser).not.toHaveBeenCalled()
@@ -206,7 +206,7 @@ describe('web-app runtime glue', () => {
         return () => {}
       },
     } as never)
-    apply(ctx, new Config({ openBrowser: false, printUrl: false, surfaceContext: false }))
+    void apply(ctx, new Config({ openBrowser: false, printUrl: false, surfaceContext: false }))
     await new Promise(resolve => setTimeout(resolve, 0))
     expect(contributions).toEqual([])
     await ctx.fiber.dispose()
@@ -229,7 +229,7 @@ describe('web-app runtime glue', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const openBrowser = vi.fn(async () => {})
     internals.openBrowser = openBrowser
-    apply(ctx, new Config({ openBrowser: false, printUrl: true, surfaceContext: true }))
+    void apply(ctx, new Config({ openBrowser: false, printUrl: true, surfaceContext: true }))
     await vi.waitFor(() => { expect(log).toHaveBeenCalledWith(`dsh web: http://${printed}:4567/?token=test-token`) })
     expect(warn).not.toHaveBeenCalled()
     expect(openBrowser).not.toHaveBeenCalled()
@@ -250,7 +250,7 @@ describe('web-app runtime glue', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const openBrowser = vi.fn(async () => {})
     internals.openBrowser = openBrowser
-    apply(ctx, new Config({ openBrowser: true, printUrl: true, surfaceContext: false }))
+    void apply(ctx, new Config({ openBrowser: true, printUrl: true, surfaceContext: false }))
     await vi.waitFor(() => { expect(openBrowser).toHaveBeenCalled() })
 
     // A non-loopback bind has no loopback listener, so the printed and opened
@@ -274,7 +274,7 @@ describe('web-app runtime glue', () => {
     provideConnection(ctx)
     const log = vi.spyOn(console, 'log').mockImplementation(() => {})
     vi.spyOn(console, 'warn').mockImplementation(() => {})
-    apply(ctx, new Config({ openBrowser: false, printUrl: true, surfaceContext: false }))
+    void apply(ctx, new Config({ openBrowser: false, printUrl: true, surfaceContext: false }))
     await vi.waitFor(() => { expect(log).toHaveBeenCalled() })
 
     expect(log).toHaveBeenCalledWith('dsh web: http://[::1]:4567/?token=test-token')
@@ -288,7 +288,7 @@ describe('web-app runtime glue', () => {
     const ctx = new Context()
     onTestFinished(() => ctx.fiber.dispose())
     ctx.provide('webServer', fakeHttpServer(bind).server)
-    expect(() => { apply(ctx, new Config({ openBrowser: false, printUrl: true, surfaceContext: false })) })
+    expect(() => { void apply(ctx, new Config({ openBrowser: false, printUrl: true, surfaceContext: false })) })
       .toThrow(/carries an interface zone id, which no URL can express; pass --public-url/u)
 
     // A declared root makes the same bind usable.
@@ -298,7 +298,7 @@ describe('web-app runtime glue', () => {
     provideConnection(declared)
     const log = vi.spyOn(console, 'log').mockImplementation(() => {})
     vi.spyOn(console, 'warn').mockImplementation(() => {})
-    apply(declared, new Config({
+    void apply(declared, new Config({
       openBrowser: false, printUrl: true, surfaceContext: false, publicUrl: 'https://app.example/ui/',
     }))
     await vi.waitFor(() => { expect(log).toHaveBeenCalled() })
@@ -313,7 +313,7 @@ describe('web-app runtime glue', () => {
     const first = ctx.plugin((connectionCtx: Context) => { provideConnection(connectionCtx) })
     await first
     const log = vi.spyOn(console, 'log').mockImplementation(() => {})
-    apply(ctx, new Config({ openBrowser: false, printUrl: true, surfaceContext: true }))
+    void apply(ctx, new Config({ openBrowser: false, printUrl: true, surfaceContext: true }))
     await new Promise(resolve => setTimeout(resolve, 0))
     expect(log).toHaveBeenCalledTimes(1)
 
@@ -331,7 +331,7 @@ describe('web-app runtime glue', () => {
     ctx.provide('webServer', fakeHttpServer().server)
     provideConnection(ctx)
     const log = vi.spyOn(console, 'log').mockImplementation(() => {})
-    apply(ctx, new Config({ openBrowser: false, printUrl: true, surfaceContext: false, publicUrl: null as never }))
+    void apply(ctx, new Config({ openBrowser: false, printUrl: true, surfaceContext: false, publicUrl: null as never }))
     await vi.waitFor(() => { expect(log).toHaveBeenCalledWith('dsh web: http://127.0.0.1:4567/?token=test-token') })
   })
 
@@ -347,7 +347,7 @@ describe('web-app runtime glue', () => {
     const log = vi.spyOn(console, 'log').mockImplementation(() => {})
     const openBrowser = vi.fn(async () => {})
     internals.openBrowser = openBrowser
-    apply(ctx, new Config({ openBrowser: true, printUrl: true, surfaceContext: false }))
+    void apply(ctx, new Config({ openBrowser: true, printUrl: true, surfaceContext: false }))
     await new Promise(resolve => setTimeout(resolve, 0))
     expect(log).toHaveBeenCalledWith('dsh web: http://127.0.0.1:4567/?token=test-token')
     expect(openBrowser).not.toHaveBeenCalled()
@@ -367,7 +367,7 @@ describe('web-app runtime glue', () => {
     const settlement = new Promise<void>((resolve) => { release = resolve })
     provideLoader(settled, () => settlement)
     const log = vi.spyOn(console, 'log').mockImplementation(() => {})
-    apply(settled, new Config({ openBrowser: true, printUrl: true, surfaceContext: true }))
+    void apply(settled, new Config({ openBrowser: true, printUrl: true, surfaceContext: true }))
     await new Promise(resolve => setTimeout(resolve, 0))
     expect(log).not.toHaveBeenCalled()
     expect(openBrowser).not.toHaveBeenCalled()
@@ -385,7 +385,7 @@ describe('web-app runtime glue', () => {
     failed.provide('webServer', fakeHttpServer().server)
     provideConnection(failed)
     provideLoader(failed, async () => { throw new Error('boot failed') })
-    apply(failed, new Config({ openBrowser: true, printUrl: true, surfaceContext: true }))
+    void apply(failed, new Config({ openBrowser: true, printUrl: true, surfaceContext: true }))
     await new Promise(resolve => setTimeout(resolve, 0))
     expect(log).not.toHaveBeenCalled()
     expect(openBrowser).not.toHaveBeenCalled()
@@ -404,7 +404,7 @@ describe('web-app runtime glue', () => {
     let releaseTorn: () => void
     const tornSettlement = new Promise<void>((resolve) => { releaseTorn = resolve })
     provideLoader(torn, () => tornSettlement)
-    apply(torn, new Config({ openBrowser: true, printUrl: true, surfaceContext: true }))
+    void apply(torn, new Config({ openBrowser: true, printUrl: true, surfaceContext: true }))
     await new Promise(resolve => setTimeout(resolve, 0))
     await child.dispose() // the webServer service goes away
     releaseTorn!()
@@ -435,7 +435,7 @@ describe('web-app runtime glue', () => {
     const openBrowser = vi.fn(async () => {})
     internals.openBrowser = openBrowser
     const audit = vi.spyOn(AppBoot, 'auditStartupEntries')
-    apply(ctx, new Config({ openBrowser: true, printUrl: true, surfaceContext: false }))
+    void apply(ctx, new Config({ openBrowser: true, printUrl: true, surfaceContext: false }))
     await vi.waitFor(() => { expect(audit).toHaveBeenCalledOnce() })
     await Promise.allSettled(audit.mock.results.map(result => result.value as Promise<void>))
     if (announces) {
@@ -466,7 +466,7 @@ describe('web-app runtime glue', () => {
     internals.openBrowser = vi.fn(async () => { throw failure })
     const log = vi.spyOn(console, 'log').mockImplementation(() => {})
     const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
-    apply(ctx, new Config({ openBrowser: true, printUrl: false, surfaceContext: false }))
+    void apply(ctx, new Config({ openBrowser: true, printUrl: false, surfaceContext: false }))
     await new Promise(resolve => setTimeout(resolve, 0))
     expect(log).toHaveBeenCalledWith('dsh web: opening the default browser; pass --no-open to disable')
     expect(diagnostic).toHaveBeenCalledWith(
@@ -532,5 +532,64 @@ describe('web-app runtime glue', () => {
     errored.emit('error', new Error('spawn failed'))
     await errorAssertion
     expect(errored.listenerCount('close')).toBe(0)
+  })
+})
+
+describe('web-app deployment branding', () => {
+  const brandSvg = '<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><rect width="8" height="8" fill="#0a8f5a"/></svg>'
+
+  it('forwards the branding to the dist server and settles once its icons are built', async () => {
+    const index = stageDist()
+    writeFileSync(index, '<head><link rel="manifest" href="./manifest.webmanifest"><link rel="icon" href="./favicon.svg"></head><body>shell</body>')
+    writeFileSync(join(dist!, 'dist', 'manifest.webmanifest'), '{"name":"DeepSeek Harness"}')
+    writeFileSync(join(dist!, 'dist', 'favicon.svg'), '<svg id="dist"/>')
+    writeFileSync(join(dist!, 'brand.svg'), brandSvg)
+    const ctx = new Context()
+    onTestFinished(() => ctx.fiber.dispose())
+    const { server } = fakeHttpServer()
+    let fallback: Parameters<WebServer['registerFallback']>[0] | undefined
+    server.registerFallback = (seat) => {
+      fallback = seat
+      return () => {}
+    }
+    ctx.provide('webServer', server)
+    provideConnection(ctx)
+    const mounted = apply(ctx, new Config({
+      openBrowser: false,
+      printUrl: false,
+      surfaceContext: false,
+      icon: join(dist!, 'brand.svg'),
+      appName: 'DSH VM',
+      appShortName: 'VM',
+    }))
+    expect(mounted).toBeInstanceOf(Promise)
+    await mounted
+    if (fallback === undefined || typeof fallback === 'function') throw new Error('the dist server claimed no resource seat')
+    const manifest = await fallback.resource(new Request('http://web.invalid/manifest.webmanifest'), undefined)
+    expect(await manifest.json()).toEqual({ name: 'DSH VM', short_name: 'VM' })
+    expect(await (await fallback.resource(new Request('http://web.invalid/favicon.svg'), undefined)).text()).toBe(brandSvg)
+  })
+
+  it('fails with the dist server when the icon cannot be read', async () => {
+    stageDist()
+    const ctx = new Context()
+    onTestFinished(() => ctx.fiber.dispose())
+    ctx.provide('webServer', fakeHttpServer().server)
+    provideConnection(ctx)
+    await expect(apply(ctx, new Config({
+      openBrowser: false,
+      printUrl: false,
+      surfaceContext: false,
+      icon: join(dist!, 'missing.svg'),
+    }))).rejects.toThrow(/ENOENT/)
+  })
+
+  it('mounts without waiting when only the names are configured', async () => {
+    stageDist()
+    const ctx = new Context()
+    onTestFinished(() => ctx.fiber.dispose())
+    ctx.provide('webServer', fakeHttpServer().server)
+    provideConnection(ctx)
+    expect(apply(ctx, new Config({ openBrowser: false, printUrl: false, surfaceContext: false, appName: 'DSH VM' }))).toBeUndefined()
   })
 })

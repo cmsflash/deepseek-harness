@@ -24,6 +24,7 @@ Each change is one commit on the `zhuoran` branch, which is rebased onto upstrea
 - **Enter key choice**: each browser can make Enter add a new line instead of sending (Settings → General → Enter key); the Send button and Cmd/Ctrl+Enter still send.
 - **Phone keyboard fit**: on a phone, the app shrinks above the on-screen keyboard instead of panning it out of view.
 - **Continue interrupted sessions**: a button in the sidebar's brand row sends `Continue.` to every session whose last turn failed or was cut off by a restart.
+- **Installed-app branding**: each server can give its installed web app its own icon, drawn as one SVG, and its own name, so apps from two servers are easy to tell apart on one phone ([settings](packages/host/frontend-static/README.md#branding-a-deployment)).
 
 It also fixes these upstream bugs, which are still open:
 

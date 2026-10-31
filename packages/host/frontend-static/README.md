@@ -37,6 +37,21 @@ Compose this plugin in a browser-facing host that serves the built Web shell: it
 
 `distIndex` is an assembly fact of the composing application: [`dsh-web-app`](../../bundle/web-app/README.md) resolves it through the frontend package's exports and mounts this plugin; a deployment never hardcodes it.
 
+<a id="branding-a-deployment"></a>
+### Branding a deployment
+
+Three optional settings make one deployment's installed Web app look different from another's, such as a laptop's and a VM's on the same phone, without rebuilding the dist. `dsh-web-app` forwards them from its `web-runtime` row, so a deployment sets them in its profile override of that row, which restates the row's other settings:
+
+```yaml
+- id: web-runtime
+  config:
+    icon: /home/me/.dsh/logo-vm.svg
+    appName: DSH VM
+    appShortName: DSH VM
+```
+
+`icon` is an absolute path to a square SVG that replaces every icon the dist declares: the index's `icon` and `apple-touch-icon` links and the icons of the manifest the index links. SVG icons are served as the file itself and PNG icons as renders of it at the pixel size of the dist file they replace. Launchers mask install icons: iOS rounds the corners and Android may keep only the central circle whose diameter is 80% of the edge, so draw an opaque square that fills the canvas and keep the artwork inside that circle. The plugin reads and renders the file when it starts, so an edited file takes effect at the next start. `appName` and `appShortName` replace `name` and `short_name` in every served `.webmanifest` file, and `appShortName` also replaces the index's `apple-mobile-web-app-title`, the name iOS proposes when the app is added to the Home Screen. An installed app keeps the icon and name it was installed with; reinstall it to see a change.
+
 ### What the server enforces
 
 Requests are served from the dist root (the directory containing `distIndex`). The dist root and the configured index path render `index.html` with HTTP 200; any other existing file is served directly with its MIME type, and unknown extensions ship as `application/octet-stream`. A path that resolves outside the root is rejected with 403, so a crafted path cannot read files above the dist. An absent or non-file target inside the dist root — a missing file, a directory, or a missing configured index — returns an empty 404. Non-GET/HEAD requests without a matching named route are answered 405. The fallback is a webserver resource. Every successful index response is rendered through the webserver's `renderIndex` — for `connection.browserPeer`, the Peer Connection's browser authentication admits, over HTTP, and for `peer` in a `webServer.readResource(request, peer)` read, which skips browser authentication — so the boot manifest and that Peer's access snapshot reach the page on `/` and on the configured index path.
@@ -49,7 +64,7 @@ Browsers revalidate every served file except the index. Such a response carries 
 
 ### Observable failures
 
-Traversal returns 403 rather than an error page. An absent or non-file target inside the dist root returns an empty 404, so a stale link or a mistyped pathname is an explicit failure rather than a silent SPA fallback. Claiming the seat twice throws, and while the seat is unclaimed the webserver answers 404 — which is what a browser sees if this plugin's fiber is disposed.
+Traversal returns 403 rather than an error page. An absent or non-file target inside the dist root returns an empty 404, so a stale link or a mistyped pathname is an explicit failure rather than a silent SPA fallback. Claiming the seat twice throws, and while the seat is unclaimed the webserver answers 404 — which is what a browser sees if this plugin's fiber is disposed. With `icon` set, the plugin fails its start, leaving the seat unclaimed, when the file cannot be read or decoded as SVG, when the dist declares no icon, or when a declared icon lies outside the dist or is neither SVG nor PNG; `dsh-web-app` waits for that start, so its required `web-runtime` row fails with it. Renaming a `.webmanifest` file that is not a JSON object fails that request.
 
 -----
 
@@ -61,7 +76,7 @@ Traversal returns 403 rather than an error page. An absent or non-file target in
 
 ### Design concept
 
-The package is one function plugin around `serveStatic`, which maps a Fetch `Request` to a `Response`: `apply` resolves the dist root from `distIndex` and registers a fallback resource under an effect scope. For each request the resource passes `serveStatic` an `authorizeIndex` closure, which runs `ctx.connection.authorizeIndex` only when no Peer came with the request, and a `renderIndex` closure that runs `ctx.webServer.renderIndex` over the raw `index.html` for that Peer or the browser Peer and splices the document base in after the opening head tag (after the raw taps, so it precedes their markup too). The seat is single-owner by the webserver's contract — a second registration throws — and effect-scoped, so disposing the fiber releases the seat.
+The package is one function plugin around `serveStatic`, which maps a Fetch `Request` to a `Response`: `apply` resolves the dist root from `distIndex` and registers a fallback resource under an effect scope. For each request the resource passes `serveStatic` an `authorizeIndex` closure, which runs `ctx.connection.authorizeIndex` only when no Peer came with the request, and a `renderIndex` closure that runs `ctx.webServer.renderIndex` over the raw `index.html` for that Peer or the browser Peer and splices the document base in after the opening head tag (after the raw taps, so it precedes their markup too). The seat is single-owner by the webserver's contract — a second registration throws — and effect-scoped, so disposing the fiber releases the seat. With `icon` set, `apply` first builds every replacement icon with `sharp`, imported only then, and claims the seat afterwards; without it, `apply` claims the seat before it returns. Other files go through `readBrandedAsset`, which serves a replacement icon, renames a manifest, or reads the file as it is.
 
 ### The traversal fence
 
@@ -71,7 +86,7 @@ The package is one function plugin around `serveStatic`, which maps a Fetch `Req
 
 | File | Role |
 |---|---|
-| [`src/index.ts`](src/index.ts) | `serveStatic` and `apply`: fallback resource, traversal rejection, index authorization and rendering, revalidation, MIME table |
+| [`src/index.ts`](src/index.ts) | `serveStatic` and `apply`: fallback resource, traversal rejection, index authorization and rendering, revalidation, MIME table, deployment branding |
 
 </details>
 

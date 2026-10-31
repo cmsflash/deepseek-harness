@@ -56,6 +56,7 @@ The `minimal` agent preset uses a persistent shell, the `read_image` tool, and a
 | `printUrl` | `true` | Print the `dsh web:` URL line at startup |
 | `surfaceContext` | `true` | Expose `DSH_WEB_URL` to the agent's shell commands |
 | `publicUrl` | Unset | Advertised HTTP(S) application root; otherwise announce the bind-address URL |
+| `icon`, `appName`, `appShortName` | Unset | [Installed-app branding](../../host/frontend-static/README.md#branding-a-deployment) forwarded to `frontend-static`; with `icon` set, this row fails when the icons cannot be built |
 
 The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-web-app) lists this runtime plugin's accepted fields and their JSDoc. The shipped composition inserts the `schedule` service row and the `ui-schedule` task page row, while the clock reading and the four reminder tools belong to the `standard`, `cordis`, and `ptc` presets. The `tool-subagent` and `tool-subagent-fork` rows in those presets deny the four tools, so a delegated child's scope never lists them.
 

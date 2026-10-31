@@ -70,6 +70,16 @@ export interface Config {
    * Absent or YAML `null` advertises the bind-address URL.
    */
   publicUrl?: string
+  /**
+   * Absolute path of a square SVG that replaces the installed app's icons;
+   * see [branding](../../host/frontend-static/README.md#branding-a-deployment).
+   * A file that cannot be read or decoded fails this row.
+   */
+  icon?: string
+  /** Installed app name, replacing the manifest `name`. */
+  appName?: string
+  /** Installed app short name, replacing the manifest `short_name` and the iOS home-screen title. */
+  appShortName?: string
 }
 
 export const Config: z<Config> = z.object({
@@ -77,6 +87,9 @@ export const Config: z<Config> = z.object({
   printUrl: z.boolean().default(true),
   surfaceContext: z.boolean().default(true),
   publicUrl: z.transform(z.string(), value => parsePublicUrl(value).href),
+  icon: z.string(),
+  appName: z.string(),
+  appShortName: z.string(),
 })
 
 /** Environment variable naming the advertised URL of this Web GUI. */
@@ -182,8 +195,10 @@ export const internals: {
  * line, and the default-browser handoff.
  * @param ctx - plugin context carrying the webServer service.
  * @param config - validated {@link Config}.
+ * @returns undefined, or with `icon` set a promise that settles once the dist
+ * server has built its icons and rejects with that failure.
  */
-export function apply(ctx: Context, config: Config): void {
+export function apply(ctx: Context, config: Config): void | Promise<void> {
   // The schema validates a present string; an explicit YAML `null` bypasses
   // the string transform and reaches here, meaning unset.
   const publicUrl = config.publicUrl ?? undefined
@@ -203,7 +218,13 @@ export function apply(ctx: Context, config: Config): void {
   /** The advertised root: the canonical `publicUrl`, or the listener's own origin. */
   const appRootUrl = (): string => publicUrl ?? ctx.webServer.getOrigin()
   ctx.provide('webApp', { getAdvertisedUrl: appRootUrl } satisfies WebApp)
-  ctx.plugin(FrontendStatic, { distIndex: internals.resolveDistIndex() })
+  const { icon, appName, appShortName } = config
+  const frontend = ctx.plugin(FrontendStatic, {
+    distIndex: internals.resolveDistIndex(),
+    ...icon === undefined ? {} : { icon },
+    ...appName === undefined ? {} : { appName },
+    ...appShortName === undefined ? {} : { appShortName },
+  })
   if (config.surfaceContext) {
     ctx.inject(['shellEnv'], (runtimeCtx) => {
       runtimeCtx.shellEnv.register({
@@ -258,4 +279,7 @@ export function apply(ctx: Context, config: Config): void {
       }
     })
   }
+  // Waiting on the icons makes a bad one fail this required row at startup
+  // instead of leaving a server whose every page is a 404.
+  if (icon !== undefined) return Promise.resolve(frontend).then(() => {})
 }

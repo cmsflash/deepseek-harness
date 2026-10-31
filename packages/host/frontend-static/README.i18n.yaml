@@ -18,26 +18,29 @@
   en: a1ccc40c13683372
   zh: b37e4c22f6cb83ca
 /deepseek-ai-dsh-host-frontend-static/use-this-package/minimal-configuration:
-  en: c58118ab4aba9bac
-  zh: 334fcd54edcae152
+  en: 14d9cb6fcc3bdc94
+  zh: 187aca5a355063cc
+/deepseek-ai-dsh-host-frontend-static/use-this-package/branding-a-deployment:
+  en: 09de503b6ac402b1
+  zh: a31055b9da7093a7
 /deepseek-ai-dsh-host-frontend-static/use-this-package/what-the-server-enforces:
   en: 7763bc4e95a22f20
   zh: f609acbe0cbcfae9
 /deepseek-ai-dsh-host-frontend-static/use-this-package/observable-failures:
-  en: 7b6cca6ed823f515
-  zh: 30b5a5c594e8f1b8
+  en: 2c91a88a3f34edf7
+  zh: 9604106b101e010c
 /deepseek-ai-dsh-host-frontend-static/understand-the-implementation:
   en: 42b15ac6321706aa
   zh: 4ed0861911abaf5d
 /deepseek-ai-dsh-host-frontend-static/understand-the-implementation/design-concept:
-  en: 6b8f640e949cd08c
-  zh: 5da78a82c6fb3efb
+  en: e13e89d992f75e8c
+  zh: 4979445a15dcc88d
 /deepseek-ai-dsh-host-frontend-static/understand-the-implementation/the-traversal-fence:
   en: 0ca9ccfdf4101cf1
   zh: 5a01e561397afcb1
 /deepseek-ai-dsh-host-frontend-static/understand-the-implementation/source-map:
-  en: 353ffd164996ea46
-  zh: 69de395734180c91
+  en: fc6f1410f44a0764
+  zh: 52e5a77d87a79cf8
 /deepseek-ai-dsh-host-frontend-static/further-exploration:
   en: d2338fa56a68ea21
   zh: 81b84ba73f59766b

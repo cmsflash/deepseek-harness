@@ -24,6 +24,7 @@ DeepSeek Harness（`dsh`）是由 [DeepSeek AI](https://deepseek.com) 开发的�
 - **Enter 键行为**：每个浏览器可以让 Enter 换行而不是发送（设置 → 通用 → Enter 键）；发送按钮和 Cmd/Ctrl+Enter 仍然发送。
 - **手机键盘适配**：在手机上，屏幕键盘弹出时应用缩到键盘上方，而不是被平移出视野。
 - **继续被中断的会话**：侧栏品牌行中的按钮向每个最后一轮失败或被重启打断的会话发送 `Continue.`。
+- **已安装应用的品牌定制**：每个服务器都可以为其已安装的 Web 应用设置自己的图标（用一个 SVG 绘制）和名称，这样同一部手机上来自两个服务器的应用一眼就能分清（[设置](packages/host/frontend-static/README.zh.md#branding-a-deployment)）。
 
 它还修复了以下在上游仍未解决的 bug：
 

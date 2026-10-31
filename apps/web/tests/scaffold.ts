@@ -583,8 +583,17 @@ export async function launchWebScaffold(options: LaunchOptions = {}): Promise<We
   const composedRows = composeEntries([basePatches, surfacePatches, extraOverlayPatches])
   const webRuntimeConfig = composedRows.find(row => row.id === 'web-runtime')?.config as {
     surfaceContext?: boolean
+    icon?: string
+    appName?: string
+    appShortName?: string
   } | undefined
   const surfaceContext = webRuntimeConfig?.surfaceContext !== false
+  const { icon, appName, appShortName } = webRuntimeConfig ?? {}
+  const branding = {
+    ...icon === undefined ? {} : { icon },
+    ...appName === undefined ? {} : { appName },
+    ...appShortName === undefined ? {} : { appShortName },
+  }
   // The scaffold's own overrides, above every bundle layer like `--patch` overlays.
   const overlayPatches: PatchOptions[] = [
     // Without HMR the profile applies configuration changes at its next start.
@@ -655,9 +664,9 @@ export async function launchWebScaffold(options: LaunchOptions = {}): Promise<We
     // The bundle's web-runtime row resolves the same built dist under test
     // (apps/web IS @deepseek-ai/dsh-web-frontend); native browser opening and the
     // URL line are disabled because this scaffold owns its Playwright browser.
-    // Preserve the composed surface-context choice because a patch replaces
-    // the row's complete config.
-    { id: 'web-runtime', config: { openBrowser: false, printUrl: false, surfaceContext } },
+    // Preserve the composed surface-context and branding choices because a
+    // patch replaces the row's complete config.
+    { id: 'web-runtime', config: { openBrowser: false, printUrl: false, surfaceContext, ...branding } },
     ...publicHost === undefined && options.remoteAuthority === undefined
       ? []
       : [{

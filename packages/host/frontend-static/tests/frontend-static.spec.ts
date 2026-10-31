@@ -3,15 +3,16 @@
  * vendored Loader mounts the webserver and frontend-static rows, and every
  * assertion observes the served HTTP surface — asset serving, explicit index
  * entry points with index taps, 404 misses, traversal rejection, 405 on non-
- * GET/HEAD, and seat release on fiber disposal (HMR safety).
+ * GET/HEAD, deployment branding, and seat release on fiber disposal (HMR safety).
  */
 
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import sharp from 'sharp'
 import { afterEach, describe, expect, it } from 'vitest'
-import { Context } from '@deepseek-ai/cordis'
+import { Context, FiberState } from '@deepseek-ai/cordis'
 import Loader from '@deepseek-ai/cordis-plugin-loader'
 import Include from '@deepseek-ai/cordis-plugin-include'
 import * as Connection from '@deepseek-ai/dsh-client-connection'
@@ -29,19 +30,33 @@ afterEach(async () => {
   root = undefined
 })
 
+/** Changes to the default dist fixture and frontend row. */
+interface Fixture {
+  /** Body of `dist/index.html`. */
+  readonly index?: string
+  /** Files written relative to the fixture root, overriding the defaults; `dist/` holds the dist. */
+  readonly files?: Readonly<Record<string, string | Uint8Array>>
+  /** Extra frontend config lines; `{root}` names the fixture root. */
+  readonly config?: readonly string[]
+}
+
 /** Write a dist fixture and the authenticated Web rows, then boot them through the real Loader. */
-async function loadComposition(): Promise<Context> {
+async function loadComposition(fixture: Fixture = {}): Promise<Context> {
   root = await mkdtemp(join(tmpdir(), 'dsh-frontend-static-'))
   const dist = join(root, 'dist')
   await mkdir(dist)
   const distIndex = join(dist, 'index.html')
-  await writeFile(distIndex, '<head></head><body>shell</body>')
+  await writeFile(distIndex, fixture.index ?? '<head></head><body>shell</body>')
   await writeFile(join(dist, 'app.js'), 'export {}')
   await writeFile(join(dist, 'preview.html'), '<body>preview</body>')
   await writeFile(join(dist, 'blob.bin'), 'BLOB')
   await writeFile(join(dist, 'manifest.webmanifest'), '{}')
   await writeFile(join(dist, 'icon-192.png'), 'PNG')
   await mkdir(join(dist, 'empty'))
+  for (const [path, body] of Object.entries(fixture.files ?? {})) {
+    await mkdir(dirname(join(root, path)), { recursive: true })
+    await writeFile(join(root, path), body)
+  }
   const configPath = join(root, 'cordis.yml')
   await writeFile(configPath, [
     "- name: '@deepseek-ai/dsh-credentials-local'",
@@ -57,6 +72,7 @@ async function loadComposition(): Promise<Context> {
     "  name: '@deepseek-ai/dsh-host-frontend-static'",
     '  config:',
     `    distIndex: '${distIndex}'`,
+    ...(fixture.config ?? []).map(line => `    ${line.replaceAll('{root}', root!)}`),
     '',
   ].join('\n'))
 
@@ -307,5 +323,158 @@ describe('real Loader composition', () => {
     expect(await html.text()).toBe('<body>preview</body>')
     const index = await loaded.webServer.readResource(new Request(`${base}/`), reader)
     expect([index.status, index.headers.get('cache-control'), index.headers.get('etag')]).toEqual([200, null, null])
+  })
+})
+
+/** A square SVG: a green field with a white centre block, so renders can be sampled. */
+const BRAND_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16">'
+  + '<rect width="16" height="16" fill="#0a8f5a"/><rect x="5" y="5" width="6" height="6" fill="#ffffff"/></svg>'
+
+/** A 1×1 PNG, for an icon file that is not SVG. */
+const TINY_PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64')
+
+/** An index declaring a home-screen title, both icon link kinds, a manifest, and links branding ignores. */
+const BRANDED_INDEX = [
+  '<head>',
+  '<meta name="apple-mobile-web-app-title" content="DSH">',
+  '<link rel="manifest" href="./site.webmanifest">',
+  '<link rel="apple-touch-icon" href="./touch.png">',
+  '<link rel="icon" type="image/svg+xml" href="/favicon.svg" media="(prefers-color-scheme: light)">',
+  '<link rel="stylesheet" href="./app.css">',
+  '<link href="./orphan.css">',
+  '<link rel="preconnect">',
+  '</head><body>shell</body>',
+].join('')
+
+/** An opaque white PNG standing in for a committed install icon. */
+async function whitePng(edge: number): Promise<Buffer> {
+  return sharp({ create: { width: edge, height: edge, channels: 4, background: '#ffffff' } }).png().toBuffer()
+}
+
+/** The dist icons {@link BRANDED_INDEX} and its manifest declare, plus the deployment SVG. */
+async function brandedFiles(): Promise<Record<string, string | Uint8Array>> {
+  return {
+    'dist/site.webmanifest': JSON.stringify({
+      name: 'DeepSeek Harness',
+      short_name: 'DSH',
+      display: 'standalone',
+      icons: [{ src: 'icons/any.png', sizes: '48x48' }, { src: 'touch.png' }],
+    }),
+    'dist/touch.png': await whitePng(30),
+    'dist/icons/any.png': await whitePng(48),
+    'dist/favicon.svg': '<svg id="dist"/>',
+    'brand.svg': BRAND_SVG,
+  }
+}
+
+/** Expect one PNG pixel to be `rgb` within resampling error. */
+async function expectPixel(png: Uint8Array, x: number, y: number, rgb: readonly number[]): Promise<void> {
+  const { data, info } = await sharp(png).removeAlpha().raw().toBuffer({ resolveWithObject: true })
+  const at = (y * info.width + x) * info.channels
+  for (const [channel, value] of rgb.entries()) expect(Math.abs(data[at + channel]! - value)).toBeLessThanOrEqual(2)
+}
+
+describe('deployment branding', () => {
+  it('replaces every declared icon from one SVG and renames the installed app', { timeout: 60_000 }, async () => {
+    const loaded = await loadComposition({
+      index: BRANDED_INDEX,
+      files: await brandedFiles(),
+      config: ["icon: '{root}/brand.svg'", "appName: 'DSH VM'", "appShortName: 'VM & \"Lab\"'"],
+    })
+    const port = loaded.webServer.port
+    const base = `http://127.0.0.1:${String(port)}`
+
+    // SVG icons are the configured file itself; PNG icons are renders of it at the dist file's size.
+    expect(await request(port, '/favicon.svg')).toEqual({ status: 200, type: 'image/svg+xml', body: BRAND_SVG })
+    expect(await request(port, '/favicon.svg', { method: 'HEAD' })).toEqual({ status: 200, type: 'image/svg+xml', body: '' })
+    for (const [path, edge] of [['/touch.png', 30], ['/icons/any.png', 48]] as const) {
+      const response = await fetch(`${base}${path}`)
+      expect([response.status, response.headers.get('content-type')]).toEqual([200, 'image/png'])
+      const png = new Uint8Array(await response.arrayBuffer())
+      expect(await sharp(png).metadata()).toMatchObject({ format: 'png', width: edge, height: edge })
+      await expectPixel(png, 2, 2, [0x0a, 0x8f, 0x5a])
+      await expectPixel(png, edge / 2, edge / 2, [255, 255, 255])
+      const etag = response.headers.get('etag')
+      if (etag === null) throw new Error(`${path} carried no ETag`)
+      expect((await fetch(`${base}${path}`, { headers: { 'if-none-match': etag } })).status).toBe(304)
+    }
+
+    // Every served manifest carries the names; its other members are the dist's.
+    const manifest = await request(port, '/site.webmanifest')
+    expect(manifest.type).toBe('application/manifest+json')
+    expect(JSON.parse(manifest.body)).toEqual({
+      name: 'DSH VM',
+      short_name: 'VM & "Lab"',
+      display: 'standalone',
+      icons: [{ src: 'icons/any.png', sizes: '48x48' }, { src: 'touch.png' }],
+    })
+    expect(JSON.parse((await request(port, '/manifest.webmanifest')).body)).toEqual({ name: 'DSH VM', short_name: 'VM & "Lab"' })
+    expect(await request(port, '/app.js')).toMatchObject({ status: 200, body: 'export {}' })
+
+    // The index declares the short name as its only iOS home-screen title.
+    const reader = { principal: { kind: 'owner' } } as Connection.PeerScope
+    const html = await (await loaded.webServer.readResource(new Request(`${base}/`), reader)).text()
+    expect(html.match(/apple-mobile-web-app-title/g)).toHaveLength(1)
+    expect(html).toContain('<head><base href="./"><meta name="apple-mobile-web-app-title" content="VM &amp; &quot;Lab&quot;">')
+  })
+
+  it('renames the installed app without an icon, leaving the icons and the index title alone', { timeout: 60_000 }, async () => {
+    const loaded = await loadComposition({ index: BRANDED_INDEX, files: await brandedFiles(), config: ["appName: 'Solo'"] })
+    const port = loaded.webServer.port
+    expect(JSON.parse((await request(port, '/site.webmanifest')).body)).toMatchObject({ name: 'Solo', short_name: 'DSH' })
+    expect(await request(port, '/favicon.svg')).toMatchObject({ status: 200, body: '<svg id="dist"/>' })
+    expect(await readFile(join(root!, 'dist', 'touch.png'))).toEqual(Buffer.from(await (await fetch(`http://127.0.0.1:${String(port)}/touch.png`)).arrayBuffer()))
+    const reader = { principal: { kind: 'owner' } } as Connection.PeerScope
+    const html = await (await loaded.webServer.readResource(new Request('http://reader.invalid/'), reader)).text()
+    expect(html.match(/apple-mobile-web-app-title/g)).toHaveLength(1)
+    expect(html).toContain('<meta name="apple-mobile-web-app-title" content="DSH">')
+  })
+
+  it('renames only the short name and refuses a manifest that is not a JSON object', { timeout: 60_000 }, async () => {
+    const loaded = await loadComposition({
+      files: { 'dist/manifest.webmanifest': '[]', 'dist/site.webmanifest': '{"name":"DeepSeek Harness"}' },
+      config: ["appShortName: 'VM'"],
+    })
+    const port = loaded.webServer.port
+    expect(JSON.parse((await request(port, '/site.webmanifest')).body)).toEqual({ name: 'DeepSeek Harness', short_name: 'VM' })
+    const reader = { principal: { kind: 'owner' } } as Connection.PeerScope
+    await expect(loaded.webServer.readResource(new Request('http://reader.invalid/manifest.webmanifest'), reader))
+      .rejects.toThrow(/the manifest .*manifest\.webmanifest is not a JSON object/)
+  })
+
+  it.each<[string, Fixture, RegExp]>([
+    ['a missing SVG', {}, /ENOENT/],
+    ['an undecodable SVG', { files: { 'brand.svg': 'not an image' } }, /cannot decode the icon/],
+    ['a PNG in place of the SVG', { files: { 'brand.svg': TINY_PNG } }, /is png, not SVG/],
+    ['a dist that declares no icon', {
+      index: '<head><link rel="manifest" href="./manifest.webmanifest"></head>',
+      files: { 'brand.svg': BRAND_SVG },
+    }, /declares no icon/],
+    ['a manifest that is not a JSON object', {
+      index: '<head><link rel="manifest" href="./site.webmanifest"></head>',
+      files: { 'brand.svg': BRAND_SVG, 'dist/site.webmanifest': 'null' },
+    }, /the manifest \.\/site\.webmanifest is not a JSON object/],
+    ['an icon outside the dist', {
+      index: '<head><link rel="icon" href="..%2fbrand.svg"></head>',
+      files: { 'brand.svg': BRAND_SVG },
+    }, /is outside the dist/],
+    ['an icon on another origin', {
+      index: '<head><link rel="icon" href="https://cdn.example/icon.svg"></head>',
+      files: { 'brand.svg': BRAND_SVG },
+    }, /is outside the dist/],
+    ['an icon that is neither SVG nor PNG', {
+      index: '<head><link rel="icon" href="./favicon.ico"></head>',
+      files: { 'brand.svg': BRAND_SVG, 'dist/favicon.ico': 'ICO' },
+    }, /is neither SVG nor PNG/],
+    ['manifest icons without a src', {
+      index: '<head><link rel="manifest" href="./site.webmanifest"></head>',
+      files: { 'brand.svg': BRAND_SVG, 'dist/site.webmanifest': '{"icons":[{"sizes":"1x1"}]}' },
+    }, /declares icons that are not objects with a string src/],
+  ])('fails its start for %s and leaves the seat unclaimed', { timeout: 60_000 }, async (_case, fixture, error) => {
+    const loaded = await loadComposition({ ...fixture, config: ["icon: '{root}/brand.svg'"] })
+    const frontend = [...loaded.loader.entries()].find(entry => entry.options.id === 'frontend')
+    expect(frontend?.fiber?.state).toBe(FiberState.FAILED)
+    await expect(frontend?.fiber?.await()).rejects.toThrow(error)
+    expect((await request(loaded.webServer.port, '/app.js')).status).toBe(404)
   })
 })
