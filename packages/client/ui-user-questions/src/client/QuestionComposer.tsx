@@ -344,26 +344,10 @@ function QuestionFlow({ pending, t, useStore, useQuestionCard, actions }: Questi
       })
   }
 
-  const updateDraft = (
-    update: (current: QuestionDraftAnswer) => QuestionDraftAnswer,
-    nextIndex = index,
-  ): void => {
+  const updateDraft = (update: (current: QuestionDraftAnswer) => QuestionDraftAnswer): void => {
     engage()
-    const nextDrafts = drafts.map((item, itemIndex) => itemIndex === index ? update(item) : item)
-    replaceProgress(nextIndex, nextDrafts)
+    replaceProgress(index, drafts.map((item, itemIndex) => itemIndex === index ? update(item) : item))
     setError(null)
-  }
-
-  const choose = (label: string): void => {
-    updateDraft((current) => {
-      if (question.multiSelect === true) {
-        const selected = current.selected.includes(label)
-          ? current.selected.filter(item => item !== label)
-          : [...current.selected, label]
-        return { ...current, selected, skipped: false }
-      }
-      return { selected: [label], custom: '', skipped: false }
-    }, question.multiSelect !== true && index < questions.length - 1 ? index + 1 : index)
   }
 
   const answered = (item: QuestionDraftAnswer): boolean =>
@@ -415,6 +399,28 @@ function QuestionFlow({ pending, t, useStore, useQuestionCard, actions }: Questi
       })
   }
 
+  const finishQuestion = (finished: QuestionDraftAnswer): void => {
+    engage()
+    const nextDrafts = drafts.map((item, itemIndex) => itemIndex === index ? finished : item)
+    const last = index === questions.length - 1
+    replaceProgress(last ? index : index + 1, nextDrafts)
+    setError(null)
+    if (last) submitDrafts(nextDrafts)
+  }
+
+  const choose = (label: string): void => {
+    if (question.multiSelect !== true) {
+      finishQuestion({ selected: [label], custom: '', skipped: false })
+      return
+    }
+    updateDraft((current) => {
+      const selected = current.selected.includes(label)
+        ? current.selected.filter(item => item !== label)
+        : [...current.selected, label]
+      return { ...current, selected, skipped: false }
+    })
+  }
+
   const continueFlow = (): void => {
     if (!answered(draft)) {
       setError({ key: 'error.unanswered' })
@@ -448,16 +454,7 @@ function QuestionFlow({ pending, t, useStore, useQuestionCard, actions }: Questi
   }
 
   const skipQuestion = (): void => {
-    engage()
-    const nextDrafts = drafts.map((item, itemIndex) => itemIndex === index
-      ? { selected: [], custom: '', skipped: true }
-      : item)
-    replaceProgress(index < questions.length - 1 ? index + 1 : index, nextDrafts)
-    setError(null)
-    if (index < questions.length - 1) {
-      return
-    }
-    submitDrafts(nextDrafts)
+    finishQuestion({ selected: [], custom: '', skipped: true })
   }
 
   return (

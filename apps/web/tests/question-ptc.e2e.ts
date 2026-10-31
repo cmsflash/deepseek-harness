@@ -74,7 +74,6 @@ describe.skipIf(webSnapshotMode() === 'record')('web e2e: PTC answered question'
     await input.press('Enter')
     const composer = page.locator('[data-question-key]')
     await composer.getByRole('radio', { name: 'Blue', exact: true }).click()
-    await composer.getByRole('button', { name: 'Submit', exact: true }).click()
     await settled
     const dispatch = events.find(event => event.type === 'tool/ptc-dispatch' && event.data.name === 'ask_user_question')
     expect(dispatch?.type).toBe('tool/ptc-dispatch')

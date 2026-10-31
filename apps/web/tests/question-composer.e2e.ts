@@ -686,7 +686,6 @@ describe('web e2e: resident question composer round trip', () => {
         sameLine: true, fontSize: '13px', lineHeight: '20px', maskImage: 'none',
       })))
       await composer.getByRole('radio', { name: '中（medium）' }).click()
-      await composer.getByRole('button', { name: 'Submit', exact: true }).click()
       expect(await outcome).toEqual({ value: { answers: [{ id: 'reasoning', selected: ['中（medium）'] }] } })
       completed = true
     } finally {
@@ -1049,7 +1048,6 @@ describe('web e2e: resident question composer round trip', () => {
       await expect.poll(() => descriptionOf('Explicit install').evaluate(readCopy))
         .toEqual({ lines: 1, clipped: true, overflows: true, toggle: 'expand' })
       await composer.getByRole('radio', { name: 'Stage the rollout', exact: true }).click()
-      await composer.getByRole('button', { name: 'Submit', exact: true }).click()
       expect(await outcome).toEqual({ value: { answers: [{ id: 'rollout', selected: ['Stage the rollout'] }] } })
       await expect.poll(() => page.locator('[data-question-key]').count(), { timeout: 10_000 }).toBe(0)
       bodyCompleted = true
@@ -1263,7 +1261,6 @@ it.each(['another-feature', 'cua-app-access'])('answers %s approval without a sp
   resources.waiting = Promise.allSettled([result])
   const question = page.locator('[data-question-key]')
   await question.getByRole('radio', { name: 'Deny', exact: true }).click()
-  await question.getByRole('button', { name: 'Submit', exact: true }).click()
   expect(await result).toEqual({ answers: [{ id, selected: ['Deny'] }] })
   await question.waitFor({ state: 'hidden' })
   expect(tripwire.pageErrors).toEqual([])
