@@ -23,11 +23,18 @@ import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 import type { DraftInitializationOptions } from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type { RowToast } from './contract/slots.ts'
 import { pinOrderAccounts, pinOrderSource } from './pin-order.ts'
+import { RecentSessions } from './recent-sessions.ts'
 import type { WorkspaceViewStoreActions } from './stores.ts'
 
 interface MainSelection {
   readonly sessionId?: SessionId
   readonly subagentAddress?: SubagentAddress
+}
+
+/** The main view's reference and the target it was acquired for. */
+interface MainView {
+  readonly reference: SessionReference
+  readonly target: SessionTarget
 }
 
 /** Content preparation and Agent preset for the Session a Workspace flow opens. */
@@ -173,7 +180,8 @@ class UiWorkspaceService extends Service implements UiWorkspace {
   private readonly selection = createSnapshotStore<MainSelection>(
     {}, { persist: { name: 'dsh.sessions.current' } },
   )
-  private mainReference: SessionReference | undefined
+  private main: MainView | undefined
+  private readonly recent: RecentSessions
   private restorationNavigation: AbortSignal | undefined
 
   /**
@@ -183,6 +191,7 @@ class UiWorkspaceService extends Service implements UiWorkspace {
    * @param sessions - pure Session Controller.
    * @param view - the browser's viewing-store write set (one instance shared with its registration).
    * @param notify - show one notice through the Workspace notice channel.
+   * @param keepRecentSessions - how many Sessions the main view left most recently stay retained.
    */
   constructor(
     ctx: Context,
@@ -191,16 +200,19 @@ class UiWorkspaceService extends Service implements UiWorkspace {
     private readonly sessions: ISessions,
     private readonly view: Pick<WorkspaceViewStoreActions, 'pinSessionOrder'>,
     private readonly notify: (toast: RowToast) => void,
+    keepRecentSessions: number,
   ) {
     super(ctx, 'uiWorkspace')
+    this.recent = new RecentSessions(sessions, keepRecentSessions)
     ctx.effect(() => {
       const stop = this.watchNavigation()
       return () => {
         stop()
         this.lifetime.abort()
-        const reference = this.mainReference
-        this.mainReference = undefined
-        reference?.release()
+        this.recent.clear()
+        const main = this.main
+        this.main = undefined
+        main?.reference.release()
       }
     }, 'ui-workspace: Workspace navigation policy')
   }
@@ -341,7 +353,7 @@ class UiWorkspaceService extends Service implements UiWorkspace {
       || (draftOptions.whenDraftExists ?? (draftOptions.clearPreviousDraft === true ? 'replace' : 'keep')) === 'replace')
     const workspace = this.workspaces.list.getSnapshot()
     const sessions = this.sessions.list.getSnapshot()
-    const current = this.mainReference?.sessionId
+    const current = this.main?.reference.sessionId
     const currentWorkspaceId = current === undefined
       ? undefined
       : workspace.items.find(item => item.sessionIds.includes(current))?.workspaceId
@@ -381,7 +393,7 @@ class UiWorkspaceService extends Service implements UiWorkspace {
 
   async archiveSession(sessionId: SessionId, options: { readonly stopActivity?: boolean } = {}): Promise<void> {
     await this.workspaces.archiveSession(sessionId, options)
-    if (this.mainReference?.sessionId === sessionId) this.clearMain()
+    if (this.main?.reference.sessionId === sessionId) this.clearMain()
   }
 
   async unarchiveSession(sessionId: SessionId): Promise<void> {
@@ -432,12 +444,14 @@ class UiWorkspaceService extends Service implements UiWorkspace {
     let initial: 'waiting' | 'connecting' | 'done' = 'waiting'
     const reconcile = (): void => {
       if (this.lifetime.signal.aborted) return
+      const archived = this.workspaces.list.getSnapshot().archivedSessionIds
+      this.recent.releaseWhere(sessionId => archived.includes(sessionId))
       if (this.clearArchivedCurrent()) return
       if (initial !== 'waiting' || this.restorationNavigation?.aborted === true) return
       const workspace = this.workspaces.list.getSnapshot()
       const sessions = this.sessions.list.getSnapshot()
       if (workspace.phase !== 'ready' || sessions.phase !== 'ready') return
-      if (this.mainReference !== undefined) {
+      if (this.main !== undefined) {
         initial = 'done'
         return
       }
@@ -505,7 +519,7 @@ class UiWorkspaceService extends Service implements UiWorkspace {
 
   /** @returns true when an archived current selection was cleared. */
   private clearArchivedCurrent(): boolean {
-    const current = this.mainReference?.sessionId
+    const current = this.main?.reference.sessionId
     if (current === undefined
       || !this.workspaces.list.getSnapshot().archivedSessionIds.includes(current)) return false
     this.clearMain()
@@ -513,10 +527,10 @@ class UiWorkspaceService extends Service implements UiWorkspace {
   }
 
   private clearMain(): void {
-    const previous = this.mainReference
-    this.mainReference = undefined
+    const previous = this.main
+    this.main = undefined
     this.selection.set({})
-    previous?.release()
+    previous?.reference.release()
     this.ctx.layout.selectPanel(null)
   }
 
@@ -546,9 +560,16 @@ class UiWorkspaceService extends Service implements UiWorkspace {
       reference.release()
       throw error
     }
-    const previous = this.mainReference
-    this.mainReference = reference
-    previous?.release()
+    const previous = this.main
+    this.main = { reference, target }
+    try {
+      if (previous !== undefined && previous.reference.sessionId !== reference.sessionId) {
+        this.recent.keep(previous.target)
+      }
+      this.recent.release(reference.sessionId)
+    } finally {
+      previous?.reference.release()
+    }
     if (panel === 'reveal') this.ctx.layout.selectPanel(null)
   }
 

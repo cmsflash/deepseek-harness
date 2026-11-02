@@ -27,6 +27,9 @@
       "path": "../../../vendor/cordis"
     },
     {
+      "path": "../../../vendor/schemastery"
+    },
+    {
       "path": "../ui-slots"
     },
     {

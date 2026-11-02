@@ -277,6 +277,8 @@ interface BenchOptions {
   readonly workspaces?: WorkspaceSnapshot
   readonly sessions?: SessionListState
   readonly configureSessions?: (sessions: FakeSessions) => void
+  /** Sessions the main view left most recently that stay retained; 0 unless a case is about them. */
+  readonly keepRecentSessions?: number
 }
 
 function bench(options: BenchOptions = {}) {
@@ -310,8 +312,17 @@ function bench(options: BenchOptions = {}) {
     sessions,
     view.actions,
     notify,
+    options.keepRecentSessions ?? 0,
   )
   return { ctx, directoryPicker, sessions, uiWorkspace, workspaces, layout, selectPanel, view, notify, requestDraftInitialization }
+}
+
+/** Each retain call as `[sessionId, source, released]`, in call order. */
+function retentions(sessions: FakeSessions): [SessionId, string, boolean][] {
+  return sessions.retain.mock.calls.map(([, options], index) => {
+    const issued = sessions.retained[index]!
+    return [issued.reference.sessionId, options.source, issued.release.mock.calls.length > 0]
+  })
 }
 
 function lastOpening(open: MockInstance<UiWorkspaceService['openWorkspace']>): Promise<void> {
@@ -1567,5 +1578,78 @@ describe('UiWorkspaceService', () => {
     await expect(b.uiWorkspace.createDirectory('/home/u', 'new')).rejects.toMatchObject({
       rpcError: { code: 'directory-picker/exists' },
     })
+  })
+})
+
+describe('UiWorkspaceService recently left Sessions', () => {
+  it('keeps the Session the main view leaves, and hands it back to the main view on return', () => {
+    const b = bench({ keepRecentSessions: 2 })
+
+    b.uiWorkspace.openSession(sid('a'))
+    b.uiWorkspace.openSession(sid('b'))
+
+    expect(retentions(b.sessions)).toEqual([
+      [sid('a'), 'mainView', true], [sid('b'), 'mainView', false], [sid('a'), 'recentView', false],
+    ])
+    const [aMain, , aRecent] = b.sessions.retained
+    expect(aMain!.release.mock.invocationCallOrder[0]).toBeGreaterThan(b.sessions.retain.mock.invocationCallOrder[2]!)
+
+    b.uiWorkspace.openSession(sid('a'))
+
+    expect(retentions(b.sessions).slice(2)).toEqual([
+      [sid('a'), 'recentView', true], [sid('a'), 'mainView', false], [sid('b'), 'recentView', false],
+    ])
+    expect(aRecent!.release.mock.invocationCallOrder[0]).toBeGreaterThan(b.sessions.retain.mock.invocationCallOrder[3]!)
+    expect(b.sessions.retained[1]!.release).toHaveBeenCalledOnce()
+  })
+
+  it('releases the least recently left Session beyond the configured count', () => {
+    const b = bench({ keepRecentSessions: 2 })
+
+    for (const id of ['a', 'b', 'c', 'd']) b.uiWorkspace.openSession(sid(id))
+
+    expect(retentions(b.sessions).filter(([, source]) => source === 'recentView')).toEqual([
+      [sid('a'), 'recentView', true], [sid('b'), 'recentView', false], [sid('c'), 'recentView', false],
+    ])
+  })
+
+  it('keeps nothing when the configured count is 0 or the main view reopens its own Session', () => {
+    const off = bench()
+    off.uiWorkspace.openSession(sid('a'))
+    off.uiWorkspace.openSession(sid('b'))
+    const same = bench({ keepRecentSessions: 2 })
+    same.uiWorkspace.openSession(sid('a'))
+    same.uiWorkspace.openSession(sid('a'))
+
+    expect(retentions(off.sessions)).toEqual([[sid('a'), 'mainView', true], [sid('b'), 'mainView', false]])
+    expect(retentions(same.sessions)).toEqual([[sid('a'), 'mainView', true], [sid('a'), 'mainView', false]])
+  })
+
+  it('releases a kept Session once it is archived, and keeps nothing when archiving clears the main view', async () => {
+    const b = bench({ keepRecentSessions: 2 })
+    b.uiWorkspace.openSession(sid('a'))
+    b.uiWorkspace.openSession(sid('b'))
+
+    b.workspaces.list.update(state => ({ ...state, archivedSessionIds: [sid('a')] }))
+    expect(retentions(b.sessions)[2]).toEqual([sid('a'), 'recentView', true])
+    await b.uiWorkspace.archiveSession(sid('b'))
+
+    expect(retentions(b.sessions)).toEqual([
+      [sid('a'), 'mainView', true], [sid('b'), 'mainView', true], [sid('a'), 'recentView', true],
+    ])
+  })
+
+  it('keeps a subagent by its address and releases every kept Session on disposal', async () => {
+    const address: SubagentAddress = { parentSessionId: sid('parent'), childSessionId: sid('child'), mode: 'continuable' }
+    const b = bench({ keepRecentSessions: 2 })
+    b.uiWorkspace.openSession(address)
+    b.uiWorkspace.openSession(sid('b'))
+
+    expect(b.sessions.retain).toHaveBeenLastCalledWith(address, { source: 'recentView' })
+    await b.ctx.fiber.dispose()
+
+    expect(retentions(b.sessions)).toEqual([
+      [sid('child'), 'mainView', true], [sid('b'), 'mainView', true], [sid('child'), 'recentView', true],
+    ])
   })
 })

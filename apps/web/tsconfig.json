@@ -183,6 +183,7 @@
     "tests/message-feedback.e2e.ts",
     "tests/markdown-images.e2e.ts",
     "tests/markdown-image-refresh.e2e.ts",
+    "tests/recent-sessions.e2e.ts",
     "tests/markdown-file-links.e2e.ts",
     "tests/user-text-secret-mask.e2e.ts",
     "tests/reference-composer.e2e.ts",

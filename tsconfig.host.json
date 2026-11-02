@@ -175,6 +175,7 @@
     "apps/web/tests/message-feedback.e2e.ts",
     "apps/web/tests/markdown-images.e2e.ts",
     "apps/web/tests/markdown-image-refresh.e2e.ts",
+    "apps/web/tests/recent-sessions.e2e.ts",
     "apps/web/tests/markdown-file-links.e2e.ts",
     "apps/web/tests/user-text-secret-mask.e2e.ts",
     "apps/web/tests/reference-composer.e2e.ts",

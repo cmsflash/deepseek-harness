@@ -25,6 +25,7 @@ import type {
 } from '@deepseek-ai/dsh-api-workspace-controller/client'
 import type { RemoteEndpoint } from '@deepseek-ai/dsh-api-remote-access/client'
 import type { SessionRequestId } from '@deepseek-ai/dsh-api-session-controller/types'
+import z from '@deepseek-ai/schemastery'
 import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
 import { writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { HostObservable, SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
@@ -112,13 +113,28 @@ export const inject = [
   'remoteAccess',
 ]
 
+/** Workspace navigation configuration. */
+export interface Config {
+  /**
+   * How many Sessions the main view left most recently stay retained, so switching back to one
+   * reuses its loaded history; 0 releases a Session as soon as the main view leaves it.
+   */
+  keepRecentSessions?: number
+}
+
+/** Validated Workspace navigation configuration. */
+export const Config: z<Config> = z.object({
+  keepRecentSessions: z.natural().default(8),
+})
+
 /**
  * Register the browser and picker once their slot declarations are on the
  * ledger. Inject factories return plain callbacks; data reads use the
  * framework's global hooks.
  * @param ctx - client root context.
+ * @param config - Workspace navigation configuration.
  */
-export function apply(ctx: Context): void {
+export function apply(ctx: Context, config: Config = Config({})): void {
   const sessions = ctx.get('sessions') as ISessions
   const workspaces = ctx.get('workspaces') as IWorkspaces
   // One viewing-store instance, created here as ui-layout does for its layout
@@ -130,8 +146,10 @@ export function apply(ctx: Context): void {
   const rowToast = createSnapshotStore<RowToastState | null>(null)
   let toastSeq = 0
   const notify = (toast: RowToast): void => { rowToast.set({ ...toast, seq: ++toastSeq }) }
+  // Schemastery's field default is materialized before Cordis calls apply.
   const uiWorkspace = new UiWorkspaceService(
     ctx, ctx.remote.directoryPicker, workspaces, sessions, viewInstance.actions, notify,
+    config.keepRecentSessions as number,
   )
   ctx.slots.provideRoot({
     hooks: { workspaces: workspaces.list },
