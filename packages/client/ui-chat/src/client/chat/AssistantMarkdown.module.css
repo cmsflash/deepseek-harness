@@ -29,10 +29,16 @@
    when the transcript is narrower than the message column, so narrow
    viewports keep the plain in-column scroll with no sideways shift.
    Percentages resolve against the wrapper's containing block, so a table
-   indented inside a list still reaches the same transcript edges. */
+   indented inside a list still reaches the same transcript edges. The
+   table's scroller spans at least the message column at the table's indent
+   and at most the transcript, so a table too wide for the space right of
+   the column moves left, up to the transcript's left edge, before it
+   scrolls. */
 .body :global(.md-table-wide) {
   --dsh-table-spare: max(0px, calc((100cqw - var(--dsh-chat-content-width)) / 2));
   --dsh-table-lead: calc(var(--dsh-table-spare) + min(var(--dsh-chat-content-width), 100cqw) - 100%);
+  --dsh-table-min-width: calc(100% - var(--dsh-table-spare));
+  --dsh-table-max-width: 100cqw;
   box-sizing: border-box;
   width: calc(100% + var(--dsh-table-lead) + var(--dsh-table-spare));
   /* The base .tableScroll caps at the column (max-width: 100%); the breakout

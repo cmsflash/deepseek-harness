@@ -21,8 +21,9 @@ export interface TableBlockProps extends TableBlockLabels {
   /** The rendered `<table>` and its rows. */
   children: ReactNode
   /**
-   * Four-or-more-column table: keeps natural width and carries the
-   * `md-table-wide` hook a hosting layout widens past the message column.
+   * Four-or-more-column table: keeps natural width, never narrower than a
+   * fill table, and carries the `md-table-wide` hook a hosting layout widens
+   * past the message column.
    */
   wide: boolean
   /** The table as GFM; absent withholds the control (unserializable cell). */

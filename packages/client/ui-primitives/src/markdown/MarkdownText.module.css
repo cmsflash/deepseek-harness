@@ -303,11 +303,13 @@
 
 /* Many-column tables (the renderer's `md-table-wide` hook) keep their
    natural width and scroll inside the wrapper; a hosting layout may widen
-   the wrapper through the hook (deepsuite chat TableWrapper parity). */
+   the wrapper through the hook (deepsuite chat TableWrapper parity). A table
+   never ends short of its wrapper. */
 .tableScroll table {
   border-collapse: collapse;
   width: max-content;
   max-width: max-content;
+  min-width: 100%;
 }
 
 /* Tables under four columns, and any table inside a blockquote, fill the
@@ -317,6 +319,25 @@
 .tableFill table {
   width: 100%;
   max-width: none;
+}
+
+/* A wide table's wrapper takes its table's width, bounded by the host's
+   `--dsh-table-min-width` and `--dsh-table-max-width` (the column by
+   default). It starts at the block's content edge while the table fits to
+   its right; a wider table moves left into the block's padding until it ends
+   at the block's right edge, and scrolls only once the wrapper reaches the
+   maximum width. */
+.tableBlock:global(.md-table-wide) {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.tableBlock:global(.md-table-wide) > .tableScroll {
+  flex: none;
+  width: max-content;
+  min-width: var(--dsh-table-min-width, 100%);
+  max-width: var(--dsh-table-max-width, 100%);
+  margin-right: auto;
 }
 
 .tableScroll th {

@@ -1,13 +1,14 @@
 // Web e2e scenario: markdown tables in the message column, deepsuite-chat
 // parity. Tables under four columns (and long-cell tables) fill the 748px
 // message column and wrap; four-or-more-column tables keep their natural
-// width, scroll horizontally inside their wrapper, and — through the
-// renderer's `md-table-wide` hook plus AssistantMarkdown's container-query
-// breakout — span the whole transcript width instead of clipping at the
-// message column, with the table content still starting at the message
-// column's left edge. When the transcript is narrower than the message
-// column the breakout clamps to neutral and the plain in-column scroll
-// remains.
+// width, never narrower than that column, and — through the renderer's
+// `md-table-wide` hook plus AssistantMarkdown's container-query breakout —
+// may widen up to the whole transcript: a table that fits right of the
+// message column's left edge starts there, a wider one moves left up to the
+// transcript's left edge, and only a table wider than the transcript scrolls
+// horizontally inside its wrapper. When the transcript is narrower than the
+// message column the breakout clamps to neutral and the plain in-column
+// scroll remains.
 //
 // Only a real engine lays out CSS tables and resolves container-query
 // units, so the fill/scroll/breakout relations, the lead-padding alignment,
@@ -57,7 +58,15 @@ const FILL_MARKER = 'MWT_FILL_C1'
 const WIDE_MARKER = 'MWT_WIDE_C01'
 const LONG_CELL_MARKER = 'MWT_LONGCELL_F1'
 const SHORT_MARKER = 'MWT_SHORT_C1'
+const MID_MARKER = 'MWT_MID_D1'
 const MARKERS = [FILL_MARKER, WIDE_MARKER, LONG_CELL_MARKER]
+/** Wider than the transcript at every stop, so the wide table always scrolls. */
+const WIDE_COLUMNS = 14
+/**
+ * Too wide for the space right of the message column at the widest stop, but
+ * narrower than the transcript there; wider than the transcript at 1100px.
+ */
+const MID_COLUMNS = 10
 /** Golden-facing names, in {@link MARKERS} order. */
 const TABLE_NAMES = ['fill', 'wide', 'long-cell']
 
@@ -79,9 +88,11 @@ const CJK_SENTENCE = '这个单元格包含一段较长的中文说明，用来�
 
 /** The assistant markdown includes fitting and overflowing wide tables. */
 function tablesMarkdown(): string {
-  const wideHeader = [WIDE_MARKER, ...Array.from({ length: 11 }, (_, i) => `C${String(i + 2).padStart(2, '0')}`)]
+  const wideHeader = [WIDE_MARKER, ...Array.from({ length: WIDE_COLUMNS - 1 }, (_, i) => `C${String(i + 2).padStart(2, '0')}`)]
   const wideRow = (row: number): string[] =>
-    Array.from({ length: 12 }, (_, i) => `v${String(row)}${String(i + 1).padStart(2, '0')}`)
+    Array.from({ length: WIDE_COLUMNS }, (_, i) => `v${String(row)}${String(i + 1).padStart(2, '0')}`)
+  const midHeader = [MID_MARKER, ...Array.from({ length: MID_COLUMNS - 1 }, (_, i) => `D${String(i + 2)}`)]
+  const midRow = Array.from({ length: MID_COLUMNS }, (_, i) => `m${String(i + 1)}`)
   return [
     'Markdown tables exercise the wide-table layout rules.',
     '',
@@ -98,9 +109,13 @@ function tablesMarkdown(): string {
     `| Memory | ${SENTENCE} | ${SENTENCE} |`,
     '',
     `| ${wideHeader.join(' | ')} |`,
-    `|${' --- |'.repeat(12)}`,
+    `|${' --- |'.repeat(WIDE_COLUMNS)}`,
     `| ${wideRow(1).join(' | ')} |`,
     `| ${wideRow(2).join(' | ')} |`,
+    '',
+    `| ${midHeader.join(' | ')} |`,
+    `|${' --- |'.repeat(MID_COLUMNS)}`,
+    `| ${midRow.join(' | ')} |`,
     '',
     `| ${LONG_CELL_MARKER} | Value |`,
     '| --- | --- |',
@@ -204,10 +219,63 @@ function readTables(page: Page): Promise<TableReading[]> {
   }, MARKERS)
 }
 
+/** One table's own box, its wrapper's edges, and its block's edges, in viewport x. */
+interface TableBox {
+  tableLeft: number
+  tableWidth: number
+  scrollerLeft: number
+  scrollerRight: number
+  /** A hooked block spans the whole transcript. */
+  blockLeft: number
+  blockRight: number
+  /** `scrollWidth - clientWidth` of the wrapper. */
+  overflow: number
+}
+
+/** The fill table spans exactly the message column; the others are hooked. */
+const BOX_MARKERS = { fill: FILL_MARKER, short: SHORT_MARKER, mid: MID_MARKER, wide: WIDE_MARKER }
+
+/**
+ * Read the boxes the block readings above leave out.
+ * @param target - the page to read.
+ * @returns one box per {@link BOX_MARKERS} name.
+ */
+function readTableBoxes(target: Page): Promise<Record<keyof typeof BOX_MARKERS, TableBox>> {
+  return target.evaluate((markers) => {
+    const blocks = [...document.querySelectorAll<HTMLElement>('[class*="tableBlock"]')]
+    const boxOf = (marker: string): TableBox => {
+      const block = blocks.find(candidate => candidate.textContent?.includes(marker) ?? false)
+      if (block === undefined) throw new Error(`table block ${marker} not rendered`)
+      const scroller = block.querySelector<HTMLElement>('[class*="tableScroll"]')
+      const table = scroller?.querySelector('table') ?? null
+      if (scroller === null || table === null) throw new Error(`table ${marker} not rendered`)
+      const tableRect = table.getBoundingClientRect()
+      const scrollerRect = scroller.getBoundingClientRect()
+      const blockRect = block.getBoundingClientRect()
+      return {
+        tableLeft: tableRect.left,
+        tableWidth: tableRect.width,
+        scrollerLeft: scrollerRect.left,
+        scrollerRight: scrollerRect.right,
+        blockLeft: blockRect.left,
+        blockRight: blockRect.right,
+        overflow: scroller.scrollWidth - scroller.clientWidth,
+      }
+    }
+    return {
+      fill: boxOf(markers.fill),
+      short: boxOf(markers.short),
+      mid: boxOf(markers.mid),
+      wide: boxOf(markers.wide),
+    }
+  }, BOX_MARKERS)
+}
+
 /** A sweep stop: the three tables' readings at one viewport width. */
 interface TableStop {
   width: number
   tables: TableReading[]
+  boxes: Record<keyof typeof BOX_MARKERS, TableBox>
 }
 
 /**
@@ -324,7 +392,10 @@ describe('web e2e: markdown tables fill the column, wide ones break out and scro
   const sweep = (): Promise<TableStop[]> => {
     swept ??= (async () => {
       const stops: TableStop[] = []
-      for (const width of WIDTHS) stops.push({ width, tables: await settleAt(width) })
+      for (const width of WIDTHS) {
+        const tables = await settleAt(width)
+        stops.push({ width, tables, boxes: await readTableBoxes(page) })
+      }
       return stops
     })()
     return swept
@@ -347,12 +418,16 @@ describe('web e2e: markdown tables fill the column, wide ones break out and scro
       expect(fill!.wideHook).toBe(false)
       expect(longCell!.wideHook).toBe(false)
       if (stop.width > 748) {
-        // Breakout: the wide wrapper spans past the message column, and its
-        // lead padding keeps the table content starting at the message
-        // column's left edge (compared to the fill table's content).
+        // Breakout: the wide block spans past the message column, and its
+        // lead padding keeps a fitting table starting at the message column's
+        // left edge (compared to the fill table's content)…
         expect(wide!.clientWidth, `wide breakout at ${String(stop.width)}`).toBeGreaterThan(columnWidth + 8)
         expect(wide!.paddingLeft, `lead at ${String(stop.width)}`).toBeGreaterThan(0)
-        expect(Math.abs(wide!.tableLeft - fill!.tableLeft), `alignment at ${String(stop.width)}`).toBeLessThan(1.5)
+        const { fill: fillBox, short, wide: wideBox } = stop.boxes
+        expect(Math.abs(short.tableLeft - fillBox.tableLeft), `alignment at ${String(stop.width)}`).toBeLessThan(1.5)
+        // …while a table wider than the transcript scrolls in a wrapper that spans all of it.
+        expect(Math.abs(wideBox.scrollerLeft - wideBox.blockLeft), `wide start at ${String(stop.width)}`).toBeLessThan(1.5)
+        expect(Math.abs(wideBox.scrollerRight - wideBox.blockRight), `wide end at ${String(stop.width)}`).toBeLessThan(1.5)
       } else {
         // Below the message column there is no spare width: the breakout
         // clamps to neutral and the wrapper stays the column's width.
@@ -366,6 +441,43 @@ describe('web e2e: markdown tables fill the column, wide ones break out and scro
     const narrowest = stops[stops.length - 1]!
     expect(narrowest.tables[0]!.height).toBeGreaterThan(widest.tables[0]!.height)
     expect(narrowest.tables[2]!.height).toBeGreaterThan(widest.tables[2]!.height)
+    expect(tripwire.pageErrors).toEqual([])
+  }, 120_000)
+
+  it('never renders a wide table narrower than the column a fill table spans', async () => {
+    onTestFailed(() => saveFailureShot(page, 'web-e2e-markdown-wide-table-floor'))
+    for (const stop of await sweep()) {
+      const { fill, short } = stop.boxes
+      const at = `at ${String(stop.width)}`
+      expect(short.tableWidth, `short ${at}`).toBeGreaterThan(fill.tableWidth - 1.5)
+      // The floor is the message column, not the wider breakout block.
+      if (stop.width > 748) expect(short.tableWidth, `short ${at}`).toBeLessThan(fill.tableWidth + 1.5)
+    }
+    expect(tripwire.pageErrors).toEqual([])
+  }, 120_000)
+
+  it('moves a table too wide for the space right of the column left before it scrolls', async () => {
+    onTestFailed(() => saveFailureShot(page, 'web-e2e-markdown-wide-table-shift'))
+    const stops = await sweep()
+    for (const stop of stops.filter(candidate => candidate.width > 748)) {
+      for (const name of ['mid', 'wide'] as const) {
+        const box = stop.boxes[name]
+        const at = `${name} at ${String(stop.width)}`
+        // The wrapper stays inside the transcript and scrolls only once it spans all of it.
+        expect(box.scrollerLeft, `${at} start`).toBeGreaterThan(box.blockLeft - 1.5)
+        expect(box.scrollerRight, `${at} end`).toBeLessThan(box.blockRight + 1.5)
+        if (box.overflow > 1) {
+          expect(box.scrollerRight - box.scrollerLeft, `${at} width`).toBeGreaterThan(box.blockRight - box.blockLeft - 1.5)
+        }
+      }
+    }
+    // At the widest stop the ten-column table fits the transcript but not the
+    // space right of the column: it starts left of the column, ends at the
+    // transcript's right edge, and does not scroll.
+    const { fill, mid } = stops[0]!.boxes
+    expect(mid.overflow).toBeLessThanOrEqual(1)
+    expect(Math.abs(mid.scrollerRight - mid.blockRight)).toBeLessThan(1.5)
+    expect(mid.scrollerLeft).toBeLessThan(fill.tableLeft - 8)
     expect(tripwire.pageErrors).toEqual([])
   }, 120_000)
 
