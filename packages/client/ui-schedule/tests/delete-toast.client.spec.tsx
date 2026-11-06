@@ -59,6 +59,20 @@ describe('delete toast source', () => {
     source.reportClear({ cleared: false })
     expect(source.hooks.toast.getSnapshot()).toEqual({ kind: 'clearFailed', seq: 3 })
   })
+
+  it('reports only a wait stop the Host did not confirm, and every start it did not confirm', () => {
+    const source = createDeleteToastSource()
+    const listener = vi.fn()
+    source.hooks.toast.subscribe(listener)
+    // A confirmed stop changes the row's own dot, so it raises no banner.
+    source.reportStopWait(true)
+    expect(listener).not.toHaveBeenCalled()
+    expect(source.hooks.toast.getSnapshot()).toBeNull()
+    source.reportStopWait(false)
+    expect(source.hooks.toast.getSnapshot()).toEqual({ kind: 'stopWaitFailed', seq: 1 })
+    source.reportWaitFailed()
+    expect(source.hooks.toast.getSnapshot()).toEqual({ kind: 'waitFailed', seq: 2 })
+  })
 })
 
 describe('ScheduleDeleteToast', () => {
@@ -99,5 +113,15 @@ describe('ScheduleDeleteToast', () => {
   it('shows the warning banner for a bulk removal that failed', () => {
     mount({ kind: 'clearFailed', seq: 5 }, zh)
     expect(screen.getByRole('alert').textContent).toBe(zh['toast.clearFailed'])
+  })
+
+  it('shows the warning banner for a wait that could not be started', () => {
+    mount({ kind: 'waitFailed', seq: 7 }, zh)
+    expect(screen.getByRole('alert').textContent).toBe(zh['toast.waitFailed'])
+  })
+
+  it('shows the warning banner for a wait that could not be stopped', () => {
+    mount({ kind: 'stopWaitFailed', seq: 6 })
+    expect(screen.getByRole('alert').textContent).toBe(en['toast.stopWaitFailed'])
   })
 })

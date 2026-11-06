@@ -8,7 +8,7 @@ import {
 } from '@deepseek-ai/dsh-api-session-controller/client'
 import type { WorkspaceId, WorkspaceView } from '@deepseek-ai/dsh-api-workspace-controller/client'
 import type {
-  SessionStatusSnapshot,
+  SessionDependencyWait, SessionStatusSnapshot,
 } from '@deepseek-ai/dsh-client-ui-session/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type {} from '@deepseek-ai/dsh-token-meter/client'
@@ -55,6 +55,8 @@ export interface SessionNode {
   runningSubagentCount: number
   /** Finished running while not selected and not yet opened (the green "done" reminder dot). */
   completed: boolean
+  /** What the Session waits on outside the user and its Agent, while a domain publishes it. */
+  dependencyWait?: SessionDependencyWait
   /** In the registry-global pin set: leads its section, reorderable only among pinned rows. */
   pinned: boolean
   /** In the registry-global archive set: shown grayed in place and not openable. */
@@ -103,6 +105,8 @@ export interface SearchResultNode {
   runningSubagentCount: number
   /** Finished running while not selected and not yet opened (the green "done" reminder dot). */
   completed: boolean
+  /** What the Session waits on outside the user and its Agent, while a domain publishes it. */
+  dependencyWait?: SessionDependencyWait
   /** In the registry-global archive set: shown grayed and not openable. */
   archived: boolean
   snippet?: string
@@ -447,6 +451,7 @@ function sessionNode(
     ...(s.cwd === undefined || s.cwd === '' ? {} : { cwd: s.cwd }),
     costUsd: threadCostUsd(list, s.id),
     ...(pendingInteraction === undefined ? {} : { pendingInteraction }),
+    ...(status?.dependencyWait === undefined ? {} : { dependencyWait: status.dependencyWait }),
   }
 }
 
@@ -646,6 +651,7 @@ export function deriveSearchResults(
           ? {}
           : { pendingInteraction }),
         completed: status?.completionUnread === true,
+        ...(status?.dependencyWait === undefined ? {} : { dependencyWait: status.dependencyWait }),
         archived: archived.has(summary.id),
         ...match === undefined ? {} : { snippet: match.snippet },
       }

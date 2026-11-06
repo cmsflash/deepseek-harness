@@ -23,7 +23,7 @@ Schedule 将一次性、固定周期、按每日、按每周以及 cron 本地�
 <a id="use-this-package"></a>
 ## 使用此包
 
-随发行版交付的 Web 组合把此服务与 storage-domain、Session controller 一起挂载。其 `Config` 声明 `deliveryHistoryDays`（默认 30）与 `deliveryHistoryRecords`（默认 200）。存储后端路由由 storage-domain 管理；会话模型与 preset 恢复由 Session controller 管理。投递通过 `schedule/resolve-agent` 请求会话所属的控制器激活原 Session；没有处理方时使用 Web Session controller。SDK server 提供自己的处理方，不挂载 Web 控制器。Web 恢复在 `ctx.inject(['sessionController'])` 内注册；存储和管理不等待 Web 控制器。控制器就绪或重新挂载时，会重新检查到期任务。SDK 组合在其自身激活处理方就绪后挂载 Schedule。投递仍需要 Session 持久化后端，因为只有在 Session 确认 `session/flush` 之后一次投递才会提交。
+随发行版交付的 Web 组合把此服务与 storage-domain、Session controller 一起挂载。其 `Config` 声明 `deliveryHistoryDays`（默认 30）、`deliveryHistoryRecords`（默认 200）与 `dependencyWaitSeconds`（默认 3600）。存储后端路由由 storage-domain 管理；会话模型与 preset 恢复由 Session controller 管理。投递通过 `schedule/resolve-agent` 请求会话所属的控制器激活原 Session；没有处理方时使用 Web Session controller。SDK server 提供自己的处理方，不挂载 Web 控制器。Web 恢复在 `ctx.inject(['sessionController'])` 内注册；存储和管理不等待 Web 控制器。控制器就绪或重新挂载时，会重新检查到期任务。SDK 组合在其自身激活处理方就绪后挂载 Schedule。投递仍需要 Session 持久化后端，因为只有在 Session 确认 `session/flush` 之后一次投递才会提交。
 
 提醒工具 `schedule_create`、`schedule_list`、`schedule_delete` 和 `schedule_update` 来自 [`@deepseek-ai/dsh-tool-schedule`](../tool-schedule/README.zh.md)，由 Web preset 和 SDK bundle 挂载；本包提供这些工具调用的宿主服务。更新原地替换一条提醒的名称、指令或时间，保留其 id 与已保存记录；相对的 `after` 延迟不支持更新。创建时需要非空提示文本、标题，且必须只提供以下六个选择器之一：
 
@@ -44,9 +44,11 @@ Schedule 将一次性、固定周期、按每日、按每周以及 cron 本地�
 
 cron 输入携带 `expression` 和 `time_zone`。表达式是标准五字段 Vixie 形式 `minute hour day-of-month month day-of-week`：minute 0-59、hour 0-23、day-of-month 1-31、month 1-12、day-of-week 0-7，其中 `0` 和 `7` 都表示周日。每个字段接受 `*`、单个值、`a-b` 范围、`n >= 1` 的 `*/n` 与 `a-b/n` 步长，以及由这些形式组成的逗号分隔列表。`L`、`W`、`#`、`JAN`/`MON` 名称、`@daily` 风格宏、六字段表达式、超出范围的值、反向范围、零步长和空字段都会以 `invalid_rule` 拒绝，且错误信息会指出违规字段。由于该方言只有五个字段，最小间隔为一分钟。创建时存储规范化表达式：重复值合并，相邻的值与范围合并，均匀步长写为 `a-b/n`，而以 `*` 开头的字段写为星号步长（匹配全部取值时写 `*`，否则写最宽的星号步长并追加其余取值），步长 `1` 被移除，周日统一写为 `0`。不以 `*` 开头的字段绝不会变成星号步长，因此下文的日规则在存储后保持不变。持久化解码器拒绝非规范化的已存储表达式，因此记录始终保存规范化文本。day-of-month 或 day-of-week 中任一为星号字段时，本地日期需两个字段都匹配；两者都不是星号字段时，匹配任一字段即可。字段文本以 `*` 开头即为星号字段，与它匹配的取值集合无关，因此步长星号字段与其他字段同时约束，而不是替代它。首个目标是该时区内本地日期与时间匹配的第一个严格未来时点，使用与 Daily 相同的缺口跳过与重叠取较早时点规则。完整方言与规范化规则见 [cron 时间语义](../../../docs/subsystems/schedule.zh.md#cron-wall-clock-input)。
 
-提醒绑定到调用 Agent 的会话。共享的 `schedule` Remote namespace 提供 `catalog`，返回活动和未运行的宿主任务及其原始会话 id，并提供带明确会话 id 的 `list`、`history`、`update` 和 `delete`。它还提供 `deleteInactive`，删除所有会话中全部未运行（界面显示为「已结束」）任务并返回移除的行数；未运行任务从不会安排定时器，因此该删除不重算任何目标，且该批删除是一次持久写入，普通失败时不删除任何行，调用以拒绝结束而不返回计数；后端报告 `unknown-state` 时可能已移除部分行，并会隔离 Host 的 schedule 领域，之后该领域的操作都会拒绝，直到重新打开；任何拒绝都会先发出 `schedule/changed`，客户端重新读取。Remote `list` 和模型 `schedule_list` 仅返回活动任务。目录条目的 `lastDelivery` 仅保留最近一次回执；目录和列表响应均不包含已保存的发送历史。这些操作均不激活 Agent 或读取会话日志。显式删除会阻止后续投递，保留原会话和已经入队的消息，并移除已存储的任务行及其已保存的发送记录：任务从 `list` 和 `catalog` 中消失、不再调度，`history` 对相同的 `(sessionId, id)` 返回 `schedule_not_found`。
+提醒绑定到调用 Agent 的会话。共享的 `schedule` Remote namespace 提供 `catalog`，返回活动和未运行的宿主任务及其原始会话 id，并提供带明确会话 id 的 `list`、`history`、`update`、`delete` 和 `wait`。它还提供 `deleteInactive`，删除所有会话中全部未运行（界面显示为「已结束」）任务并返回移除的行数；未运行任务从不会安排定时器，因此该删除不重算任何目标，且该批删除是一次持久写入，普通失败时不删除任何行，调用以拒绝结束而不返回计数；后端报告 `unknown-state` 时可能已移除部分行，并会隔离 Host 的 schedule 领域，之后该领域的操作都会拒绝，直到重新打开；任何拒绝都会先发出 `schedule/changed`，客户端重新读取。Remote `list` 和模型 `schedule_list` 仅返回活动任务。目录条目的 `lastDelivery` 仅保留最近一次回执；目录和列表响应均不包含已保存的发送历史。这些操作均不激活 Agent 或读取会话日志；新等待的初始提示词随后经由普通提醒投递到达其会话。显式删除会阻止后续投递，保留原会话和已经入队的消息，并移除已存储的任务行及其已保存的发送记录：任务从 `list` 和 `catalog` 中消失、不再调度，`history` 对相同的 `(sessionId, id)` 返回 `schedule_not_found`。
 
 归档仍有活动提醒的会话会被拒绝，直到这些提醒停止；选择停止它们会删除全部活动提醒，取消归档不会把它们带回来。
+
+`wait({sessionId, title})` 将一个会话挂起，直到外部依赖解除；`title` 是临时任务名称，遵循创建规则。它存储一条活动的 `every` 任务，其首个触发时点就是调用被接受的时刻，因此宿主会立即投递[模型体验](#model-experience)中引用的初始提示词；之后的检查从该时刻起每隔 `dependencyWaitSeconds` 进行一次，已有的等待保留其创建时的间隔。初始提示词请 Agent 判断工作在等待什么，然后用 `schedule_delete` 结束等待，或为它命名：通过 `schedule_update` 设置任务标题，并把提示词替换为 Agent 自己编写的检查指令。每个会话最多有一个活动等待：调用会先删除该会话此前的活动等待，其他任务不受影响。等待任务的 `catalog` 条目携带 `dependencyWait`。每当更新改变等待任务的标题，该标记的 `description` 就变为新标题；只改提示词或只改时间的更新不改变该标记。任何删除都会结束等待，包括 Agent 的 `schedule_delete`、`delete` 和归档停止。
 
 `history({sessionId, id, limit, before?})` 读取一个已存储任务的已保存发送记录。调用方必须提供 1 至 100 的整数 `limit`；非法值以 `invalid_rule` 拒绝。记录按追加顺序从新到旧返回，即使实际时间回拨也不改变顺序。可选的 `before` 消息 id 游标不包含自身；`nextBefore` 是本页最早记录的消息 id，仅在还有更早的已保存记录时出现。任务不存在或会话绑定不符时返回 `schedule_not_found`；未知游标返回 `delivery_cursor_not_found`。查询成功的空页与这两类失败相互区分。
 
@@ -60,7 +62,7 @@ cron 输入携带 `expression` 和 `time_zone`。表达式是标准五字段 Vix
 <details>
 <summary>存储、投递与所有权</summary>
 
-`ScheduleService` 拥有一个版本 1 的 `schedule` domain、全局唯一的任务 id 和一个宿主定时器。每条任务同时存储会话绑定、记录及 `active` 或 `inactive` 状态；仅活动任务驱动定时器。已存储但缺少状态的记录规范化为 `active`，不会扫描或重建历史会话。管理写入与投递写入共用一个 FIFO。更新在队列内比较完整预期记录并采样 `Date.now()`；一次任务 put 修改规则、名称或指令，不替换绑定或发送历史。创建、删除和更新在排队结束、持久化开始前重新检查传入的取消信号；写入一旦开始，取消不会将其回滚。定时器重新读取实际时间，包括时钟回拨时在会话恢复后重新核对到期成员，并分段处理超过平台定时器上限的延迟。同一会话到期的 Every、Daily、Weekly 和 Cron 任务合并为一条消息；每条任务在投递判断后分别推进。即使批次中另一条任务持久化失败，已成功推进的任务仍参与宿主下一次定时计算。
+`ScheduleService` 拥有一个版本 1 的 `schedule` domain、全局唯一的任务 id 和一个宿主定时器。每条任务同时存储会话绑定、记录及 `active` 或 `inactive` 状态；仅活动任务驱动定时器。等待任务的行还存储其 `dependencyWait` 标记；之后的每次任务写入都会保留它，重命名等待任务的更新会把其 `description` 设为新标题。已存储但缺少状态的记录规范化为 `active`，不会扫描或重建历史会话。管理写入与投递写入共用一个 FIFO。更新在队列内比较完整预期记录并采样 `Date.now()`；一次任务 put 修改规则、名称或指令，不替换绑定或发送历史。创建、`wait`、删除和更新在排队结束、持久化开始前重新检查传入的取消信号；写入一旦开始，取消不会将其回滚。定时器重新读取实际时间，包括时钟回拨时在会话恢复后重新核对到期成员，并分段处理超过平台定时器上限的延迟。同一会话到期的 Every、Daily、Weekly 和 Cron 任务合并为一条消息；每条任务在投递判断后分别推进。即使批次中另一条任务持久化失败，已成功推进的任务仍参与宿主下一次定时计算。
 
 投递通过 `schedule/resolve-agent` 解析原会话；仅在 Web 控制器已注入时，Web 回退路径才调用 `sessionController.resolveAgent`。插件来源的 `followup()` 同步将消息追加到会话收件箱；会话 flush 成功后确认持久投递。随后一次任务行 put 更新 `lastDelivery`，将实际回执与已发送提示文本快照追加到 `deliveryHistory.records`，并保存单次任务的 `inactive` 状态或周期任务的下一目标时间。回执包含发生时点 `scheduledAt`、确认时间 `deliveredAt` 和 `messageId`；它确认收件箱投递，不表示模型执行。flush 或任务 put 失败均不发布新的已保存记录。会话持久化与任务 put 是两次独立的持久写入；会话 flush 后崩溃或任务写入失败可能留下未记入发送记录的已投递消息，并再次投递相同提醒。
 
@@ -146,6 +148,30 @@ This is a scheduled message from the user
 
 提醒消息追加到原会话历史并保留既有消息内容，不替换已有请求前缀。
 
+### 依赖等待初始设置
+
+#### 模型看到什么
+
+新等待的首个触发时点在创建时即到期，因此下方的初始提示词会立即作为一条到期周期提醒的 `reminder_prompt` 到达，以 JSON 编码置于上文的周期提醒批次固定文本中；旁边的 `schedule_id` 指明该任务。初始提示词请 Agent 用 `schedule_update` 自行编写之后检查的指令，因此之后的检查携带 Agent 自己的文本；在 Agent 替换提示词之前，每次检查都重复初始提示词。
+
+##### 初始提示词
+
+```markdown
+The user has put this conversation on hold until something outside it happens, such as a colleague's reply or review, or a job finishing. This reminder repeats until it is deleted.
+Work out from the conversation what the work is waiting on, then do one of these:
+- If nothing outside the conversation is blocking the work, delete this reminder with schedule_delete and say so in one line.
+- If it has already happened, delete this reminder with schedule_delete and continue the work.
+- Otherwise, use schedule_update to set this reminder's title to a short noun phrase naming what the work is waiting on, such as "Nico's review of PR 123", and its prompt to a self-contained instruction for the later checks: what to check and how, ending with "If it has happened, delete this reminder with schedule_delete, then <the next step of the work>. Otherwise, reply with one short line saying what you checked, and do nothing else." Leave its timing unchanged. Then reply with one short line naming what the work is waiting on.
+```
+
+#### Token 影响
+
+创建等待会立即在等待中会话产生一个初始设置轮次：批次固定文本和初始提示词加入其历史，Agent 的回复会产生一次模型请求。此后每次检查追加固定文本和任务当前的提示词，并在等待结束前每隔 `dependencyWaitSeconds` 产生一个轮次。
+
+#### KV Cache 影响
+
+检查消息追加到等待中会话的历史，并保留其已有请求前缀。存储、替换或删除等待都不会重写任何模型可见消息。
+
 ## 已知限制与后续工作
 
 <a id="known-limitations-and-deferred-work"></a>
@@ -155,11 +181,15 @@ This is a scheduled message from the user
 - 删除会移除任务行及其已保存的投递记录：后续投递停止，任务离开 `list` 与 `catalog`，`history` 也不再解析到它。
 - 旧会话日志提醒需要明确重新创建。此前已物理删除的任务不会被恢复或虚构。
 - 仅可修改活动任务的管理字段。不支持暂停、执行状态、原会话以外的投递或每次运行新建会话。名称、指令和时间更新可由模型通过 `schedule_update` 修改其自身 Session 内的提醒，也可在 Web 详情中对所选任务修改；不支持跨会话转交工作流，产品权限策略尚未确定，会话绑定校验不等于调用者鉴权。
-- 对由被委派子 agent 拥有的 Session，当该 Agent 的委派深度大于零时，`create` 与 `update` 会以 `subagent_session` 拒绝（这正是委派封顶本身执行的记账，读取自持久化 session header，因此冷恢复后仍然成立）。投递会经由 Session controller 解析该绑定 Session，而后者拒绝被委派子 agent 的活跃 Agent，因此绑定到那里的任务永远无法投递。调用方限制属于工具层：`@deepseek-ai/dsh-tool-schedule` 会拒绝被委派调用方的每一个工具。`list`、`catalog`、`history` 与 `delete` 仍服务该 Session，所以在这条规则之前存储的任务仍可删除。
+- 对由被委派子 agent 拥有的 Session，当该 Agent 的委派深度大于零时，`create`、`update` 与 `wait` 会以 `subagent_session` 拒绝（这正是委派封顶本身执行的记账，读取自持久化 session header，因此冷恢复后仍然成立）。投递会经由 Session controller 解析该绑定 Session，而后者拒绝被委派子 agent 的活跃 Agent，因此绑定到那里的任务永远无法投递。调用方限制属于工具层：`@deepseek-ai/dsh-tool-schedule` 会拒绝被委派调用方的每一个工具。`list`、`catalog`、`history` 与 `delete` 仍服务该 Session，所以在这条规则之前存储的任务仍可删除。
 - Cron 使用五字段 Vixie 方言，因此最小间隔为一分钟，不支持亚分钟级调度。不接受扩展表达式：`L`、`W`、`#`、月份或星期名称、`@daily` 风格宏以及秒字段都会被拒绝。存储记录只保留规范化表达式，创建时提供的原始拼写不会被保留。
 - Daily、Weekly 与 Cron 的未来目标使用宿主当前的 IANA 数据；解码和重启绝不重新计算已提交的目标。UTC 目标仅支持 0001–9999 年；没有后续目标时，任务在投递后保留为未运行状态。
 - 已保存的发送记录在追加确认时按配置的 `deliveryHistoryDays` 窗口（以每条回执的 `deliveredAt` 向前计算）与 `deliveryHistoryRecords` 条数上限裁剪；新追加的最近一次回执始终保留，发生裁剪时任务标记更早记录不可用。JSON 后端把 Schedule domain 存在一个 `schedule.json` 文档中，因此每次任务变更都会重写全部保留任务及其历史，宿主也会把全部保留历史加载到内存。历史分页仅限制返回的记录数，不限制存储增长、保留的内存、提示文本字节数或写入成本。
 - 没有已保存历史的任务仅呈现已有的最近一次回执，直到新投递追加记录。未保存的更早投递和提示文本快照无法恢复；已保存的记录不证明模型执行结果。
+- 每次依赖等待检查（从创建时的初始设置投递开始）都是等待中会话的一个轮次：它把提醒和 Agent 的回复加入该会话历史并产生一次模型请求，之后在等待结束前每隔 `dependencyWaitSeconds` 重复一次。宿主从不自行判断依赖，由 Agent 在每次检查时判断它是否仍阻塞工作。
+- preset 不含 schedule 工具的 Agent 既不能为等待命名，也不能结束等待，因此它每个间隔都会收到初始提示词，直到用户删除该等待。
+- 如果 Agent 跳过初始设置、不修改提示词，初始提示词会每个间隔重复一次；它仍可充当检查，因为它要求 Agent 在依赖发生后删除提醒并继续工作。
+- 替换等待需要两次写入：先删除并通告此前的等待，再存储新任务，因此两次写入之间的失败会让会话没有等待，并以拒绝结束。
 
 <a id="dev-note"></a>
 ### 开发备注

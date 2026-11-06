@@ -3,10 +3,11 @@ import css from './StateDot.module.css'
 import { IconCheckOutlineRegular } from './icons/index.tsx'
 
 /**
- * State semantic: green done / amber user-attention / tertiary-grey loading /
- * red error / neutral-grey idle for a tracked subject with nothing in progress.
+ * State semantic: green done / amber user-attention / blue blocked on something
+ * outside the user and the work / tertiary-grey loading / red error /
+ * neutral-grey idle for a tracked subject with nothing in progress.
  */
-export type StateDotState = 'done' | 'warning' | 'ongoing' | 'error' | 'idle'
+export type StateDotState = 'done' | 'warning' | 'blocked' | 'ongoing' | 'error' | 'idle'
 
 /**
  * Pin the loader's CSS animations to document time zero. A CSS animation starts

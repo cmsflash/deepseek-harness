@@ -221,6 +221,7 @@ export const VIEWER_ENDPOINT_CLASSES = {
   'schedule/history': 'owner-only', // owner schedules
   'schedule/list': 'owner-only', // owner schedules
   'schedule/update': 'owner-only', // owner schedules
+  'schedule/wait': 'owner-only', // owner schedules
   'subagents/interruptByParent': 'owner-only', // owner subagents
   'subagents/prompt': 'owner-only', // owner subagents
 

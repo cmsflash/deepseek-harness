@@ -17,6 +17,7 @@ This branch (`zhuoran` on [cmsflash/deepseek-harness](https://github.com/cmsflas
 - **Image row** in the composer's **+** menu, which opens a picker limited to images (the photo library on phones).
 - **Continue button**: one click sends `Continue.` to every interrupted session.
 - **Installed-app branding**: a server can give its installed web app its own SVG icon and name.
+- **Wait on a dependency**: a session's row menu puts it on hold behind a blue dot; the session works out what it waits on, checks hourly, and continues once it clears.
 - **Plugins**: [dsh-image-side-limit](https://github.com/cmsflash/dsh-image-side-limit) caps each request image's long edge at 2000px, which Anthropic requires once a request carries more than twenty images; [dsh-read-aloud](https://github.com/cmsflash/dsh-read-aloud) reads replies aloud; [dsh-mermaid](https://github.com/AKS1st/dsh-mermaid) (third-party) renders `mermaid` code blocks as diagrams.
 
 ## Instructions for the agent

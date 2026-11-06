@@ -334,6 +334,14 @@ interface ScheduleDeliveryReceipt {
 ```
 
 ```ts type-equiv
+/** Marks a recurring task that holds its Session until an outside dependency clears. */
+interface ScheduleDependencyWait {
+  /** What the Session waits on, as the wait task's current title names it; absent until that title changes after creation. */
+  readonly description?: string
+}
+```
+
+```ts type-equiv
 /** Browser-safe retained reminder with its original Session binding. */
 type ScheduleCatalogEntry = ScheduleRecord & {
   /** Session receiving this reminder when it becomes due. */
@@ -342,10 +350,22 @@ type ScheduleCatalogEntry = ScheduleRecord & {
   readonly status: 'active' | 'inactive'
   /** Most recent durably acknowledged inbox delivery, when available. */
   readonly lastDelivery?: ScheduleDeliveryReceipt
+  /** Present when the task holds its Session until an outside dependency clears; names the dependency once the task is renamed. */
+  readonly dependencyWait?: ScheduleDependencyWait
 }
 ```
 
 The Remote `schedule.list({ sessionId })`, model `schedule_list`, and Session-header catalog return only active tasks. A model view's derived timing `state` remains distinct from stored lifecycle `status`. Deletion uses `schedule.delete({ sessionId, id })` with the entry's original binding; a mismatched binding returns not found. Model tools supply the current Agent's Session, whereas the global user interface supplies the selected task's binding. The binding check alone does not establish caller authorization. `schedule.deleteInactive()` removes every ended (inactive) task across Sessions, with the saved delivery records each row carries; on success it answers `{ deleted }` with the count it removed; a normal failed batch rejects with nothing removed; an `unknown-state` failure may have removed rows and quarantines the Host schedule domain, so later schedule operations reject until it is reopened. Any rejection announces `schedule/changed`, and clients then re-read. The Automation tasks page's bulk cleanup uses it. An ended task never arms a timer, so the removal recomputes no target. The payload-free `schedule/changed` event invalidates client lists; reconnecting clients fetch current state again.
+
+`schedule.wait({ sessionId, title })` puts a Session on hold until an outside dependency clears. It stores an active `every` task whose first occurrence is due at once, so the Host delivers its setup prompt through the ordinary reminder path immediately; later occurrences follow every Host `dependencyWaitSeconds`. The setup prompt asks the Agent to work out what the work waits on, then either delete the task with `schedule_delete` or rename it and replace the prompt with its own check instruction through `schedule_update`. The task's catalog entry carries `dependencyWait`, whose `description` becomes the task's title whenever an update changes that title. The call replaces the Session's earlier active wait and leaves its other tasks alone, and every deletion path, including `schedule.delete` and an archiving stop, ends the wait. The [package README](../../packages/schedule/schedule/README.md#model-experience) quotes the setup prompt.
+
+```ts type-equiv
+/** Request that holds one Session until an outside dependency clears, replacing the Session's earlier wait. */
+interface ScheduleWaitRequest extends ScheduleListRequest {
+  /** Provisional task name of at most 120 characters, non-empty after trimming, kept until the Agent names the dependency. */
+  readonly title: string
+}
+```
 
 The shipped Web composition mounts `ui-schedule` with the Host capability. The [client package](../../packages/client/ui-schedule/README.md) owns the catalog, empty state, and deletion controls. The page separately filters all, active, and inactive tasks, retains inactive details and an original-Session control in the detail tab strip, and requires explicit confirmed deletion. The Rules and Records tabs separate task settings from lazily paged saved receipts. Neither a receipt nor inactive status confirms model execution.
 
@@ -480,6 +500,27 @@ Shared management service; reads, deletion, and timing edits never activate a Se
 async create(sessionId: SessionId, request: ScheduleCreateRequest, signal?: AbortSignal): Promise<ScheduleRecord>
 
 /**
+ * Put the selected Session on hold until an outside dependency clears.
+ *
+ * The wait is an active `every` task carrying the `dependencyWait` marker that `catalog`
+ * reports. Its first occurrence is the acceptance instant, so once the task is stored the
+ * Host delivers the setup prompt through the ordinary reminder path, restoring the Session
+ * when needed; later occurrences follow every configured `dependencyWaitSeconds` and deliver
+ * the task's current prompt. The setup prompt asks the Agent to end the wait with
+ * `schedule_delete` or to rename the task and replace that prompt with its own check
+ * instruction through `schedule_update`. Any deletion of the task ends the wait. The call
+ * replaces the Session's earlier active waits and leaves its other tasks alone. A missing,
+ * blank, or over-long title rejects with `invalid_prompt`, and a Session a delegated child
+ * owns rejects with `subagent_session`. Replacement is two writes: the earlier waits are
+ * deleted and announced before the new task is stored, so a failure between them leaves the
+ * Session without a wait and rejects.
+ * @param request - Session binding and provisional task name.
+ * @param signal - Optional cancellation checked before persistence begins, including after FIFO waits.
+ * @returns The durably stored record, due at its creation. Cancellation does not roll back an in-flight write.
+ */
+@Remote('wait') async wait(request: ScheduleWaitRequest, signal?: AbortSignal): Promise<ScheduleRecord>
+
+/**
  * Read the selected Session's active tasks without resuming its Agent.
  * @param request - Session whose task list is requested.
  * @returns Persisted reminders in storage order.
@@ -488,7 +529,8 @@ async create(sessionId: SessionId, request: ScheduleCreateRequest, signal?: Abor
 
 /**
  * Read all active and inactive Host reminders with their original Session bindings.
- * A deleted reminder has no row, so it is absent here.
+ * A deleted reminder has no row, so it is absent here. An entry for a dependency wait
+ * carries `dependencyWait`; every other entry omits that key.
  * Does not activate Sessions or read Session history.
  * @returns Reminders ordered by scheduledAt ascending, then lexicographically by id.
  */
@@ -537,7 +579,9 @@ async create(sessionId: SessionId, request: ScheduleCreateRequest, signal?: Abor
  * binding without activating the Session or changing saved deliveries.
  *
  * Each supplied field replaces its stored value; an omitted field keeps it. A name or
- * instruction change alone does not reset the committed target. A Session a delegated
+ * instruction change alone does not reset the committed target. An update that changes a
+ * dependency wait's title also sets the wait's `dependencyWait.description` to the new
+ * title; any other update keeps the marker as stored. A Session a delegated
  * child owns returns the non-mutating `subagent_session` result, so an edit cannot
  * re-arm a task bound to a Session delivery can never reach, and the Web editor can
  * explain the refusal through the ordinary result it already renders.

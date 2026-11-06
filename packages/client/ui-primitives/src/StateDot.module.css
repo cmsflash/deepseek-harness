@@ -22,6 +22,10 @@
   color: var(--dsw-alias-state-warn-primary);
 }
 
+.dot[data-state='blocked'] {
+  color: var(--dsw-alias-state-business-primary);
+}
+
 .dot[data-state='error'] {
   color: var(--dsw-alias-state-error-primary);
 }
@@ -98,3 +102,4 @@
 .step[data-state='done'] { border-color: var(--dsw-alias-state-success-primary); background: var(--dsw-alias-state-success-primary); }
 .step[data-state='error'] { border-color: var(--dsw-alias-state-error-primary); background: var(--dsw-alias-state-error-primary); }
 .step[data-state='warning'] { border-color: var(--dsw-alias-state-warn-primary); }
+.step[data-state='blocked'] { border-color: var(--dsw-alias-state-business-primary); }

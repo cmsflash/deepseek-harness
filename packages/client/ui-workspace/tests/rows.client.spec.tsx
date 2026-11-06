@@ -658,6 +658,87 @@ describe('workspace browser rows', () => {
     expect(screen.getByText('1 个子智能体运行中')).toBeTruthy()
   })
 
+  it('shows the blue blocked dot for a dependency wait, ahead of its own checks\' completion reminder', () => {
+    vi.useFakeTimers()
+    try {
+      const node: SessionNode = {
+        id: sid('waiting'), title: 'Waiting', blank: false, running: false, runningSubagentCount: 0,
+        completed: true, dependencyWait: { description: 'Nico reviews the GLM PR' },
+        updatedAt: 0, pinned: false, archived: false, costUsd: 0,
+      }
+      const view = render(<SessionNodeItem node={node} currentId={undefined} now={0} onOpen={vi.fn()} t={tEn} />)
+      const row = screen.getByRole('treeitem')
+      expect(row.querySelector('[data-state="blocked"]')).not.toBeNull()
+      expect(row.querySelector('[data-state="done"]')).toBeNull()
+      expect(screen.getByText('Waiting on Nico reviews the GLM PR')).toBeTruthy()
+      expect(screen.queryByText('Completed')).toBeNull()
+      // The wait needs no action from the user, so the row keeps its update time.
+      expect(row.textContent).toContain('now')
+
+      fireEvent.pointerEnter(row.parentElement as HTMLElement)
+      act(() => { vi.advanceTimersByTime(800) })
+      expect(screen.getAllByText('Waiting on Nico reviews the GLM PR')).toHaveLength(2)
+      view.unmount()
+
+      render(<SessionNodeItem
+        node={{ ...node, dependencyWait: {} }} currentId={undefined} now={0} onOpen={vi.fn()} t={tEn}
+      />)
+      expect(screen.getByText('Waiting on a dependency')).toBeTruthy()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps a dependency wait secondary while its check runs or the user is asked', () => {
+    const base: SessionNode = {
+      id: sid('waiting'), title: 'Waiting', blank: false, running: true, runningSubagentCount: 0,
+      completed: false, dependencyWait: { description: 'CI' }, updatedAt: 0, pinned: false, archived: false, costUsd: 0,
+    }
+    const running = render(<SessionNodeItem node={base} currentId={undefined} now={0} onOpen={vi.fn()} t={tEn} />)
+    let row = screen.getByRole('treeitem')
+    expect(row.querySelector('[data-state="ongoing"]')).not.toBeNull()
+    expect(row.querySelector('[data-state="blocked"]')).toBeNull()
+    expect(screen.getByText('Running')).toBeTruthy()
+    expect(screen.getByText('Waiting on CI')).toBeTruthy()
+    running.unmount()
+
+    render(<SessionNodeItem
+      node={{ ...base, running: false, runningSubagentCount: 1, pendingInteraction: 'question' }}
+      currentId={undefined} now={0} onOpen={vi.fn()} t={tEn}
+    />)
+    row = screen.getByRole('treeitem')
+    expect(row.querySelector('[data-state="warning"]')).not.toBeNull()
+    expect([...row.querySelectorAll('span')].map(span => span.textContent))
+      .toEqual(expect.arrayContaining(['Waiting for answer', '1 subagent running', 'Waiting on CI']))
+  })
+
+  it('puts running subagents ahead of a dependency wait on an idle row', () => {
+    render(<SessionNodeItem
+      node={{
+        id: sid('waiting'), title: 'Waiting', blank: false, running: false, runningSubagentCount: 2,
+        completed: false, dependencyWait: {}, updatedAt: 0, pinned: false, archived: false, costUsd: 0,
+      }}
+      currentId={undefined} now={0} onOpen={vi.fn()} t={tEn}
+    />)
+    const row = screen.getByRole('treeitem')
+    expect(row.querySelector('[data-state="ongoing"]')).not.toBeNull()
+    expect(screen.getByText('2 subagents running')).toBeTruthy()
+    expect(screen.getByText('Waiting on a dependency')).toBeTruthy()
+  })
+
+  it('shows the blue blocked dot on a waiting search result row', () => {
+    render(<SearchResultItem
+      result={{
+        id: sid('result'), title: 'Waiting', workspace: 'Workspace', running: false,
+        runningSubagentCount: 0, completed: false, dependencyWait: { description: 'Nico' }, archived: false,
+      }}
+      currentId={undefined} onOpen={vi.fn()} onUnarchive={vi.fn()}
+      useSessionAccess={allowAllAccess.useSessionAccess} t={tEn}
+    />)
+    expect(screen.getByRole('treeitem').querySelector('[data-state="blocked"]')).not.toBeNull()
+    expect(screen.getByText('Waiting on Nico')).toBeTruthy()
+  })
+
   it('shows the green done dot on a finished search result row', () => {
     render(<SearchResultItem
       result={{

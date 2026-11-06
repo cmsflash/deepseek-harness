@@ -1,12 +1,13 @@
 /**
- * Transient outcome notice for schedule deletions.
+ * Transient outcome notice for schedule deletions and dependency waits.
  *
  * Every deletion — the Tasks page detail, the session task tab, the
  * Session-header popover, and the Tasks page's removal of every ended task —
  * reports its settled outcome into one store, and one `shell.overlay` entry
  * renders it as the app-wide banner. The surfaces keep no in-place deletion
  * notice of their own, so an outcome outlives the panel or tab that asked for
- * it.
+ * it. Starting a dependency wait stores a task and stopping one deletes it, so
+ * a start or stop the Host did not confirm reports here too.
  */
 import type { ReactNode } from 'react'
 import { IconWarningOutlineRegular, Toast } from '@deepseek-ai/dsh-client-ui-primitives'
@@ -20,7 +21,7 @@ import type { ClearEndedOutcome } from './clear-ended.ts'
 export type DeleteToastState =
   | { readonly kind: 'deleted' | 'deleteFailed'; readonly seq: number }
   | { readonly kind: 'cleared'; readonly count: number; readonly seq: number }
-  | { readonly kind: 'clearFailed'; readonly seq: number }
+  | { readonly kind: 'clearFailed' | 'waitFailed' | 'stopWaitFailed'; readonly seq: number }
 
 /** Store the deletion wiring reports into and the overlay entry reads. */
 export interface DeleteToastSource {
@@ -37,6 +38,14 @@ export interface DeleteToastSource {
    * @param outcome - resolution of the management page's bulk removal callback.
    */
   readonly reportClear: (outcome: ClearEndedOutcome) => void
+  /**
+   * Show the notice of a wait stop the Host did not confirm; a confirmed stop
+   * raises nothing, because the row's own dot changes.
+   * @param stopped - whether every wait task of the Session was deleted.
+   */
+  readonly reportStopWait: (stopped: boolean) => void
+  /** Show the notice of a wait start the Host did not confirm. */
+  readonly reportWaitFailed: () => void
   /** Clear the shown notice. */
   readonly dismiss: () => void
 }
@@ -72,6 +81,10 @@ export function createDeleteToastSource(): DeleteToastSource {
         ? { kind: 'cleared', count: outcome.count, seq: ++seq }
         : { kind: 'clearFailed', seq: ++seq })
     },
+    reportStopWait: (stopped) => {
+      if (!stopped) publish({ kind: 'stopWaitFailed', seq: ++seq })
+    },
+    reportWaitFailed: () => { publish({ kind: 'waitFailed', seq: ++seq }) },
     dismiss: () => { publish(null) },
   }
 }
@@ -79,12 +92,12 @@ export function createDeleteToastSource(): DeleteToastSource {
 /** Props of the `shell.overlay` entry: the notice store and localized copy. */
 export type ScheduleDeleteToastProps = PropsRuntime<'shell.overlay'>
   & PropsLocale<'schedule.manager'>
-  & InjectFace<Omit<DeleteToastSource, 'report' | 'reportClear'>>
+  & InjectFace<Omit<DeleteToastSource, 'report' | 'reportClear' | 'reportStopWait' | 'reportWaitFailed'>>
 
 /**
  * Render the current deletion notice: a success banner for a confirmed deletion
- * or settled bulk removal, a warning for one that could not be confirmed, or
- * nothing.
+ * or settled bulk removal, a warning for one that could not be confirmed or a
+ * wait that could not be started or stopped, or nothing.
  * @param props - the notice hook, its dismissal, and the locale seat.
  * @returns the banner on display, or null.
  */
@@ -111,6 +124,10 @@ export function ScheduleDeleteToast({ useToast, dismiss, t }: ScheduleDeleteToas
         />
     case 'clearFailed':
       return <Toast key={key} text={t('toast.clearFailed')} icon={<IconWarningOutlineRegular />} onDone={dismiss} />
+    case 'waitFailed':
+      return <Toast key={key} text={t('toast.waitFailed')} icon={<IconWarningOutlineRegular />} onDone={dismiss} />
+    case 'stopWaitFailed':
+      return <Toast key={key} text={t('toast.stopWaitFailed')} icon={<IconWarningOutlineRegular />} onDone={dismiss} />
     /* v8 ignore next -- the store publishes only the union's members, so the default holds no reachable statement. */
     default:
       return assertNever(toast)

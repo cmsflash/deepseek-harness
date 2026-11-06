@@ -2,5 +2,6 @@
   - menuitem "Pin session"
   - menuitem "Rename"
   - menuitem "Fork session"
+  - menuitem "Wait on dependency"
   - menuitem "Archive session"
   - menuitem "Copy Session ID"

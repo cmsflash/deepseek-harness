@@ -33,13 +33,17 @@ const deliveryHistorySchema = z.object({
   message: 'Delivery history message identities must be unique within a task',
 })
 
-/** Stored task binds one schedule to its original Session; absent status decodes as active. */
+/**
+ * Stored task binds one schedule to its original Session; absent status decodes as active.
+ * `dependencyWait` marks a task that `wait` created; every later write keeps it, and a rename sets its description to the new title.
+ */
 export const scheduleTaskSchema = z.object({
   sessionId: z.string().min(1).transform(SessionId),
   record: recordSchema,
   status: z.enum(['active', 'inactive']).default('active'),
   lastDelivery: deliveryReceiptSchema.optional(),
   deliveryHistory: deliveryHistorySchema.optional(),
+  dependencyWait: z.object({ description: z.string().min(1).optional() }).strict().optional(),
 }).strict().refine((task) => {
   if (task.deliveryHistory === undefined) return true
   const latest = task.deliveryHistory.records.at(-1)

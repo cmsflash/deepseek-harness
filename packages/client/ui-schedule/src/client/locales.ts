@@ -26,6 +26,9 @@ export const zh = {
   ...frequencyZh,
   'mark.aria': '{count} 个自动化任务',
   'hover.more': '另有 {count} 个任务',
+  'wait.menu': '等待外部依赖',
+  'wait.stop': '停止等待',
+  'wait.taskTitle': '依赖检查',
 } as const
 
 /** English dictionary, key-identical to the Chinese source of truth. */
@@ -47,6 +50,9 @@ export const en: Record<ScheduleCatalogKey, string> = {
   ...frequencyEn,
   'mark.aria': '{count} scheduled tasks',
   'hover.more': '{count} more',
+  'wait.menu': 'Wait on dependency',
+  'wait.stop': 'Stop waiting',
+  'wait.taskTitle': 'Dependency check',
 }
 
 /** Key domain of the Schedule catalog namespace. */
@@ -71,6 +77,9 @@ export const ja = {
   'frequency.every': '{value}{unit}ごと',
   'mark.aria': 'スケジュールされたタスク {count}件',
   'hover.more': '他 {count}件',
+  'wait.menu': '依存先を待機',
+  'wait.stop': '待機を終了',
+  'wait.taskTitle': '依存先の確認',
 } satisfies Record<keyof typeof en, string>
 
 /** Spanish dictionary, checked against the English keys. */
@@ -92,6 +101,9 @@ export const es = {
   ...frequencyEs,
   'mark.aria': 'Tareas programadas {count}',
   'hover.more': '{count} más',
+  'wait.menu': 'Esperar una dependencia',
+  'wait.stop': 'Dejar de esperar',
+  'wait.taskTitle': 'Comprobación de dependencia',
 } satisfies Record<keyof typeof en, string>
 
 /** French dictionary, checked against the English keys. */
@@ -113,6 +125,9 @@ export const fr = {
   ...frequencyFr,
   'mark.aria': 'Tâches planifiées {count}',
   'hover.more': '{count} plus',
+  'wait.menu': 'Attendre une dépendance',
+  'wait.stop': 'Arrêter d’attendre',
+  'wait.taskTitle': 'Vérification de dépendance',
 } satisfies Record<keyof typeof en, string>
 
 /** German dictionary, checked against the English keys. */
@@ -134,6 +149,9 @@ export const de = {
   ...frequencyDe,
   'mark.aria': '{count} geplante Aufgaben',
   'hover.more': '{count} mehr',
+  'wait.menu': 'Auf Abhängigkeit warten',
+  'wait.stop': 'Warten beenden',
+  'wait.taskTitle': 'Abhängigkeitsprüfung',
 } satisfies Record<keyof typeof en, string>
 
 /** Russian dictionary, checked against the English keys. */
@@ -155,6 +173,9 @@ export const ru = {
   ...frequencyRu,
   'mark.aria': '{count} запланированные задачи',
   'hover.more': '{count} подробнее',
+  'wait.menu': 'Ждать зависимость',
+  'wait.stop': 'Перестать ждать',
+  'wait.taskTitle': 'Проверка зависимости',
 } satisfies Record<keyof typeof en, string>
 
 /** Portuguese dictionary, checked against the English keys. */
@@ -176,4 +197,7 @@ export const pt = {
   ...frequencyPt,
   'mark.aria': '{count} tarefas agendadas',
   'hover.more': '{count} mais',
+  'wait.menu': 'Aguardar uma dependência',
+  'wait.stop': 'Parar de aguardar',
+  'wait.taskTitle': 'Verificação de dependência',
 } satisfies Record<keyof typeof en, string>

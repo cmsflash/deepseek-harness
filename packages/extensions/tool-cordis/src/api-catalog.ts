@@ -2546,6 +2546,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'The durably stored schedule. Cancellation does not roll back an in-flight write.',
       },
       {
+        signature: '@Remote(\'wait\') async wait(request: ScheduleWaitRequest, signal?: AbortSignal): Promise<ScheduleRecord>',
+        description: 'Put the selected Session on hold until an outside dependency clears.\n\nThe wait is an active `every` task carrying the `dependencyWait` marker that `catalog` reports. Its first occurrence is the acceptance instant, so once the task is stored the Host delivers the setup prompt through the ordinary reminder path, restoring the Session when needed; later occurrences follow every configured `dependencyWaitSeconds` and deliver the task\'s current prompt. The setup prompt asks the Agent to end the wait with `schedule_delete` or to rename the task and replace that prompt with its own check instruction through `schedule_update`. Any deletion of the task ends the wait. The call replaces the Session\'s earlier active waits and leaves its other tasks alone. A missing, blank, or over-long title rejects with `invalid_prompt`, and a Session a delegated child owns rejects with `subagent_session`. Replacement is two writes: the earlier waits are deleted and announced before the new task is stored, so a failure between them leaves the Session without a wait and rejects.',
+        parameters: [{ name: 'request', description: 'Session binding and provisional task name.' }, { name: 'signal', description: 'Optional cancellation checked before persistence begins, including after FIFO waits.' }],
+        returns: 'The durably stored record, due at its creation. Cancellation does not roll back an in-flight write.',
+      },
+      {
         signature: '@Remote(\'list\') async list(request: ScheduleListRequest): Promise<ScheduleRecord[]>',
         description: 'Read the selected Session\'s active tasks without resuming its Agent.',
         parameters: [{ name: 'request', description: 'Session whose task list is requested.' }],
@@ -2553,7 +2559,7 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
       },
       {
         signature: '@Remote(\'catalog\') async catalog(): Promise<ScheduleCatalogEntry[]>',
-        description: 'Read all active and inactive Host reminders with their original Session bindings. A deleted reminder has no row, so it is absent here. Does not activate Sessions or read Session history.',
+        description: 'Read all active and inactive Host reminders with their original Session bindings. A deleted reminder has no row, so it is absent here. An entry for a dependency wait carries `dependencyWait`; every other entry omits that key. Does not activate Sessions or read Session history.',
         parameters: [],
         returns: 'Reminders ordered by scheduledAt ascending, then lexicographically by id.',
       },
@@ -2578,7 +2584,7 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
       },
       {
         signature: '@Remote(\'update\') async update(request: ScheduleUpdateRequest, signal?: AbortSignal): Promise<ScheduleUpdateResult>',
-        description: 'Update the name, instruction, and timing of an active task within the original Session binding without activating the Session or changing saved deliveries.\n\nEach supplied field replaces its stored value; an omitted field keeps it. A name or instruction change alone does not reset the committed target. A Session a delegated child owns returns the non-mutating `subagent_session` result, so an edit cannot re-arm a task bound to a Session delivery can never reach, and the Web editor can explain the refusal through the ordinary result it already renders.',
+        description: 'Update the name, instruction, and timing of an active task within the original Session binding without activating the Session or changing saved deliveries.\n\nEach supplied field replaces its stored value; an omitted field keeps it. A name or instruction change alone does not reset the committed target. An update that changes a dependency wait\'s title also sets the wait\'s `dependencyWait.description` to the new title; any other update keeps the marker as stored. A Session a delegated child owns returns the non-mutating `subagent_session` result, so an edit cannot re-arm a task bound to a Session delivery can never reach, and the Web editor can explain the refusal through the ordinary result it already renders.',
         parameters: [{ name: 'request', description: 'Task binding, complete observed record, and any combination of timing, name, and instruction.' }, { name: 'signal', description: 'Cancellation checked after domain readiness and FIFO waits, before persistence begins.' }],
         returns: 'The committed record, unchanged record for a no-op, or a non-mutating input/lookup/conflict/refusal result. Storage and lifecycle failures reject; cancellation after a write starts does not roll it back.',
       },
@@ -7899,7 +7905,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'ScheduleCatalogEntry',
-    declaration: 'export type ScheduleCatalogEntry = ScheduleRecord & {\n    readonly sessionId: SessionId;\n    readonly status: \'active\' | \'inactive\';\n    readonly lastDelivery?: ScheduleDeliveryReceipt;\n};',
+    declaration: 'export type ScheduleCatalogEntry = ScheduleRecord & {\n    readonly sessionId: SessionId;\n    readonly status: \'active\' | \'inactive\';\n    readonly lastDelivery?: ScheduleDeliveryReceipt;\n    readonly dependencyWait?: ScheduleDependencyWait;\n};',
   },
   {
     name: 'ScheduleCreateRequest',
@@ -7932,6 +7938,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'ScheduleDeliveryRecord',
     declaration: 'export interface ScheduleDeliveryRecord extends ScheduleDeliveryReceipt {\n    readonly prompt?: string;\n}',
+  },
+  {
+    name: 'ScheduleDependencyWait',
+    declaration: 'export interface ScheduleDependencyWait {\n    readonly description?: string;\n}',
   },
   {
     name: 'ScheduleId',
@@ -7968,6 +7978,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'ScheduleUpdateResult',
     declaration: 'export type ScheduleUpdateResult = {\n    readonly id: ScheduleId;\n    readonly updated: boolean;\n    readonly record: ScheduleRecord;\n} | ScheduleUpdateMiss | ScheduleToolError;',
+  },
+  {
+    name: 'ScheduleWaitRequest',
+    declaration: 'export interface ScheduleWaitRequest extends ScheduleListRequest {\n    readonly title: string;\n}',
   },
   {
     name: 'Scoped',

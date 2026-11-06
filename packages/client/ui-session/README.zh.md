@@ -14,12 +14,18 @@ kind: "package-reference"
 
 ## 目录
 
+- [依赖等待](#dependency-waits)
 - [访问 Hook](#access-hooks)
 - [模型体验](#model-experience)
 - [已知限制与暂缓事项](#known-limitations-and-deferred-work)
 - [开发备注](#dev-note)
 
 -----
+
+<a id="dependency-waits"></a>
+## 依赖等待
+
+各领域通过 `ctx.uiSession.provideDependencyWaits(source)` 发布依赖等待，即从 Session 映射到其在用户与 Agent 之外所等待事项的可观察 map。来源列出某个等待期间，它作为该 Session 状态的 `dependencyWait` 出现，并按描述比较，因此重建出的相同等待不会通知任何订阅者。两个来源指向同一 Session 时以先注册者为准；来源随提供它的插件一同移除。
 
 <a id="access-hooks"></a>
 ## 访问 Hook

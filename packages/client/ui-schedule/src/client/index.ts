@@ -26,6 +26,10 @@
  * inside the row's hover card. Both project the same source, so N visible rows
  * issue one query rather than one per row. The header entry keeps its own
  * per-Session source.
+ *
+ * Dependency waits are active tasks the catalog marks with `dependencyWait`.
+ * The same catalog publishes them to ui-session's status, which turns the
+ * waiting rows blue, and each Session's "..." menu starts or stops a wait.
  */
 
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
@@ -46,6 +50,8 @@ import type { ScheduleCatalogEntry, ScheduleDeliveryHistoryRequest, ScheduleId, 
 import { createCatalogSource, type CatalogDeleteOutcome, type CatalogInjected } from './catalog-source.ts'
 import { createClearEnded } from './clear-ended.ts'
 import { createDeleteToastSource, ScheduleDeleteToast } from './DeleteToast.tsx'
+import { DependencyWaitMenuItem, type DependencyWaitMenuInjected } from './DependencyWait.tsx'
+import { createDependencyWaitSource, sessionWaits } from './dependency-wait.ts'
 import { SCHEDULE_TASK_ID, SCHEDULE_TASK_KIND, scheduleTaskDefinition } from './definition.ts'
 import { ScheduleCatalogAction } from './ScheduleCatalogAction.tsx'
 import { ScheduleTurnCard, type ScheduleTurnCardInjected } from './ScheduleTurnCard.tsx'
@@ -75,9 +81,12 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
   }
 }
 
-/** Required services for catalogs, ambient Session marks, the right Sidebar, Remote queries, original-Session navigation, and access. */
+/**
+ * Required services for catalogs, ambient Session marks and wait status, the right Sidebar, Remote queries,
+ * original-Session navigation, and access.
+ */
 export const inject = [
-  'slots', 'locale', 'remote', 'remote.schedule', 'conversation', 'uiConversation', 'uiWorkspace', 'sessions',
+  'slots', 'locale', 'remote', 'remote.schedule', 'conversation', 'uiConversation', 'uiWorkspace', 'uiSession', 'sessions',
   'workspaces', 'sidebarRightTabs', 'sidebarRight', 'remoteAccess',
 ]
 
@@ -270,5 +279,35 @@ export function apply(ctx: ClientContext): void {
       locale: NS,
       inject: () => ({ hooks: { catalog: manager.hooks.catalog } }),
     }, SessionScheduleHover))
+    yield ctx.uiSession.provideDependencyWaits(createDependencyWaitSource(manager.hooks.catalog))
+    yield ctx.remoteAccess.whenAccess('schedule/wait', function* () {
+      const startWait = async (sessionId: SessionId, title: string): Promise<void> => {
+        const result = await ctx.remote.schedule.wait({ sessionId, title }).catch((error: unknown) => {
+          console.warn('dependency wait rejected:', error)
+          return undefined
+        })
+        if (result?.ok === true) return
+        if (result !== undefined) console.warn('dependency wait refused:', result.error.message)
+        deleteToast.reportWaitFailed()
+      }
+      // Every wait task of the Session goes, so no stale wait keeps the row blue.
+      const stopWait = async (sessionId: SessionId): Promise<void> => {
+        const waits = sessionWaits(manager.hooks.catalog.getSnapshot(), sessionId)
+        const outcomes = await Promise.all(waits.map(wait => manager.onDelete(wait.id)))
+        deleteToast.reportStopWait(!outcomes.includes('failed'))
+      }
+      yield ctx.slots.inject('sidebar.workspaces.session.menu.item', () => ctx.slots.register({
+        name: 'sidebar.workspaces.session.menu.item',
+        id: 'schedule.dependency-wait',
+        // Between the shipped fork (300) and archive (400) rows.
+        order: 350,
+        locale: NS,
+        inject: (): DependencyWaitMenuInjected => ({
+          hooks: { catalog: manager.hooks.catalog },
+          startWait: (sessionId, title) => { void startWait(sessionId, title) },
+          stopWait: (sessionId) => { void stopWait(sessionId) },
+        }),
+      }, DependencyWaitMenuItem))
+    })
   })
 }

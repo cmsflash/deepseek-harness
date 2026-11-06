@@ -56,6 +56,15 @@ export type SessionPendingInteraction =
     ? SessionPendingInteractionBase
     : SessionPendingInteractionMap[keyof SessionPendingInteractionMap]
 
+/** What one Session waits on outside the user and its Agent. */
+export interface SessionDependencyWait {
+  /** The user's description of the dependency; absent when none was given. */
+  readonly description?: string
+}
+
+/** Dependency waits one domain publishes, indexed by Session identity. */
+export type SessionDependencyWaits = ReadonlyMap<SessionId, SessionDependencyWait>
+
 /** Independent UI status facts for one Session identity. */
 export interface SessionStatus {
   /** Latest known running state; absent until a baseline or event establishes it. */
@@ -64,6 +73,8 @@ export interface SessionStatus {
   readonly pendingInteraction: SessionPendingInteraction | undefined
   /** Whether an observed stop outside the main view still needs acknowledgement. */
   readonly completionUnread: boolean
+  /** Outside dependency the Session waits on while a domain publishes one; absent otherwise. */
+  readonly dependencyWait?: SessionDependencyWait
 }
 
 /** Current UI status indexed by Session identity. */
@@ -288,6 +299,8 @@ export class UiSession extends Service {
   private readonly current: BindingSource
   private readonly pendingDomains: RuntimePendingDomain[] = []
   private pendingSnapshot: ReadonlyMap<SessionId, SessionPendingInteractionBase> = new Map()
+  private readonly waitSources: HostObservable<SessionDependencyWaits>[] = []
+  private waitSnapshot: SessionDependencyWaits = new Map()
   private readonly running = new Map<SessionId, boolean>()
   private readonly completionUnread = new Set<SessionId>()
   private statusSnapshot: SessionStatusSnapshot = new Map()
@@ -295,7 +308,7 @@ export class UiSession extends Service {
   private mainRetainId: SessionId | undefined
   private disposeMainRetain = (): void => {}
   private active = true
-  /** Root source combining running, pending-interaction, and completion-reminder facts. */
+  /** Root source combining running, pending-interaction, completion-reminder, and dependency-wait facts. */
   readonly sessionStatus: HostObservable<SessionStatusSnapshot> = {
     getSnapshot: () => this.statusSnapshot,
     subscribe: (listener) => {
@@ -434,6 +447,37 @@ export class UiSession extends Service {
     return (interaction, delegate) => domain.publish(interaction, delegate)
   }
 
+  /**
+   * Publish one domain's dependency waits into the unified Session status.
+   * When two sources name the same Session, the earlier registration wins.
+   * @param source - waits indexed by Session; its snapshot keeps its identity between changes.
+   * @returns disposer owned by the caller's Cordis fiber.
+   */
+  provideDependencyWaits(source: HostObservable<SessionDependencyWaits>): () => void {
+    const dispose = this.ctx.effect(() => {
+      this.waitSources.push(source)
+      const unsubscribe = source.subscribe(() => { this.publishDependencyWaits() })
+      this.publishDependencyWaits()
+      return () => {
+        unsubscribe()
+        this.waitSources.splice(this.waitSources.indexOf(source), 1)
+        this.publishDependencyWaits()
+      }
+    }, 'uiSession.provideDependencyWaits()')
+    return () => { void dispose() }
+  }
+
+  private publishDependencyWaits(): void {
+    const next = new Map<SessionId, SessionDependencyWait>()
+    for (const source of this.waitSources) {
+      for (const [sessionId, wait] of source.getSnapshot()) {
+        if (!next.has(sessionId)) next.set(sessionId, wait)
+      }
+    }
+    this.waitSnapshot = next
+    this.publishStatus()
+  }
+
   private rebuildBindings(): void {
     const absent = this.materializeAbsent()
     const updates = [...this.bindings.values].map(record => ({
@@ -548,13 +592,16 @@ export class UiSession extends Service {
       ...this.running.keys(),
       ...this.pendingSnapshot.keys(),
       ...this.completionUnread,
+      ...this.waitSnapshot.keys(),
     ])
     const next = new Map<SessionId, SessionStatus>()
     for (const id of ids) {
+      const dependencyWait = this.waitSnapshot.get(id)
       next.set(id, {
         running: this.running.get(id),
         pendingInteraction: this.pendingSnapshot.get(id),
         completionUnread: this.completionUnread.has(id),
+        ...(dependencyWait === undefined ? {} : { dependencyWait }),
       })
     }
     if (sameSessionStatus(this.statusSnapshot, next)) return
@@ -722,9 +769,15 @@ function sameSessionStatus(left: SessionStatusSnapshot, right: SessionStatusSnap
     if (candidate === undefined
       || candidate.running !== status.running
       || candidate.pendingInteraction !== status.pendingInteraction
-      || candidate.completionUnread !== status.completionUnread) return false
+      || candidate.completionUnread !== status.completionUnread
+      || !sameDependencyWait(candidate.dependencyWait, status.dependencyWait)) return false
   }
   return true
+}
+
+// Compared by value: a publisher may rebuild equal waits on every catalog read.
+function sameDependencyWait(left: SessionDependencyWait | undefined, right: SessionDependencyWait | undefined): boolean {
+  return left === undefined || right === undefined ? left === right : left.description === right.description
 }
 
 function samePendingInteractions(

@@ -422,11 +422,12 @@ interface SessionStatus {
 }
 
 /**
- * Session status presentation; pending interaction is primary and live activity
- * outranks completion reminders.
+ * Session status presentation; pending interaction is primary, live activity
+ * outranks a dependency wait, and a wait outranks the completion reminder its
+ * own checks would otherwise raise.
  */
 function sessionStatuses(
-  node: Pick<SessionNode, 'pendingInteraction' | 'running' | 'runningSubagentCount' | 'completed'>,
+  node: Pick<SessionNode, 'pendingInteraction' | 'running' | 'runningSubagentCount' | 'completed' | 'dependencyWait'>,
   t: RowTranslate,
 ): readonly [SessionStatus, ...SessionStatus[]] {
   const subagents: SessionStatus | undefined = node.runningSubagentCount === 0
@@ -440,6 +441,15 @@ function sessionStatuses(
         { n: node.runningSubagentCount },
       ),
     }
+  const waiting: SessionStatus | undefined = node.dependencyWait === undefined
+    ? undefined
+    : {
+      state: 'blocked',
+      label: node.dependencyWait.description === undefined
+        ? t('status.waitingDependency')
+        : t('status.waitingOn', { dependency: node.dependencyWait.description }),
+    }
+  const secondary = [subagents, waiting].filter(status => status !== undefined)
   let pending: SessionStatus | undefined
   switch (node.pendingInteraction) {
     case 'approval':
@@ -467,12 +477,10 @@ function sessionStatuses(
     /* v8 ignore next -- closed PendingInteractionStatus union */
     default: return assertNever(node.pendingInteraction)
   }
-  if (pending !== undefined) return subagents === undefined ? [pending] : [pending, subagents]
-  if (node.running) {
-    const primary: SessionStatus = { state: 'ongoing', label: t('status.running') }
-    return subagents === undefined ? [primary] : [primary, subagents]
-  }
-  if (subagents !== undefined) return [subagents]
+  if (pending !== undefined) return [pending, ...secondary]
+  if (node.running) return [{ state: 'ongoing', label: t('status.running') }, ...secondary]
+  const [first, ...rest] = secondary
+  if (first !== undefined) return [first, ...rest]
   if (node.completed) return [{ state: 'done', label: t('status.completed') }]
   return [{ state: 'idle', label: t('status.idle') }]
 }
@@ -527,7 +535,7 @@ function SessionHoverContent({ node, cwd, now, renderSlot, t }: {
       {renderSlot('sidebar.session.row.hover', { sessionId: node.id })}
       {statuses.map(status => (
         <div className={css.hoverStatus} key={status.label}>
-          <StateDot state={status.state} />
+          <span className={css.hoverStatusDot}><StateDot state={status.state} /></span>
           <span>{status.label}</span>
         </div>
       ))}

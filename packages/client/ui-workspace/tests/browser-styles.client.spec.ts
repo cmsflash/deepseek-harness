@@ -175,6 +175,14 @@ describe('WorkspaceBrowser.module.css list', () => {
       .toBe('linear-gradient(to right, transparent, #000 12px, #000 calc(100% - 12px), transparent)')
   })
 
+  it('keeps a hover status dot on the first line of a wrapped label', () => {
+    expect(rowDeclarations('.hoverStatus')?.get('line-height')).toBe('20px')
+    const dot = rowDeclarations('.hoverStatusDot')
+    expect(dot?.get('align-self')).toBe('flex-start')
+    expect(dot?.get('height')).toBe('20px')
+    expect(dot?.get('align-items')).toBe('center')
+  })
+
   it('pins both rail controls to the shared left anchor during the column slide', () => {
     expect(declarations('.rail .sectionHeader')?.get('justify-content')).toBe('flex-start')
     expect(declarations('.rail .iconButton')?.get('width')).toBe('36px')

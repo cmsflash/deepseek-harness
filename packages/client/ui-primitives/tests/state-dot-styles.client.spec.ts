@@ -12,8 +12,13 @@ import { describe, expect, it } from 'vitest'
 const css = readFileSync(fileURLToPath(new URL('../src/StateDot.module.css', import.meta.url)), 'utf8')
 
 describe('StateDot.module.css', () => {
-  it.each(['done', 'warning', 'error', 'idle'] as const)('gives the %s state its own color rule', (state) => {
+  it.each(['done', 'warning', 'blocked', 'error', 'idle'] as const)('gives the %s state its own color rule', (state) => {
     expect(css).toContain(`.dot[data-state='${state}']`)
+  })
+
+  it('uses the blue business state token for blocked, as a dot and as a hollow step', () => {
+    expect(css).toMatch(/\.dot\[data-state='blocked'\][^{]*\{[^}]*--dsw-alias-state-business-primary/su)
+    expect(css).toMatch(/\.step\[data-state='blocked'\][^{]*\{[^}]*border-color: var\(--dsw-alias-state-business-primary\)/su)
   })
 
   it('renders solid states without a halo', () => {

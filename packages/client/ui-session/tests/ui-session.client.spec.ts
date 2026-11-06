@@ -16,6 +16,7 @@ import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   apply,
+  type SessionDependencyWaits,
   type SessionPendingInteractionBase,
   UiSession,
 } from '../src/client/index.ts'
@@ -711,6 +712,97 @@ describe('UiSession pending interactions', () => {
     gate.resolve(undefined)
     await disposal
     expect(disposed).toBe(true)
+  })
+})
+
+describe('UiSession dependency waits', () => {
+  it('publishes a source into the Session status, follows it, and withdraws it on disposal', () => {
+    const ctx = new Context()
+    const bench = createSessionsBench(ctx)
+    const service = createUiSession(ctx, bench)
+    const id = sessionId('s1')
+    const waits = createSnapshotStore<SessionDependencyWaits>(new Map())
+    const dispose = service.provideDependencyWaits(waits)
+    expect(service.sessionStatus.getSnapshot().get(id)).toBeUndefined()
+
+    waits.set(new Map([[id, { description: 'Nico reviews the PR' }]]))
+    expect(service.sessionStatus.getSnapshot().get(id)).toEqual({
+      running: undefined,
+      pendingInteraction: undefined,
+      completionUnread: false,
+      dependencyWait: { description: 'Nico reviews the PR' },
+    })
+    waits.set(new Map([[id, {}]]))
+    expect(service.sessionStatus.getSnapshot().get(id)?.dependencyWait).toEqual({})
+
+    dispose()
+    expect(service.sessionStatus.getSnapshot().has(id)).toBe(false)
+    waits.set(new Map([[id, { description: 'after disposal' }]]))
+    expect(service.sessionStatus.getSnapshot().has(id)).toBe(false)
+  })
+
+  it('lets the earlier source win a Session both name and keeps the rest of each', () => {
+    const ctx = new Context()
+    const bench = createSessionsBench(ctx)
+    const service = createUiSession(ctx, bench)
+    const shared = sessionId('shared')
+    const onlySecond = sessionId('second')
+    service.provideDependencyWaits(createSnapshotStore<SessionDependencyWaits>(
+      new Map([[shared, { description: 'first' }]]),
+    ))
+    const disposeSecond = service.provideDependencyWaits(createSnapshotStore<SessionDependencyWaits>(new Map([
+      [shared, { description: 'second' }],
+      [onlySecond, { description: 'only in the second source' }],
+    ])))
+
+    const snapshot = service.sessionStatus.getSnapshot()
+    expect(snapshot.get(shared)?.dependencyWait).toEqual({ description: 'first' })
+    expect(snapshot.get(onlySecond)?.dependencyWait).toEqual({ description: 'only in the second source' })
+    disposeSecond()
+    expect(service.sessionStatus.getSnapshot().has(onlySecond)).toBe(false)
+    expect(service.sessionStatus.getSnapshot().get(shared)?.dependencyWait).toEqual({ description: 'first' })
+  })
+
+  it('treats a rebuilt equal wait as unchanged and a new description as a change', () => {
+    const ctx = new Context()
+    const bench = createSessionsBench(ctx)
+    const service = createUiSession(ctx, bench)
+    const id = sessionId('s1')
+    const waits = createSnapshotStore<SessionDependencyWaits>(new Map([[id, { description: 'CI' }]]))
+    service.provideDependencyWaits(waits)
+    const listener = vi.fn()
+    service.sessionStatus.subscribe(listener)
+    const before = service.sessionStatus.getSnapshot()
+
+    waits.set(new Map([[id, { description: 'CI' }]]))
+    expect(listener).not.toHaveBeenCalled()
+    expect(service.sessionStatus.getSnapshot()).toBe(before)
+
+    waits.set(new Map([[id, {}]]))
+    expect(listener).toHaveBeenCalledOnce()
+    waits.set(new Map([[id, { description: 'CI' }]]))
+    expect(listener).toHaveBeenCalledTimes(2)
+  })
+
+  it('hangs a source on the providing plugin, so its waits leave when it unloads', async () => {
+    const ctx = new Context()
+    const bench = createSessionsBench(ctx)
+    ctx.provide('sessions', bench.sessions)
+    ctx.provide('slots', { provideRoot: vi.fn(), installScope: vi.fn(), bindStoreScope: vi.fn() } as never)
+    new StaticRemoteAccess(ctx)
+    apply(ctx)
+    const id = sessionId('s1')
+    const provider = ctx.plugin({
+      inject: ['uiSession'],
+      apply: (providerCtx: Context) => {
+        providerCtx.uiSession.provideDependencyWaits(createSnapshotStore<SessionDependencyWaits>(new Map([[id, {}]])))
+      },
+    })
+    await provider.await()
+    expect(ctx.uiSession.sessionStatus.getSnapshot().get(id)?.dependencyWait).toEqual({})
+    await provider.dispose()
+    expect(ctx.uiSession.sessionStatus.getSnapshot().has(id)).toBe(false)
+    await ctx.fiber.dispose()
   })
 })
 

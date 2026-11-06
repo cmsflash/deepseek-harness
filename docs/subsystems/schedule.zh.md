@@ -334,6 +334,14 @@ interface ScheduleDeliveryReceipt {
 ```
 
 ```ts type-equiv
+/** Marks a recurring task that holds its Session until an outside dependency clears. */
+interface ScheduleDependencyWait {
+  /** What the Session waits on, as the wait task's current title names it; absent until that title changes after creation. */
+  readonly description?: string
+}
+```
+
+```ts type-equiv
 /** Browser-safe retained reminder with its original Session binding. */
 type ScheduleCatalogEntry = ScheduleRecord & {
   /** Session receiving this reminder when it becomes due. */
@@ -342,10 +350,22 @@ type ScheduleCatalogEntry = ScheduleRecord & {
   readonly status: 'active' | 'inactive'
   /** Most recent durably acknowledged inbox delivery, when available. */
   readonly lastDelivery?: ScheduleDeliveryReceipt
+  /** Present when the task holds its Session until an outside dependency clears; names the dependency once the task is renamed. */
+  readonly dependencyWait?: ScheduleDependencyWait
 }
 ```
 
 Remote 方法 `schedule.list({ sessionId })`、模型 `schedule_list` 和 Session 页头目录仅返回活动任务。模型视图派生的时间 `state` 与存储的生命周期 `status` 仍是不同概念。删除通过 `schedule.delete({ sessionId, id })` 使用条目的原始绑定；绑定不匹配时返回未找到。模型工具传入当前 Agent 的 Session，全局用户界面则传入所选任务的绑定。仅校验绑定并不构成调用者鉴权。`schedule.deleteInactive()` 删除跨会话的全部未运行（已结束）任务，连同每行携带的已保存的发送记录；成功时以它移除的计数答复 `{ deleted }`；普通失败时不删除任何行；后端报告 `unknown-state` 时可能已移除部分行，并会隔离 Host 的 schedule 领域，之后该领域的操作都会拒绝，直到重新打开。任何拒绝都会先发出 `schedule/changed`，客户端重新读取。自动化任务页面的批量清理使用该方法。未运行任务从不会安排定时器，因此该删除不重算任何目标。无 payload 的 `schedule/changed` 事件通知客户端刷新列表；重新连接后，客户端再次获取当前状态。
+
+`schedule.wait({ sessionId, title })` 将一个 Session 挂起，直到外部依赖解除。它存储一条活动的 `every` 任务，其首个触发时点立即到期，因此宿主会立刻通过普通提醒路径投递初始提示词；之后的触发时点按宿主的 `dependencyWaitSeconds` 间隔进行。初始提示词请 Agent 判断工作在等待什么，然后用 `schedule_delete` 删除该任务，或通过 `schedule_update` 为它重命名并把提示词替换为自己的检查指令。该任务的目录条目携带 `dependencyWait`，每当更新改变任务标题，其 `description` 就变为该标题。调用会替换该 Session 此前的活动等待，不影响其他任务；任何删除方式（包括 `schedule.delete` 和归档停止）都会结束等待。[包 README](../../packages/schedule/schedule/README.zh.md#model-experience) 引用了初始提示词。
+
+```ts type-equiv
+/** Request that holds one Session until an outside dependency clears, replacing the Session's earlier wait. */
+interface ScheduleWaitRequest extends ScheduleListRequest {
+  /** Provisional task name of at most 120 characters, non-empty after trimming, kept until the Agent names the dependency. */
+  readonly title: string
+}
+```
 
 随发行版交付的 Web 组合把 `ui-schedule` 与宿主能力一起挂载。[客户端包](../../packages/client/ui-schedule/README.zh.md) 负责目录、空状态与删除控件。页面单独筛选全部、活动和未运行任务，保留未运行任务详情及详情页签条内的原 Session 入口，并要求显式确认删除。“规则”和“任务运行记录”页签将任务设置与按需分页加载的已保存回执分开。回执与未运行状态均不确认模型执行。
 
@@ -480,6 +500,27 @@ Shared management service; reads, deletion, and timing edits never activate a Se
 async create(sessionId: SessionId, request: ScheduleCreateRequest, signal?: AbortSignal): Promise<ScheduleRecord>
 
 /**
+ * Put the selected Session on hold until an outside dependency clears.
+ *
+ * The wait is an active `every` task carrying the `dependencyWait` marker that `catalog`
+ * reports. Its first occurrence is the acceptance instant, so once the task is stored the
+ * Host delivers the setup prompt through the ordinary reminder path, restoring the Session
+ * when needed; later occurrences follow every configured `dependencyWaitSeconds` and deliver
+ * the task's current prompt. The setup prompt asks the Agent to end the wait with
+ * `schedule_delete` or to rename the task and replace that prompt with its own check
+ * instruction through `schedule_update`. Any deletion of the task ends the wait. The call
+ * replaces the Session's earlier active waits and leaves its other tasks alone. A missing,
+ * blank, or over-long title rejects with `invalid_prompt`, and a Session a delegated child
+ * owns rejects with `subagent_session`. Replacement is two writes: the earlier waits are
+ * deleted and announced before the new task is stored, so a failure between them leaves the
+ * Session without a wait and rejects.
+ * @param request - Session binding and provisional task name.
+ * @param signal - Optional cancellation checked before persistence begins, including after FIFO waits.
+ * @returns The durably stored record, due at its creation. Cancellation does not roll back an in-flight write.
+ */
+@Remote('wait') async wait(request: ScheduleWaitRequest, signal?: AbortSignal): Promise<ScheduleRecord>
+
+/**
  * Read the selected Session's active tasks without resuming its Agent.
  * @param request - Session whose task list is requested.
  * @returns Persisted reminders in storage order.
@@ -488,7 +529,8 @@ async create(sessionId: SessionId, request: ScheduleCreateRequest, signal?: Abor
 
 /**
  * Read all active and inactive Host reminders with their original Session bindings.
- * A deleted reminder has no row, so it is absent here.
+ * A deleted reminder has no row, so it is absent here. An entry for a dependency wait
+ * carries `dependencyWait`; every other entry omits that key.
  * Does not activate Sessions or read Session history.
  * @returns Reminders ordered by scheduledAt ascending, then lexicographically by id.
  */
@@ -537,7 +579,9 @@ async create(sessionId: SessionId, request: ScheduleCreateRequest, signal?: Abor
  * binding without activating the Session or changing saved deliveries.
  *
  * Each supplied field replaces its stored value; an omitted field keeps it. A name or
- * instruction change alone does not reset the committed target. A Session a delegated
+ * instruction change alone does not reset the committed target. An update that changes a
+ * dependency wait's title also sets the wait's `dependencyWait.description` to the new
+ * title; any other update keeps the marker as stored. A Session a delegated
  * child owns returns the non-mutating `subagent_session` result, so an edit cannot
  * re-arm a task bound to a Session delivery can never reach, and the Web editor can
  * explain the refusal through the ordinary result it already renders.

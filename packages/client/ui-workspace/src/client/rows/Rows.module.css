@@ -453,6 +453,15 @@
   color: #ADB2B8;
 }
 
+/* One line tall and top-aligned, so a wrapped label (a dependency wait's description) keeps its dot on the first line. */
+.hoverStatusDot {
+  display: inline-flex;
+  flex: none;
+  align-self: flex-start;
+  align-items: center;
+  height: 20px;
+}
+
 /* Archive glyph rides the status row's text color; slight inset aligns it with the 6px status dots. */
 .hoverArchived svg {
   flex-shrink: 0;

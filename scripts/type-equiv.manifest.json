@@ -384,7 +384,17 @@
     },
     {
       "doc": "docs/subsystems/schedule.md",
+      "symbol": "ScheduleDependencyWait",
+      "source": "packages/schedule/schedule/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/schedule.md",
       "symbol": "ScheduleCatalogEntry",
+      "source": "packages/schedule/schedule/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/schedule.md",
+      "symbol": "ScheduleWaitRequest",
       "source": "packages/schedule/schedule/src/types.ts"
     },
     {

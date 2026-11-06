@@ -14,12 +14,18 @@ Running status comes from Host list baselines or status events. Subagent catalog
 
 ## Table of Contents
 
+- [Dependency waits](#dependency-waits)
 - [Access Hooks](#access-hooks)
 - [Model Experience](#model-experience)
 - [Known Limitations and Deferred Work](#known-limitations-and-deferred-work)
 - [Dev Note](#dev-note)
 
 -----
+
+<a id="dependency-waits"></a>
+## Dependency waits
+
+Domains publish dependency waits with `ctx.uiSession.provideDependencyWaits(source)`, an observable map from a Session to what it waits on outside the user and its Agent. A wait appears as that Session status's `dependencyWait` while its source lists it, compared by description, so an equal rebuilt wait notifies nobody. When two sources name one Session, the earlier registration wins; a source leaves with the plugin that provided it.
 
 <a id="access-hooks"></a>
 ## Access Hooks

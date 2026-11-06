@@ -357,6 +357,27 @@ describe('deriveGroups', () => {
     expect(search.items[0]?.completed).toBe(true)
   })
 
+  it('projects a published dependency wait into session and search rows (absent stays absent)', () => {
+    const waiting = summary('waiting', 3)
+    const plain = summary('plain', 2)
+    const sessions = list(waiting, plain)
+    const wait = { description: 'Nico reviews the PR' }
+    const statuses: SessionStatusSnapshot = new Map([[waiting.id, status(undefined, { dependencyWait: wait })]])
+    const groups = deriveGroups(
+      sessions, [workspace('first', ['waiting', 'plain'])], noRows, statuses, view(['first']),
+    )
+    expect(groups[0]!.sessions.find(session => session.id === waiting.id)!.dependencyWait).toBe(wait)
+    expect(groups[0]!.sessions.find(session => session.id === plain.id)).not.toHaveProperty('dependencyWait')
+    expect(deriveFlat(sessions, visibleSessionIds(sessions, noArchive, 'default'), noRows, statuses)
+      .find(node => node.id === waiting.id)!.dependencyWait).toBe(wait)
+    const search = deriveSearchResults(
+      sessions, [workspace('first', ['waiting', 'plain'])], 'a', noArchive, 'default',
+      statuses, { items: [], hasMore: false }, 10,
+    )
+    expect(search.items.find(item => item.id === waiting.id)?.dependencyWait).toBe(wait)
+    expect(search.items.find(item => item.id === plain.id)).not.toHaveProperty('dependencyWait')
+  })
+
   it('adds each cataloged subagent\'s own spend to its visible row and not to forks', () => {
     const usage = (costUsd: number) => ({
       uncachedInputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, costUsd, unpricedCalls: 2,

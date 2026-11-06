@@ -209,6 +209,12 @@ export interface ScheduleDeliveryRecord extends ScheduleDeliveryReceipt {
   readonly prompt?: string
 }
 
+/** Marks a recurring task that holds its Session until an outside dependency clears. */
+export interface ScheduleDependencyWait {
+  /** What the Session waits on, as the wait task's current title names it; absent until that title changes after creation. */
+  readonly description?: string
+}
+
 /** Browser-safe retained reminder with its original Session binding. */
 export type ScheduleCatalogEntry = ScheduleRecord & {
   /** Session receiving this reminder when it becomes due. */
@@ -217,6 +223,8 @@ export type ScheduleCatalogEntry = ScheduleRecord & {
   readonly status: 'active' | 'inactive'
   /** Most recent durably acknowledged inbox delivery, when available. */
   readonly lastDelivery?: ScheduleDeliveryReceipt
+  /** Present when the task holds its Session until an outside dependency clears; names the dependency once the task is renamed. */
+  readonly dependencyWait?: ScheduleDependencyWait
 }
 
 /** Creates one durable reminder record. */
@@ -402,6 +410,12 @@ export interface ScheduleListRequest {
 export interface ScheduleDeleteRequest extends ScheduleListRequest {
   /** Task to remove. */
   id: ScheduleId
+}
+
+/** Request that holds one Session until an outside dependency clears, replacing the Session's earlier wait. */
+export interface ScheduleWaitRequest extends ScheduleListRequest {
+  /** Provisional task name of at most 120 characters, non-empty after trimming, kept until the Agent names the dependency. */
+  readonly title: string
 }
 
 /** Timing-only edit; it may select a different recurrence kind than the stored record, and one-shot targets use an absolute `at`. */

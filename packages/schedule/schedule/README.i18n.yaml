@@ -15,11 +15,11 @@
   en: 23386452a66b2fbd
   zh: 4a8d91b2f313fead
 /deepseek-ai-dsh-schedule/use-this-package:
-  en: 8de4642089a0ca4f
-  zh: 5d5fe5ab846a476f
+  en: 1a844c64a70856d3
+  zh: be565aad0f5bda6f
 /deepseek-ai-dsh-schedule/understand-the-implementation:
-  en: 02848e6fd6317b2a
-  zh: 1807a423210f81ef
+  en: c952b68d4b4836b8
+  zh: ad01cdd6d6937c09
 /deepseek-ai-dsh-schedule/further-exploration:
   en: d4404aa2dd7b3a94
   zh: 2dcd3d98cf281c32
@@ -68,9 +68,24 @@
 /deepseek-ai-dsh-schedule/model-experience/due-reminders-in-the-original-session/kv-cache-effect:
   en: 1006325fa610366d
   zh: 476215d8a3c70fe4
+/deepseek-ai-dsh-schedule/model-experience/dependency-wait-setup:
+  en: bb1891fe7d9eef54
+  zh: 265a42f6ffa9164c
+/deepseek-ai-dsh-schedule/model-experience/dependency-wait-setup/what-the-model-sees:
+  en: 57eb20933f8a68aa
+  zh: 8c651b38460c09df
+/deepseek-ai-dsh-schedule/model-experience/dependency-wait-setup/what-the-model-sees/setup-prompt:
+  en: d84314bc4f7e0821
+  zh: ce3dc509cbc0fa3f
+/deepseek-ai-dsh-schedule/model-experience/dependency-wait-setup/token-effect:
+  en: a5be8cb1596899b3
+  zh: 8c928bfe1c8dc811
+/deepseek-ai-dsh-schedule/model-experience/dependency-wait-setup/kv-cache-effect:
+  en: 307845cfd9378081
+  zh: 468c61335fa30a3e
 /deepseek-ai-dsh-schedule/known-limitations-and-deferred-work:
-  en: 4f01a96b25d462b7
-  zh: 22085f47cb287892
+  en: 4fcfa31930919dfa
+  zh: 2bef4569dd163527
 /deepseek-ai-dsh-schedule/known-limitations-and-deferred-work/dev-note:
   en: e67f633dc6fe7773
   zh: 8ec3e73528ddb1a6

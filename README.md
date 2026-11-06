@@ -25,6 +25,7 @@ Each change is one commit on the `zhuoran` branch, which is rebased onto upstrea
 - **Phone keyboard fit**: on a phone, the app shrinks above the on-screen keyboard instead of panning it out of view.
 - **Continue interrupted sessions**: a button in the sidebar's brand row sends `Continue.` to every session whose last turn failed or was cut off by a restart.
 - **Installed-app branding**: each server can give its installed web app its own icon, drawn as one SVG, and its own name, so apps from two servers are easy to tell apart on one phone ([settings](packages/host/frontend-static/README.md#branding-a-deployment)).
+- **Wait on a dependency**: a session's row menu puts it on hold until something outside it happens, such as a colleague's review. Nothing to type: the session works out what it is waiting on and writes its own hourly check, the row shows a blue dot, and the session continues on its own once the dependency clears.
 
 It also fixes these upstream bugs, which are still open:
 

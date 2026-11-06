@@ -1818,6 +1818,28 @@ export function scheduleView(record: ScheduleRecord, now: number): ScheduleView 
   })
 }
 
+/**
+ * Render the prompt a new dependency wait stores and delivers at once into its waiting Session.
+ *
+ * The Agent answers it by ending the wait or by renaming the task and replacing this prompt with
+ * its own check instruction through `schedule_update`; until it does, every check repeats this text.
+ * @returns Fixed model-visible setup instruction.
+ */
+export function renderDependencyWaitSetupPrompt(): string {
+  return [
+    "The user has put this conversation on hold until something outside it happens, such as a colleague's reply or review, "
+      + 'or a job finishing. This reminder repeats until it is deleted.',
+    'Work out from the conversation what the work is waiting on, then do one of these:',
+    '- If nothing outside the conversation is blocking the work, delete this reminder with schedule_delete and say so in one line.',
+    '- If it has already happened, delete this reminder with schedule_delete and continue the work.',
+    '- Otherwise, use schedule_update to set this reminder\'s title to a short noun phrase naming what the work is waiting on, '
+      + 'such as "Nico\'s review of PR 123", and its prompt to a self-contained instruction for the later checks: '
+      + 'what to check and how, ending with "If it has happened, delete this reminder with schedule_delete, '
+      + 'then <the next step of the work>. Otherwise, reply with one short line saying what you checked, and do nothing else." '
+      + 'Leave its timing unchanged. Then reply with one short line naming what the work is waiting on.',
+  ].join('\n')
+}
+
 /** Fixed model-facing origin line shared by one-shot and recurring reminder delivery. */
 const SCHEDULED_MESSAGE_FRAMING = 'This is a scheduled message from the user'
 

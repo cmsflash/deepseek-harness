@@ -16,12 +16,13 @@ import { resolveScheduleUpdate } from './update.ts'
 import {
   foldScheduleEvents, ScheduleInputError, ScheduleLogError, ScheduleId, createAfterScheduleRecord, createAtScheduleRecord,
   createEveryScheduleRecord, createDailyScheduleRecord, createWeeklyScheduleRecord, createCronScheduleRecord,
-  scheduleTitle,
+  scheduleTitle, renderDependencyWaitSetupPrompt, MIN_EVERY_INTERVAL_SECONDS,
 } from './domain.ts'
 import type {
   DeliveryRetentionBounds, ScheduleCatalogEntry, ScheduleCreateRequest, ScheduleDeleteInactiveResult,
   ScheduleDeleteRequest, ScheduleDeleteResult, ScheduleDeliveryHistoryRequest, ScheduleDeliveryHistoryResult,
-  ScheduleListRequest, ScheduleRecord, ScheduleUpdateRequest, ScheduleUpdateResult, SubagentSessionError,
+  ScheduleListRequest, ScheduleRecord, ScheduleUpdateRequest, ScheduleUpdateResult, ScheduleWaitRequest,
+  SubagentSessionError,
 } from './types.ts'
 
 export type * from './types.ts'
@@ -50,6 +51,7 @@ export {
   normalizeWeekdays,
   parseCronInput,
   parseWeeklyInput,
+  renderDependencyWaitSetupPrompt,
   renderReminderFraming,
   renderRecurringReminderBatchFraming,
   resolveEveryOccurrence,
@@ -91,6 +93,11 @@ export interface Config {
    * cap and the window wins, and the newest records survive.
    */
   deliveryHistoryRecords?: number
+  /**
+   * Interval between the checks of a dependency wait, in whole seconds of at least 60;
+   * omission defaults to 3600. A wait keeps the interval in effect when it was created.
+   */
+  dependencyWaitSeconds?: number
 }
 
 /** Retained delivery-history window applied when the deployment states none. */
@@ -98,6 +105,9 @@ const DEFAULT_DELIVERY_HISTORY_DAYS = 30
 
 /** Retained delivery-history record cap applied when the deployment states none. */
 const DEFAULT_DELIVERY_HISTORY_RECORDS = 200
+
+/** Dependency-wait check interval applied when the deployment states none. */
+const DEFAULT_DEPENDENCY_WAIT_SECONDS = 3600
 
 /**
  * Shared management service; reads, deletion, and timing edits never activate a Session.
@@ -113,10 +123,13 @@ export class ScheduleService extends TypertRemoteService {
   static Config: z<Config> = z.object({
     deliveryHistoryDays: z.number().step(1).min(1).max(3650).default(DEFAULT_DELIVERY_HISTORY_DAYS),
     deliveryHistoryRecords: z.number().step(1).min(1).max(10_000).default(DEFAULT_DELIVERY_HISTORY_RECORDS),
+    dependencyWaitSeconds: z.number().step(1).min(MIN_EVERY_INTERVAL_SECONDS).default(DEFAULT_DEPENDENCY_WAIT_SECONDS),
   })
 
   /** Resolved retention bounds shared with the runtime that appends acknowledgments. */
   private readonly retention: DeliveryRetentionBounds
+  /** Resolved interval of the `every` task each new dependency wait stores. */
+  private readonly dependencyWaitSeconds: number
   private readonly ready: Promise<Domain<typeof scheduleDomain>>
   private readonly initialized: PromiseLike<unknown>
   private chain: Promise<unknown> = Promise.resolve()
@@ -126,7 +139,7 @@ export class ScheduleService extends TypertRemoteService {
 
   /**
    * @param ctx - Host services owning storage, dispatch, and Session restoration.
-   * @param config - Validated retention configuration for delivery history.
+   * @param config - Validated delivery-history retention and dependency-wait interval.
    */
   constructor(ctx: Context, config: Config) {
     super(ctx, 'schedule')
@@ -146,6 +159,7 @@ export class ScheduleService extends TypertRemoteService {
       days: config.deliveryHistoryDays ?? DEFAULT_DELIVERY_HISTORY_DAYS,
       records: config.deliveryHistoryRecords ?? DEFAULT_DELIVERY_HISTORY_RECORDS,
     }
+    this.dependencyWaitSeconds = config.dependencyWaitSeconds ?? DEFAULT_DEPENDENCY_WAIT_SECONDS
     this.ready = ctx.storageDomain.open(scheduleDomain).then(async (domain) => {
       for (const [key, task] of domain.table('tasks').entries()) {
         if (key !== task.record.id) {
@@ -291,6 +305,56 @@ export class ScheduleService extends TypertRemoteService {
   }
 
   /**
+   * Put the selected Session on hold until an outside dependency clears.
+   *
+   * The wait is an active `every` task carrying the `dependencyWait` marker that `catalog`
+   * reports. Its first occurrence is the acceptance instant, so once the task is stored the
+   * Host delivers the setup prompt through the ordinary reminder path, restoring the Session
+   * when needed; later occurrences follow every configured `dependencyWaitSeconds` and deliver
+   * the task's current prompt. The setup prompt asks the Agent to end the wait with
+   * `schedule_delete` or to rename the task and replace that prompt with its own check
+   * instruction through `schedule_update`. Any deletion of the task ends the wait. The call
+   * replaces the Session's earlier active waits and leaves its other tasks alone. A missing,
+   * blank, or over-long title rejects with `invalid_prompt`, and a Session a delegated child
+   * owns rejects with `subagent_session`. Replacement is two writes: the earlier waits are
+   * deleted and announced before the new task is stored, so a failure between them leaves the
+   * Session without a wait and rejects.
+   * @param request - Session binding and provisional task name.
+   * @param signal - Optional cancellation checked before persistence begins, including after FIFO waits.
+   * @returns The durably stored record, due at its creation. Cancellation does not roll back an in-flight write.
+   */
+  @Remote('wait')
+  async wait(request: ScheduleWaitRequest, signal?: AbortSignal): Promise<ScheduleRecord> {
+    const title = scheduleTitle(request.title)
+    const id = ScheduleId(`schedule-${randomUUID()}`)
+    const now = Date.now()
+    // Unlike a created `every` task, the first occurrence is the acceptance instant itself,
+    // so the setup prompt arrives at once and the checks then follow one interval apart.
+    const record: ScheduleRecord = Object.freeze({
+      ...createEveryScheduleRecord(id, renderDependencyWaitSetupPrompt(), this.dependencyWaitSeconds, now, title),
+      scheduledAt: new Date(now).toISOString(),
+    })
+    return this.serialize(async () => {
+      const refusal = this.reminderTargetRefusal(request.sessionId)
+      if (refusal !== undefined) throw new ScheduleInputError('subagent_session', refusal.message)
+      const tasks = (await this.getDomain()).table('tasks')
+      signal?.throwIfAborted()
+      const earlier = [...tasks.entries()]
+        .filter(([, task]) => task.sessionId === request.sessionId && task.status === 'active'
+          && task.dependencyWait !== undefined)
+        .map(([, task]) => task.record.id)
+      await this.removeRows(earlier, 'schedule wait replacement failed', true)
+      await tasks.put(id, {
+        sessionId: request.sessionId, record, status: 'active',
+        deliveryHistory: { records: [], earlierRecordsUnavailable: false }, dependencyWait: {},
+      })
+      this.emitChanged()
+      this.runtime?.requestDrive()
+      return record
+    })
+  }
+
+  /**
    * Read the selected Session's active tasks without resuming its Agent.
    * @param request - Session whose task list is requested.
    * @returns Persisted reminders in storage order.
@@ -305,7 +369,8 @@ export class ScheduleService extends TypertRemoteService {
 
   /**
    * Read all active and inactive Host reminders with their original Session bindings.
-   * A deleted reminder has no row, so it is absent here.
+   * A deleted reminder has no row, so it is absent here. An entry for a dependency wait
+   * carries `dependencyWait`; every other entry omits that key.
    * Does not activate Sessions or read Session history.
    * @returns Reminders ordered by scheduledAt ascending, then lexicographically by id.
    */
@@ -316,6 +381,10 @@ export class ScheduleService extends TypertRemoteService {
       .map(([, task]) => ({
         ...task.record, sessionId: task.sessionId, status: task.status,
         ...(task.lastDelivery === undefined ? {} : { lastDelivery: task.lastDelivery }),
+        ...(task.dependencyWait === undefined ? {} : {
+          dependencyWait: task.dependencyWait.description === undefined
+            ? {} : { description: task.dependencyWait.description },
+        }),
       }))
       .sort((a, b) => a.scheduledAt.localeCompare(b.scheduledAt) || a.id.localeCompare(b.id))
   }
@@ -396,7 +465,9 @@ export class ScheduleService extends TypertRemoteService {
    * binding without activating the Session or changing saved deliveries.
    *
    * Each supplied field replaces its stored value; an omitted field keeps it. A name or
-   * instruction change alone does not reset the committed target. A Session a delegated
+   * instruction change alone does not reset the committed target. An update that changes a
+   * dependency wait's title also sets the wait's `dependencyWait.description` to the new
+   * title; any other update keeps the marker as stored. A Session a delegated
    * child owns returns the non-mutating `subagent_session` result, so an edit cannot
    * re-arm a task bound to a Session delivery can never reach, and the Web editor can
    * explain the refusal through the ordinary result it already renders.
@@ -419,7 +490,11 @@ export class ScheduleService extends TypertRemoteService {
       if (current.status === 'inactive') return { id: request.id, updated: false, code: 'schedule_ended' }
       const result = resolveScheduleUpdate(current.record, request.expected, request.change, Date.now(), request)
       if (!('record' in result) || !result.updated) return result
-      await tasks.put(request.id, { ...current, record: result.record })
+      const renamedWait = current.dependencyWait !== undefined && result.record.title !== current.record.title
+      await tasks.put(request.id, {
+        ...current, record: result.record,
+        ...(renamedWait ? { dependencyWait: { description: result.record.title } } : {}),
+      })
       this.emitChanged()
       this.runtime?.requestDrive()
       return result

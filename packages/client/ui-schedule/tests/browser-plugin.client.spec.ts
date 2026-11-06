@@ -10,9 +10,11 @@ import { apply, inject } from '../src/client/index.ts'
 import { apply as applyNode } from '../src/index.ts'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { SessionListState } from '@deepseek-ai/dsh-api-session-controller/client'
+import type { SessionDependencyWaits } from '@deepseek-ai/dsh-client-ui-session/client'
 import type { WorkspaceSnapshot } from '@deepseek-ai/dsh-api-workspace-controller/client'
 import type {
-  ScheduleId, ScheduleCatalogEntry, ScheduleDeleteInactiveResult, ScheduleUpdateRequest, ScheduleUpdateResult,
+  ScheduleId, ScheduleCatalogEntry, ScheduleDeleteInactiveResult, ScheduleDependencyWait, ScheduleUpdateRequest,
+  ScheduleUpdateResult,
 } from '@deepseek-ai/dsh-schedule/client'
 import type { RemoteResult } from '@deepseek-ai/dsh-api-remotes/client'
 import { RemoteError } from '@deepseek-ai/dsh-client-test-runtime'
@@ -26,6 +28,7 @@ import { ScheduleCatalogAction } from '../src/client/ScheduleCatalogAction.tsx'
 import { SessionScheduleHover } from '../src/client/SessionScheduleHover.tsx'
 import { SessionScheduleMark } from '../src/client/SessionScheduleMark.tsx'
 import { ScheduleTurnCard, type ScheduleTurnCardInjected } from '../src/client/ScheduleTurnCard.tsx'
+import { DependencyWaitMenuItem, type DependencyWaitMenuInjected } from '../src/client/DependencyWait.tsx'
 import { en, NS, zh } from '../src/client/locales.ts'
 
 const Empty = () => null
@@ -85,6 +88,25 @@ class RemoteStub extends Service {
   }
 }
 
+const uiSessionStubs = new WeakMap<Context, UiSessionStub>()
+
+// Records the dependency-wait sources a caller provides, held by the caller's fiber like ui-session's own.
+class UiSessionStub extends Service {
+  readonly waitSources = new Set<HostObservable<SessionDependencyWaits>>()
+
+  constructor(ctx: Context) {
+    super(ctx, 'uiSession')
+  }
+
+  provideDependencyWaits(source: HostObservable<SessionDependencyWaits>): () => void {
+    const dispose = this.ctx.effect(() => {
+      this.waitSources.add(source)
+      return () => { this.waitSources.delete(source) }
+    })
+    return () => { void dispose() }
+  }
+}
+
 async function baseContext(
   remote: RemoteStubInput = { $on: () => () => {} },
   sidebar: SidebarStubs = sidebarStubs(),
@@ -103,6 +125,7 @@ async function baseContext(
     provider.provide('remote.schedule', (remote.schedule ?? {}) as never)
   } }).await()
   ctx.provide('uiWorkspace', { openSession: vi.fn(), startSession: vi.fn() } as never)
+  uiSessionStubs.set(ctx, new UiSessionStub(ctx))
   ctx.provide('sidebarRightTabs', { register: sidebar.register } as never)
   ctx.provide('sidebarRight', { openTab: sidebar.openTab, tabsIn: sidebar.tabsIn } as never)
   const id = 'cold-original' as SessionId
@@ -130,6 +153,24 @@ function declareHeader(ctx: Context): () => void {
   } as never, Empty)
 }
 
+function declareWaitSeats(ctx: Context): () => void {
+  return ctx.slots.register({
+    name: 'root',
+    children: {
+      'sidebar.workspaces.session.menu.item': { kind: 'list', scope: 'root' },
+      'shell.overlay': { kind: 'list', scope: 'root' },
+    },
+  } as never, Empty)
+}
+
+function waitEntry(id: string, sessionId: SessionId, dependencyWait?: ScheduleDependencyWait): ScheduleCatalogEntry {
+  return {
+    id: id as ScheduleId, sessionId, status: 'active', kind: 'every', title: `Task ${id}`, prompt: 'Check',
+    everySeconds: 3600, scheduledAt: '2099-01-01T00:00:00.000Z',
+    ...(dependencyWait === undefined ? {} : { dependencyWait }),
+  }
+}
+
 function declareTranscriptSeats(ctx: Context): () => void {
   return ctx.slots.register({
     name: 'root',
@@ -143,7 +184,7 @@ function declareTranscriptSeats(ctx: Context): () => void {
 describe('ui-schedule browser half', () => {
   it('declares only the services used by registration', () => {
     expect(inject).toEqual([
-      'slots', 'locale', 'remote', 'remote.schedule', 'conversation', 'uiConversation', 'uiWorkspace', 'sessions',
+      'slots', 'locale', 'remote', 'remote.schedule', 'conversation', 'uiConversation', 'uiWorkspace', 'uiSession', 'sessions',
       'workspaces', 'sidebarRightTabs', 'sidebarRight', 'remoteAccess',
     ])
   })
@@ -610,6 +651,131 @@ describe('ui-schedule browser half', () => {
       expect(ctx.slots.entries('sidebar.session.row.leading')).toEqual([])
       expect(ctx.slots.entries('sidebar.session.row.hover')).toEqual([])
     } finally {
+      owner()
+      await ctx.fiber.dispose()
+    }
+  })
+
+  it('publishes the catalog\'s dependency waits to the Session status while its fiber lives', async () => {
+    const waiting = 'waiting-session' as SessionId
+    const catalog = vi.fn().mockResolvedValue({
+      ok: true, value: [waitEntry('wait', waiting, { description: 'Nico' }), waitEntry('plain', 'other' as SessionId)],
+    })
+    const ctx = await baseContext({ schedule: { catalog }, $on: () => () => {} })
+    const stub = uiSessionStubs.get(ctx)!
+    const fiber = ctx.plugin({ inject: [...inject], apply })
+    await fiber.await()
+    try {
+      expect(stub.waitSources.size).toBe(1)
+      const source = [...stub.waitSources][0]!
+      const off = source.subscribe(vi.fn())
+      await vi.waitFor(() => { expect(source.getSnapshot()).toEqual(new Map([[waiting, { description: 'Nico' }]])) })
+      off()
+      await fiber.dispose()
+      expect(stub.waitSources.size).toBe(0)
+    } finally {
+      await ctx.fiber.dispose()
+    }
+  })
+
+  it('offers the wait row only while the current Peer may start a wait', async () => {
+    for (const allowed of [false, true]) {
+      const ctx = await baseContext(undefined, undefined, action => action !== 'schedule/wait' || allowed)
+      const owner = declareWaitSeats(ctx)
+      const fiber = ctx.plugin({ inject: [...inject], apply })
+      await fiber.await()
+      try {
+        const rows = ctx.slots.entries('sidebar.workspaces.session.menu.item')
+        if (!allowed) {
+          expect(rows).toEqual([])
+          continue
+        }
+        expect(rows[0]!.component).toBe(DependencyWaitMenuItem)
+        expect(rows[0]!.options).toMatchObject({ id: 'schedule.dependency-wait', order: 350 })
+        expect(rows[0]!.locale).toBe(NS)
+        await fiber.dispose()
+        expect(ctx.slots.entries('sidebar.workspaces.session.menu.item')).toEqual([])
+      } finally {
+        await fiber.dispose()
+        owner()
+        await ctx.fiber.dispose()
+      }
+    }
+  })
+
+  it('starts the wait on the Host with the row\'s title and reports a start the Host did not confirm', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const wait = vi.fn()
+      .mockResolvedValueOnce({ ok: true, value: waitEntry('new', 'cold-original' as SessionId, {}) })
+      .mockResolvedValueOnce({ ok: false, error: new RemoteError('gateway/internal', 'Refused', {}) })
+      .mockRejectedValueOnce(new Error('carrier gone'))
+    const ctx = await baseContext({ schedule: { wait }, $on: () => () => {} })
+    const owner = declareWaitSeats(ctx)
+    const fiber = ctx.plugin({ inject: [...inject], apply })
+    await fiber.await()
+    try {
+      const row = injectedFace(ctx.slots.entries('sidebar.workspaces.session.menu.item')[0]!) as DependencyWaitMenuInjected
+      const toastEntry = ctx.slots.entries('shell.overlay').find(entry => entry.component === ScheduleDeleteToast)!
+      const toast = injectedFace(toastEntry) as Pick<DeleteToastSource, 'hooks'>
+      const request = { sessionId: 'cold-original' as SessionId, title: 'Dependency check' }
+
+      row.startWait(request.sessionId, request.title)
+      await vi.waitFor(() => { expect(wait).toHaveBeenCalledTimes(1) })
+      expect(wait).toHaveBeenLastCalledWith(request)
+      await Promise.resolve()
+      expect(toast.hooks.toast.getSnapshot()).toBeNull()
+
+      row.startWait(request.sessionId, request.title)
+      await vi.waitFor(() => { expect(toast.hooks.toast.getSnapshot()).toEqual({ kind: 'waitFailed', seq: 1 }) })
+      expect(warn).toHaveBeenCalledWith('dependency wait refused:', 'Refused')
+
+      row.startWait(request.sessionId, request.title)
+      await vi.waitFor(() => { expect(toast.hooks.toast.getSnapshot()).toEqual({ kind: 'waitFailed', seq: 2 }) })
+      expect(warn).toHaveBeenCalledWith('dependency wait rejected:', new Error('carrier gone'))
+    } finally {
+      warn.mockRestore()
+      await fiber.dispose()
+      owner()
+      await ctx.fiber.dispose()
+    }
+  })
+
+  it('stops every wait of the Session and reports only a stop the Host did not confirm', async () => {
+    const waiting = 'cold-original' as SessionId
+    const catalog = vi.fn().mockResolvedValue({ ok: true, value: [
+      waitEntry('wait-1', waiting, {}), waitEntry('wait-2', waiting, { description: 'CI' }),
+      waitEntry('plain', waiting), waitEntry('elsewhere', 'other' as SessionId, {}),
+    ] })
+    const remove = vi.fn()
+      .mockResolvedValueOnce({ ok: true, value: { id: 'wait-1', deleted: true } })
+      .mockResolvedValueOnce({ ok: true, value: { id: 'wait-2', deleted: true } })
+      .mockResolvedValueOnce({ ok: false, error: new RemoteError('gateway/internal', 'Unavailable', {}) })
+      .mockResolvedValueOnce({ ok: true, value: { id: 'wait-2', deleted: true } })
+    const ctx = await baseContext({ schedule: { catalog, delete: remove }, $on: () => () => {} })
+    const owner = declareWaitSeats(ctx)
+    const fiber = ctx.plugin({ inject: [...inject], apply })
+    await fiber.await()
+    try {
+      const row = injectedFace(ctx.slots.entries('sidebar.workspaces.session.menu.item')[0]!) as DependencyWaitMenuInjected
+      const toastEntry = ctx.slots.entries('shell.overlay').find(entry => entry.component === ScheduleDeleteToast)!
+      const toast = injectedFace(toastEntry) as Pick<DeleteToastSource, 'hooks'>
+      const off = row.hooks.catalog.subscribe(vi.fn())
+      await vi.waitFor(() => { expect(row.hooks.catalog.getSnapshot().settled).toBe(true) })
+      row.stopWait(waiting)
+      // Each confirmed deletion reads the catalog back before the stop settles.
+      await vi.waitFor(() => {
+        expect(catalog).toHaveBeenCalledTimes(3)
+        expect(row.hooks.catalog.getSnapshot()).toMatchObject({ deleting: [], status: 'ready' })
+      })
+      expect(remove).toHaveBeenCalledTimes(2)
+      expect(remove).toHaveBeenNthCalledWith(1, { sessionId: waiting, id: 'wait-1' })
+      expect(remove).toHaveBeenNthCalledWith(2, { sessionId: waiting, id: 'wait-2' })
+      expect(toast.hooks.toast.getSnapshot()).toBeNull()
+      row.stopWait(waiting)
+      await vi.waitFor(() => { expect(toast.hooks.toast.getSnapshot()).toEqual({ kind: 'stopWaitFailed', seq: 1 }) })
+      off()
+    } finally {
+      await fiber.dispose()
       owner()
       await ctx.fiber.dispose()
     }

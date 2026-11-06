@@ -487,6 +487,24 @@ describe('Schedule model tools', () => {
       .toMatchObject({ title: 'Renamed', prompt: 'New body', scheduledAt: record.scheduledAt })
   })
 
+  it('names a dependency wait when the Agent renames it and replaces its prompt with a check instruction', async () => {
+    const test = await setup()
+    test.resolve.mockResolvedValue({ agent: test.agent })
+    const sessionId = test.agent.session.id
+    const wait = await test.service.wait({ sessionId, title: 'Dependency check' })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(test.agent.followup).toHaveBeenCalledOnce()
+    const prompt = 'Check whether Nico approved PR 123. If it has happened, delete this reminder with schedule_delete, '
+      + 'then merge PR 123. Otherwise, reply with one short line saying what you checked, and do nothing else.'
+    const updated = await execute(test, 'schedule_update', { id: wait.id, title: "Nico's review of PR 123", prompt })
+    expect(updated.value).toMatchObject({
+      id: wait.id, kind: 'every', title: "Nico's review of PR 123", prompt, everySeconds: 3600,
+      scheduledAt: '2026-09-16T01:00:00.000Z',
+    })
+    expect((await test.service.catalog()).find(entry => entry.id === wait.id)?.dependencyWait)
+      .toEqual({ description: "Nico's review of PR 123" })
+  })
+
   it('returns the unchanged view for an update that changes nothing', async () => {
     const test = await setup()
     const record = await test.service.create(test.agent.session.id, {

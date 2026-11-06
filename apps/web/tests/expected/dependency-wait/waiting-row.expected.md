@@ -1,0 +1,4 @@
+- tree "Sessions":
+  - treeitem "workspace" [expanded]
+  - treeitem "New Session" [selected]
+  - treeitem "Waiting on Nico's review of the release Publish the release. now"
