@@ -102,6 +102,15 @@ export class ClientAssistantStream {
   }
 
   /**
+   * Durable settlements staged for the open attempt and not yet visible. They
+   * are part of the durable window a reconnect continues.
+   * @returns the staged settlements in the order they were accepted, which is seq order.
+   */
+  staged(): readonly SessionAssistantSettlementEntry[] {
+    return [...this.pending.values()]
+  }
+
+  /**
    * Stage one durable v2 settlement while its matching live attempt is open.
    * @param entry - newly followed durable entry.
    * @returns a publication decision, or `undefined` when no entry becomes visible.

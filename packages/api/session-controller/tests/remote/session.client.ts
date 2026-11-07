@@ -15,9 +15,9 @@ import type {
   SessionEventsPage, SessionPageRequest,
 } from '../../src/types.ts'
 import { entries, historyValue } from '../event-script.client.ts'
-import { followSnapshot, pageThrough } from './history.client.ts'
+import { followSnapshot, linkFor, pageThrough } from './history.client.ts'
 
-export { followSnapshot } from './history.client.ts'
+export { followResumed, followSnapshot, linkFor, linkRecords } from './history.client.ts'
 
 /** Endpoints a Session opens and calls for its history. */
 export const FOLLOW = 'session/follow'
@@ -48,12 +48,12 @@ export function history(events: readonly SessionEvent[], hasMore = false): Remot
 }
 
 /**
- * One live event frame of a follow stream.
+ * One live event frame of a follow stream, carrying its link.
  * @param event - the event.
  * @returns the frame.
  */
 export function frame(event: SessionEvent): SessionFollowFrame {
-  return entries([event])[0]!
+  return { ...entries([event])[0]!, link: linkFor(event.seq) }
 }
 
 /**

@@ -823,7 +823,7 @@ interface PluginRecord {
 
 ## Remote 历史分页：`SessionPageRequest` 与 `StepDigest`
 
-`SessionEventEntry` 携带未修改的 `event` 和可选的 `turnUsage` 元数据。历史页与实时 follow 在每条下发的 `turn/end` 上附带此字段；纯 `observeEvent` 订阅不带该字段。`TurnTokenUsage` 值描述截至该结束事件的完整轮次，`null` 则表示无法精确记账。汇总不属于 `SessionEventMap`，也不持久化。折叠、分页边界和精确区间读取均不缩小其记账范围。[控制器参考](../../packages/api/session-controller/README.zh.md#use-this-package)拥有交付行为，[token-meter](../../packages/llm/token-meter/README.zh.md#turn-accounting)拥有记账规则。
+`SessionEventEntry` 携带未修改的 `event` 和可选的 `turnUsage` 元数据。历史页与实时 follow 在每条下发的 `turn/end` 上附带此字段；纯 `observeEvent` 订阅不带该字段。`TurnTokenUsage` 值描述截至该结束事件的完整轮次，`null` 则表示无法精确记账。汇总不属于 `SessionEventMap`，也不持久化。折叠、分页边界和精确区间读取均不缩小其记账范围。[控制器参考](../../packages/api/session-controller/README.zh.md#use-this-package)拥有交付行为，[token-meter](../../packages/llm/token-meter/README.zh.md#turn-accounting)拥有记账规则。在 `follow`、`page` 与 `events` 上，当 Host 为该日志保留链时，每条 entry 还携带 `link`，即其事件的会话日志链链接值，或覆盖记录所代表的最后一个被省略事件的链接值；重连的 follow 会提交其最新持有记录的链接值以续接。
 
 `events` Remote 及其已弃用的别名 `page` 在不激活 Agent 的情况下读取历史。不带 `fromSeq` 时，它们下发一页向后分页：带 `turnWindow` 时对齐到轮次开头，否则按消息对齐；带 `fromSeq` 时，它们按完整详情下发从 `fromSeq` 到切点的精确闭区间，省略 `throughSeq` 时切点为观察到的日志末尾。当 `fromSeq` 不是位于切点加一及之前的非负安全整数，或与 `beforeSeq`、`maxMessages`、`turnWindow`、`stepDetail: 'collapsed'` 同时出现时，Host 以 `gateway/bad-request` 拒绝请求，而不是截短数据。Client 的完整详情恢复用这一区间回填已加载窗口，因此分页与恢复行为由 controller 的[包参考](../../packages/api/session-controller/README.zh.md)拥有。
 
@@ -1093,11 +1093,12 @@ workspaceDesktop(): { name: string; available: boolean; fileManager: 'finder' | 
 @Remote wait(request: SessionWaitRequest, signal: AbortSignal): Promise<SessionWaitValue>
 
 /**
- * Follow one Session log from its opening or resume cursor.
- * @param request - durable address and last committed sequence already held by the caller.
+ * Follow one Session log from a snapshot, or from the end of a window the caller already holds.
+ * @param request - durable address, opening window, and an optional resume point naming the newest held event and its chain link.
  * @param signal - cancellation owned by the Remote stream carrier.
- * @returns a complete opening snapshot followed by gap-free durable event
- *   frames and optional cursorless assistant-stream frames.
+ * @returns a complete opening snapshot, or a `resumed` opening holding only the
+ *   events after the resume point, followed by gap-free durable event frames and
+ *   optional cursorless assistant-stream frames.
  */
 @Remote({ mode: 'stream' }) follow(request: SessionFollowRequest, signal: AbortSignal): AsyncIterable<SessionFollowFrame>
 

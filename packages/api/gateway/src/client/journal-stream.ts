@@ -13,9 +13,11 @@ function protocolViolation(message: string): RemoteError<'gateway/internal'> {
   return new RemoteError('gateway/internal', message, {})
 }
 
-/** Transport-neutral opening snapshot, durable entry, or cursorless notification. */
+/** Transport-neutral opening snapshot, resumed opening, durable entry, or cursorless notification. */
 export type RemoteJournalFrame<Entry, Cursor, Page, Notification = never> =
   | { readonly type: 'opened'; readonly cursor: Cursor; readonly page: Page }
+  /** Continues the held window: `page` holds every entry after `after` through `cursor`. */
+  | { readonly type: 'resumed'; readonly after: Cursor; readonly cursor: Cursor; readonly page: Page }
   | { readonly type: 'entry'; readonly entry: Entry }
   | ([Notification] extends [never]
     ? never
@@ -36,13 +38,28 @@ export type RemoteJournalChange<Page, Entry, Notification = never> =
     readonly hasMore: boolean
   }
   | { readonly type: 'append'; readonly entry: Entry }
+  /** The entries a resumed generation added after the held window, with that opening's page. */
+  | { readonly type: 'resume'; readonly page: Page; readonly entries: readonly Entry[] }
   | ([Notification] extends [never]
     ? never
     : { readonly type: 'notification'; readonly notification: Notification })
 
+/** The held window's newest entries, offered to a reopening generation so its source can send only later ones. */
+export interface RemoteJournalResumePoint<Entry, Cursor> {
+  /** Cursor the held window ends at. */
+  readonly after: Cursor
+  /** The newest held entries, ascending; the last one ends at `after`. */
+  readonly entries: readonly Entry[]
+}
+
 type JournalStreamItem<Page, Entry, Cursor, Notification> = RemoteStreamItem<
   RemoteJournalFrame<Entry, Cursor, Page, Notification>
 >
+
+/** A generation's opening frame: a snapshot or a continuation of the held window. */
+type JournalOpening<Page, Cursor> =
+  | { readonly type: 'opened'; readonly cursor: Cursor; readonly page: Page }
+  | { readonly type: 'resumed'; readonly after: Cursor; readonly cursor: Cursor; readonly page: Page }
 
 /** Gateway capability used to create one reconnecting Remote stream. */
 export interface RemoteStreamFactory {
@@ -72,6 +89,11 @@ export interface RemoteJournalStreamOptions<Page, Entry, Cursor, Notification = 
   readonly compare: (left: Cursor, right: Cursor) => number
   /** Test whether the right cursor immediately follows the left cursor. */
   readonly follows: (left: Cursor, right: Cursor) => boolean
+  /**
+   * How many of the newest held entries a reopening generation is offered as
+   * its resume point; omitted, every generation opens with a snapshot.
+   */
+  readonly resumeEntries?: number
   /** Apply one complete journal-window change or cursorless notification. */
   readonly publish: (change: RemoteJournalChange<Page, Entry, Notification>) => void
   /** Observe a retryable carrier loss before reconnection. */
@@ -84,7 +106,11 @@ export interface RemoteJournalStreamOptions<Page, Entry, Cursor, Notification = 
  * Owns snapshot-first opening, ordered live delivery, pagination, and repair.
  *
  * The domain retains its published window during reconnection. A replacement is
- * published only after the opening page reaches the generation's cursor.
+ * published only after the opening page reaches the generation's cursor; a
+ * reconnect's snapshot replaces the window even when its cursor is behind the
+ * held one, because the source's log is the authority. When resume is enabled,
+ * a reconnecting generation offers the held window's newest entries, and a
+ * `resumed` opening appends only the entries after them.
  * Notifications never change a cursor and wait behind an in-flight gap repair.
  */
 export abstract class RemoteJournalStream<
@@ -97,6 +123,10 @@ export abstract class RemoteJournalStream<
   private generation = 0
   private firstCursor: Cursor | undefined
   private lastCursor: Cursor | undefined
+  /** The newest held entries, at most `options.resumeEntries`. */
+  private tail: readonly Entry[] = []
+  /** The resume cursor offered to each physical generation, keyed by that generation's signal. */
+  private readonly offered = new WeakMap<AbortSignal, Cursor>()
   private started = false
   private opened = false
   private disposed = false
@@ -114,7 +144,11 @@ export abstract class RemoteJournalStream<
   ) {
     this.stream = remote.$stream<RemoteJournalFrame<Entry, Cursor, Page, Notification>>({
       name: options.name,
-      open: signal => this.follow(this.initialRequest, signal),
+      open: (signal) => {
+        const resume = this.resumePoint()
+        if (resume !== undefined) this.offered.set(signal, resume.after)
+        return this.follow(this.initialRequest, signal, resume)
+      },
       ended: accepted => accepted
         ? new RemoteStreamCarrierError(`${options.name} ended without a terminal result`)
         : protocolViolation(
@@ -127,14 +161,18 @@ export abstract class RemoteJournalStream<
   }
 
   /**
-   * Open one physical journal generation with a complete current snapshot.
+   * Open one physical journal generation with a complete current snapshot, or
+   * with only the entries after an offered resume point.
    * @param request - opening-window request retained for later repair.
    * @param signal - cancellation lifetime of the physical generation.
-   * @returns opening cursor followed by live entries.
+   * @param resume - the held window's newest entries when this generation reopens one;
+   *   the source may answer with `resumed` after exactly `resume.after`, or with a snapshot.
+   * @returns an opening followed by live entries.
    */
   protected abstract follow(
     request: PageRequest,
     signal: AbortSignal,
+    resume: RemoteJournalResumePoint<Entry, Cursor> | undefined,
   ): AsyncIterable<RemoteJournalFrame<Entry, Cursor, Page, Notification>>
 
   /**
@@ -255,7 +293,7 @@ export abstract class RemoteJournalStream<
           this.replaceGeneration(item, true)
           continue
         }
-        if (item.value.type === 'opened') {
+        if (item.value.type === 'opened' || item.value.type === 'resumed') {
           throw protocolViolation(`${this.options.name} emitted more than one opening cursor`)
         }
         if (item.value.type === 'notification') {
@@ -274,26 +312,28 @@ export abstract class RemoteJournalStream<
     resumed: boolean,
   ): void {
     const opening = this.opening(initial, resumed)
-    this.replaceFromOpening(opening.page, opening.cursor)
+    if (opening.type === 'resumed') this.continueFromOpening(opening.after, opening.page, opening.cursor)
+    else this.replaceFromOpening(opening.page, opening.cursor)
   }
 
   private opening(
     item: RemoteStreamItem<RemoteJournalFrame<Entry, Cursor, Page, Notification>>,
     resumed: boolean,
-  ): { readonly cursor: Cursor; readonly page: Page } {
-    if (item.value.type !== 'opened') {
+  ): JournalOpening<Page, Cursor> {
+    const frame = item.value
+    if (frame.type === 'resumed') {
+      const offered = this.offered.get(item.signal)
+      // A generation is offered the held window's end, and a gap repair cannot publish once
+      // the generation it reads for has ended, so the held window still ends there.
+      if (offered === undefined || this.options.compare(frame.after, offered) !== 0) {
+        throw protocolViolation(`${this.options.name} resumed after a cursor it was not offered`)
+      }
+    } else if (frame.type !== 'opened') {
       throw protocolViolation(`${resumed ? 'resumed ' : ''}${this.options.name} emitted an entry before its opening cursor`)
-    }
-    const cursor = item.value.cursor
-    if (resumed && this.lastCursor !== undefined
-      && this.options.compare(cursor, this.lastCursor) < 0) {
-      throw protocolViolation(
-        `${this.options.name} resumed at a cursor behind the last applied entry`,
-      )
     }
     this.generation = item.generation
     item.accept()
-    return { cursor, page: item.value.page }
+    return frame
   }
 
   /** Publish a generation's opening page without issuing a second Remote call. */
@@ -305,12 +345,43 @@ export abstract class RemoteJournalStream<
     this.firstCursor = first === undefined ? undefined : this.options.first(first)
     this.lastCursor = cursor
     this.setResumeCursor(cursor)
+    this.remember(entries, true)
     this.options.publish({
       type: 'replace',
       page,
       entries,
       hasMore: this.options.hasMore(page),
     })
+  }
+
+  /** Append a resumed generation's entries to the held window without issuing a second Remote call. */
+  private continueFromOpening(after: Cursor, page: Page, cursor: Cursor): void {
+    const entries = [...this.options.entries(page)]
+    this.assertPage(entries)
+    const head = entries[0]
+    if (head !== undefined && !this.options.follows(after, this.options.first(head))) {
+      throw protocolViolation(`${this.options.name} resumed page does not continue its resume cursor`)
+    }
+    if (this.options.compare(head === undefined ? after : this.tailCursor(entries), cursor) !== 0) {
+      throw protocolViolation(`${this.options.name} page did not end at its requested cursor`)
+    }
+    this.lastCursor = cursor
+    this.setResumeCursor(cursor)
+    this.remember(entries, false)
+    this.options.publish({ type: 'resume', page, entries })
+  }
+
+  /** The held window's resume point, when resume is enabled and the window holds an entry. */
+  private resumePoint(): RemoteJournalResumePoint<Entry, Cursor> | undefined {
+    if (this.tail.length === 0) return undefined
+    return { after: this.lastCursor as Cursor, entries: this.tail }
+  }
+
+  private remember(entries: readonly Entry[], replace: boolean): void {
+    const limit = this.options.resumeEntries
+    if (limit === undefined) return
+    const held = replace ? entries : [...this.tail, ...entries]
+    this.tail = held.slice(Math.max(0, held.length - limit))
   }
 
   private async acceptEntry(
@@ -343,6 +414,7 @@ export abstract class RemoteJournalStream<
     if (this.firstCursor === undefined) this.firstCursor = first
     this.lastCursor = cursor
     this.setResumeCursor(cursor)
+    this.remember([entry], false)
     this.options.publish({ type: 'append', entry })
   }
 
@@ -393,6 +465,7 @@ export abstract class RemoteJournalStream<
     this.firstCursor = first === undefined ? undefined : this.options.first(first)
     this.lastCursor = this.tailCursor(entries)
     this.setResumeCursor(this.lastCursor)
+    this.remember(entries, true)
     this.options.publish({
       type: 'replace',
       page,
@@ -444,7 +517,7 @@ export abstract class RemoteJournalStream<
       }
       const item = result.value.value
       if (item.generation !== generation) return { type: 'superseded', item }
-      if (item.value.type === 'opened') {
+      if (item.value.type === 'opened' || item.value.type === 'resumed') {
         throw protocolViolation(`${this.options.name} emitted more than one opening cursor`)
       }
       if (item.value.type === 'notification') {
@@ -474,7 +547,7 @@ export abstract class RemoteJournalStream<
       }
       const item = next.value
       if (item.generation !== generation) return { type: 'superseded', item }
-      if (item.value.type === 'opened') {
+      if (item.value.type === 'opened' || item.value.type === 'resumed') {
         throw protocolViolation(`${this.options.name} emitted more than one opening cursor`)
       }
       pending = this.nextResult(iterator)

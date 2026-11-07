@@ -2743,9 +2743,9 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
       },
       {
         signature: '@Remote({ mode: \'stream\' }) follow(request: SessionFollowRequest, signal: AbortSignal): AsyncIterable<SessionFollowFrame>',
-        description: 'Follow one Session log from its opening or resume cursor.',
-        parameters: [{ name: 'request', description: 'durable address and last committed sequence already held by the caller.' }, { name: 'signal', description: 'cancellation owned by the Remote stream carrier.' }],
-        returns: 'a complete opening snapshot followed by gap-free durable event frames and optional cursorless assistant-stream frames.',
+        description: 'Follow one Session log from a snapshot, or from the end of a window the caller already holds.',
+        parameters: [{ name: 'request', description: 'durable address, opening window, and an optional resume point naming the newest held event and its chain link.' }, { name: 'signal', description: 'cancellation owned by the Remote stream carrier.' }],
+        returns: 'a complete opening snapshot, or a `resumed` opening holding only the events after the resume point, followed by gap-free durable event frames and optional cursorless assistant-stream frames.',
       },
       {
         signature: '@Remote(\'projections\') projections(request: SessionProjectionsRequest, signal: AbortSignal): Promise<SessionProjectionsValue>',
@@ -2829,6 +2829,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         description: 'List every stored session visible to this process, in no promised order.',
         parameters: [{ name: 'options', description: 'optional cancellation.' }],
         returns: 'one snapshot per stored session.',
+      },
+      {
+        signature: 'liveChain?(id: SessionId): SessionLogChain | undefined',
+        description: 'Read the chain kept by this process\'s active write handle for a Session. It covers every event the handle has accepted, including events whose write is still pending, so a follower can receive a link before its line is durable.',
+        parameters: [{ name: 'id', description: 'the Session whose write handle is asked.' }],
+        returns: 'the live chain, or `undefined` without an active write handle or chain here.',
       },
     ],
   },
@@ -8096,6 +8102,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface SessionCancelValue {\n    readonly accepted: true;\n}',
   },
   {
+    name: 'SessionChainLink',
+    declaration: 'export type SessionChainLink = Branded<\'session-chain-link\'>;',
+  },
+  {
     name: 'SessionChangeRequest',
     declaration: 'export interface SessionChangeRequest {\n    readonly url: string;\n    readonly origin: BindingOrigin;\n    readonly ref: ChangeRequestRef | null;\n    readonly update: ChangeRequestUpdate | null;\n}',
   },
@@ -8133,7 +8143,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'SessionEventEntry',
-    declaration: 'export interface SessionEventEntry {\n    readonly type: \'event\';\n    readonly event: SessionWireEvent;\n    readonly turnUsage?: TurnTokenUsage | null;\n}',
+    declaration: 'export interface SessionEventEntry {\n    readonly type: \'event\';\n    readonly event: SessionWireEvent;\n    readonly turnUsage?: TurnTokenUsage | null;\n    readonly link?: SessionChainLink;\n}',
   },
   {
     name: 'SessionEventFrame',
@@ -8229,11 +8239,15 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'SessionFollowFrame',
-    declaration: 'export type SessionFollowFrame = {\n    readonly type: \'snapshot\';\n    readonly header: SessionWireHeader;\n    readonly cursor: number;\n    readonly records: readonly SessionHistoryRecord[];\n    readonly hasMore: boolean;\n    readonly digests?: readonly StepDigest[];\n    readonly projections: SessionProjectionBaseline;\n    readonly assistantStream?: SessionAssistantStreamBaseline;\n} | SessionEventEntry | {\n    readonly type: \'assistant-stream\';\n    readonly frame: SessionAssistantStreamFrame;\n};',
+    declaration: 'export type SessionFollowFrame = {\n    readonly type: \'snapshot\';\n    readonly header: SessionWireHeader;\n    readonly cursor: number;\n    readonly records: readonly SessionHistoryRecord[];\n    readonly hasMore: boolean;\n    readonly digests?: readonly StepDigest[];\n    readonly projections: SessionProjectionBaseline;\n    readonly assistantStream?: SessionAssistantStreamBaseline;\n} | {\n    readonly type: \'resumed\';\n    readonly header: SessionWireHeader;\n    readonly after: number;\n    readonly cursor: number;\n    readonly records: readonly SessionHistoryRecord[];\n    readonly projections: SessionProjectionBaseline;\n    readonly assistantStream?: SessionAssistantStreamBaseline;\n} | SessionEventEntry | {\n    readonly type: \'assistant-stream\';\n    readonly frame: SessionAssistantStreamFrame;\n};',
   },
   {
     name: 'SessionFollowRequest',
-    declaration: 'export interface SessionFollowRequest extends Pick<SessionPageRequest, \'maxMessages\' | \'turnWindow\'> {\n    readonly address: SessionAddress;\n    readonly activate?: boolean;\n    readonly assistantStream?: true;\n    readonly stepDetail?: SessionStepDetail;\n}',
+    declaration: 'export interface SessionFollowRequest extends Pick<SessionPageRequest, \'maxMessages\' | \'turnWindow\'> {\n    readonly address: SessionAddress;\n    readonly activate?: boolean;\n    readonly assistantStream?: true;\n    readonly stepDetail?: SessionStepDetail;\n    readonly resume?: SessionFollowResume;\n}',
+  },
+  {
+    name: 'SessionFollowResume',
+    declaration: 'export interface SessionFollowResume {\n    readonly afterSeq: number;\n    readonly link: SessionChainLink;\n}',
   },
   {
     name: 'SessionForkRequest',
@@ -8265,7 +8279,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'SessionHandleReadResult',
-    declaration: 'export interface SessionHandleReadResult {\n    readonly eventState: SessionSeedEventState;\n    readonly events: readonly SessionEvent[];\n}',
+    declaration: 'export interface SessionHandleReadResult {\n    readonly eventState: SessionSeedEventState;\n    readonly events: readonly SessionEvent[];\n    readonly chain?: SessionLogChain;\n}',
   },
   {
     name: 'SessionHeader',
@@ -8308,6 +8322,14 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface SessionLocation {\n    readonly kind: string;\n    readonly path: string;\n}',
   },
   {
+    name: 'SessionLogChain',
+    declaration: 'export interface SessionLogChain {\n    readonly length: number;\n    linkAt(seq: number): SessionLogLink | undefined;\n    extend?(events: readonly SessionEvent[]): SessionLogChain | undefined;\n}',
+  },
+  {
+    name: 'SessionLogLink',
+    declaration: 'export type SessionLogLink = Branded<\'SessionLogLink\'>;',
+  },
+  {
     name: 'SessionLogOffset',
     declaration: 'export type SessionLogOffset = BrandedNumber<\'SessionLogOffset\'>;',
   },
@@ -8345,7 +8367,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'SessionObservation',
-    declaration: 'export interface SessionObservation extends Disposable {\n    readonly source: \'live\' | \'prepared\';\n    readonly header: SessionHeader;\n    readonly inheritedEventCount: SessionLogOffsetType;\n    readonly events: readonly SessionEvent[];\n    readonly cursor: SessionSeqCursor;\n    readonly revision?: SessionPersistenceRevision;\n    readonly projections?: ProjectionSnapshot;\n    retain(): SessionObservation;\n}',
+    declaration: 'export interface SessionObservation extends Disposable {\n    readonly source: \'live\' | \'prepared\';\n    readonly header: SessionHeader;\n    readonly inheritedEventCount: SessionLogOffsetType;\n    readonly events: readonly SessionEvent[];\n    readonly cursor: SessionSeqCursor;\n    readonly revision?: SessionPersistenceRevision;\n    readonly projections?: ProjectionSnapshot;\n    readonly chain?: SessionLogChain;\n    retain(): SessionObservation;\n}',
   },
   {
     name: 'SessionObservationOptions',

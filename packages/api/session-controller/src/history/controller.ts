@@ -259,7 +259,7 @@ export function history(
     const events = scope.slice(request.fromSeq)
     const usage = historyTurnUsage(events, scope)
     return {
-      page: { cursor, records: pageRecords(events, usage.byEnd), hasMore: request.fromSeq > 0 },
+      page: { cursor, records: pageRecords(events, usage.byEnd, observation.chain), hasMore: request.fromSeq > 0 },
       turnUsage: usage.continuation,
     }
   }
@@ -272,7 +272,7 @@ export function history(
   )
   const usage = historyTurnUsage(page.events, scope)
   return {
-    page: { cursor, ...detailPage(page.events, scope, request.stepDetail, usage.byEnd), hasMore: page.hasMore },
+    page: { cursor, ...detailPage(page.events, scope, request.stepDetail, usage.byEnd, observation.chain), hasMore: page.hasMore },
     turnUsage: usage.continuation,
   }
 }

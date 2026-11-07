@@ -20,6 +20,11 @@ interface SessionHandleReadResult {
   readonly eventState: SessionSeedEventState
   /** Event values in a caller-owned outer array. */
   readonly events: readonly SessionEvent[]
+  /**
+   * Links over the stored lines of the log generation this slice was read
+   * from, indexed by absolute seq; absent when the backend keeps no chain for it.
+   */
+  readonly chain?: SessionLogChain
 }
 ```
 
@@ -101,13 +106,41 @@ interface SessionHandle extends AsyncDisposable {
 
 已创建的会话自 `create` 完成之刻起即可在本进程内被观察到，而后端可以把物理实体化（纯粹的优化）推迟到第一次 `append` 或 `flush`；其他进程只能看到已实体化的会话，一个在崩溃前从未实体化的会话等于从未存在。
 
+<a id="the-session-log-chain"></a>
+
+## 会话日志链
+
+后端可以对一个日志代际各行的确切存储字节保留 SHA-256 链接，因此相等的链接标识字节完全相同的日志前缀。`SessionHandle.read()` 返回所读代际的链，而 `SessionPersistence.liveChain(id)` 返回本进程活跃写句柄的链，它覆盖该句柄已接受的全部事件，包括写入仍处于待定状态的事件。[会话日志链参考](../../packages/session/session-persistence/README.zh.md#the-session-log-chain)给出链接的计算方式与 JSONL 后端的保证。
+
+```ts type-equiv
+/** Links over the stored lines of one log generation, indexed by event seq. */
+interface SessionLogChain {
+  /** Number of linked events: `linkAt` answers for seqs `0` through `length - 1`. */
+  readonly length: number
+  /**
+   * Read one event's link.
+   * @param seq - event position in the log.
+   * @returns the link, or `undefined` when the chain does not cover `seq`.
+   */
+  linkAt(seq: number): SessionLogLink | undefined
+  /**
+   * Link events that would continue this chain, encoded exactly as this
+   * backend's write path encodes appended events, without changing this chain.
+   * @param events - events whose seqs continue at `length`, in order.
+   * @returns a chain that also covers `events`, or `undefined` when an event
+   *   does not continue the chain or cannot be encoded.
+   */
+  extend?(events: readonly SessionEvent[]): SessionLogChain | undefined
+}
+```
+
 ## flush 检查点
 
 `session/event` 是一个*同步*通知；挂载的后端按会话 id 把它路由进活跃写句柄的有界 write-behind 窗口，而不阻塞生产方（后端一次性安装这些监听器，因为持久化已保证每个 id 只有一个活跃写句柄）。第一个待处理事件会开启固定的内部批处理窗口，后续事件会加入但不会重置其截止时间。窗口到期后会通过该会话的写句柄启动一次持久化 `append`；该次写入期间接纳的事件会获得自己的截止时间，并形成后续批次。`session/flush` 会取消等待并排空至完全停稳，因此循环仍将其用作在领取下一个普通轮次之前的顺序与错误观察检查点。后台写入被拒绝时会按序保留对应事件、暂停自动路径，并通过 logger 报告；下一次显式 flush 会重试，并向其调用方响亮地拒绝。`session/disposed` 会执行同样的最终排空并关闭句柄，而 `close()` 本身会经由仍然打开的存储排空已路由的缓冲，因此后端 teardown 的关闭清扫不丢任何数据。该窗口只限制有意的批处理等待，不限制事件循环调度或后端完成持久化的延迟。
 
 ## 崩溃恢复保留被中断的轮次
 
-一个在轮次中途崩溃的日志以打开的 `turn/start` 而无 `turn/end` 结束。持久化**不会**截断或修复它：在长周期任务中，单个轮次可能非常庞大（许多步骤、大量工具输出），而这些事件在崩溃前已被持久追加。它返回物理上有效的连续日志；只有撕裂物理尾部——属于一次从未完成的 append——中不完整的碎片会被丢弃：从中恢复的完整记录（JSONL 后端会部分解码撕裂的 Zstandard 帧）由写路径在句柄的第一次新 append 之前持久重写。修复是读方的职责：resume（agent-loop）通过其写句柄读取已存储的日志，计算 `interruptedTurnClosers`——缺失的工具错误、任何未闭合的 `step/end`，以及一个合成的 `turn/end { reason: { kind: 'interrupted' } }`——并在发布 Session 之前把它们作为普通批次通过同一句柄追加。`interrupted` 是唯一一个不由循环发出的 `TurnEndReason`（见 [session.md](session.zh.md#why-a-turn-ended-turnendreasonmap)）。
+一个在轮次中途崩溃的日志以打开的 `turn/start` 而无 `turn/end` 结束。持久化**不会**截断或修复它：在长周期任务中，单个轮次可能非常庞大（许多步骤、大量工具输出），而这些事件在崩溃前已被持久追加。它返回物理上有效的连续日志；只有撕裂物理尾部——属于一次从未完成的 append——中不完整的碎片会被丢弃：从中恢复的完整记录（JSONL 后端会部分解码撕裂的 Zstandard 帧）由写路径在句柄的第一次新 append 之前按字节原样持久重写。修复是读方的职责：resume（agent-loop）通过其写句柄读取已存储的日志，计算 `interruptedTurnClosers`——缺失的工具错误、任何未闭合的 `step/end`，以及一个合成的 `turn/end { reason: { kind: 'interrupted' } }`——并在发布 Session 之前把它们作为普通批次通过同一句柄追加。`interrupted` 是唯一一个不由循环发出的 `TurnEndReason`（见 [session.md](session.zh.md#why-a-turn-ended-turnendreasonmap)）。
 
 因此修复只在写所有权之下写入：活跃会话的写句柄由其生命周期所有者持有，故并发的 `open(id, 'write')` 会以 `SessionAlreadyOwnedError` 拒绝，而不是让修复与活跃轮次竞速。只读观察方（session-query）仅在内存中用同样的闭合事件配平被中断的冷日志，不回写任何内容。
 
@@ -420,6 +453,16 @@ abstract stat(id: SessionId, options?: SessionPersistenceStatOptions): Promise<S
  * @returns one snapshot per stored session.
  */
 abstract list(options?: SessionPersistenceListOptions): Promise<readonly SessionPersistenceSnapshot[]>
+
+/**
+ * Read the chain kept by this process's active write handle for a Session.
+ * It covers every event the handle has accepted, including events whose
+ * write is still pending, so a follower can receive a link before its line
+ * is durable.
+ * @param id - the Session whose write handle is asked.
+ * @returns the live chain, or `undefined` without an active write handle or chain here.
+ */
+liveChain?(id: SessionId): SessionLogChain | undefined
 ```
 
 Types: [SessionId](core.zh.md)

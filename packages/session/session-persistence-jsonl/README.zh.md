@@ -104,11 +104,16 @@ kind: "package-reference"
 
 ### 设计理念
 
-该后端拥有自己完整的存储运行时（`src/storage.ts`）：`JsonlSessionHandle` 承载逐句柄修改链、带固定批处理窗口与 single-flight 排空的已路由实时事件缓冲、单调读取与幂等 close；一个 tracker 持有进程内单写者认领、teardown 清扫所遍历的打开句柄集合，以及后端自己的会话监听器所路由进的已创建但未实体化待定会话。历史正文读取共享每个 Session 唯一的一次 Decode/Migrate preparation，按 revision 为键的有界 memo 让紧接的观察到恢复交接复用该解析；backend 在 memo 化前只对每个 event graph 深度冻结一次，因此后续 handle read 无需复制或再次冻结。只有写 open 才发布准备好的后继。本包暴露插件导出与配置类型——具体类是私有的，因此消费方只耦合 `ctx.sessionPersistence`，其可观察行为由共享 seam 测试套件（`runPersistenceContract`/`runLiveWritePathContract`）钉住。物理修订号组合 device、inode、size 与纳秒时间戳，供准备缓存、稳定读取重试及发布检查使用。历史格式的公开修订号还加入所选路径排序后及其物理修订号的 SHA-256 指纹；锁文件与保留但未被选中的代际不参与计算。
+该后端拥有自己完整的存储运行时（`src/storage.ts`）：`JsonlSessionHandle` 承载逐句柄修改队列、带固定批处理窗口与 single-flight 排空的已路由实时事件缓冲、单调读取与幂等 close；一个 tracker 持有进程内单写者认领、teardown 清扫所遍历的打开句柄集合，以及后端自己的会话监听器所路由进的已创建但未实体化待定会话。历史正文读取共享每个 Session 唯一的一次 Decode/Migrate preparation，按 revision 为键的有界 memo 让紧接的观察到恢复交接复用该解析；backend 在 memo 化前只对每个 event graph 深度冻结一次，因此后续 handle read 无需复制或再次冻结。只有写 open 才发布准备好的后继。本包暴露插件导出与配置类型——具体类是私有的，因此消费方只耦合 `ctx.sessionPersistence`，其可观察行为由共享 seam 测试套件（`runPersistenceContract`/`runLiveWritePathContract`）钉住。物理修订号组合 device、inode、size 与纳秒时间戳，供准备缓存、稳定读取重试及发布检查使用。历史格式的公开修订号还加入所选路径排序后及其物理修订号的 SHA-256 指纹；锁文件与保留但未被选中的代际不参与计算。
 
 ### 物理编码
 
 默认产物是独立 Zstandard 帧 的标准拼接：一个仅包含 header 行的带校验和帧，后跟每个持久 append 批次一个带校验和帧，使用 Node 内置 Zstandard API 的默认压缩级别（无级别开关）。当前格式为每个事件写一行；`sourceEventSeqs` 使用无损存储形式：至少包含三个序列号的连续段会变成 `[start, end]` 区间对，其他列表原样保留；读取时会展开回精确的内存数组。历史迁移会复用一个 Zstandard decoder，让已解析行流经有状态格式 Stage，并通过一个压缩 context 以约 1 MiB 主线程分片流式写入当前记录，同时只保留最终当前事件、有界 decoder 状态与必需的序号重映射表。列表只读取并验证 header 帧。`compression: 'none'` 保留相同的存储形式逻辑行，但不使用帧压缩。一个根只属于一种编码：启动发现与定向查找会拒绝使用另一后缀的 generation；格式迁移保留已配置编码，而压缩转换、混合根回退与双写仍不受支持。冻结的 v0 与 v1 codec 仅为历史 generation 保留 packed-row decoder。
+
+<a id="the-session-log-chain"></a>
+### 会话日志链
+
+该后端为其读取或写入的每个当前代际日志保留一份 [会话日志链](../session-persistence/README.zh.md#the-session-log-chain)。读取在 scanner 拆分每条已提交行时对它的原始字节计算哈希，因此无论产出方是谁，链接都反映存储字节，包括撕裂的最终 Zstandard 帧中的完整记录。写句柄在调用 `append` 或路由实时事件时，把每个被接受的事件一次性编码为它的行，链接该 `Buffer` 并写入同一 `Buffer`，因此在批处理窗口内发给 follower 的链接与其后读取计算的链接相同；从撕裂帧恢复的完整记录按字节原样重写。失败的显式 `append` 移除其新增的链接；行无法编码的事件会停止实时链，下一次 drain 仍按原有方式失败。其链以与 `append` 相同的行编码实现 `extend`，因此冷读取提供的 closer 链接与 resume 的 `append` 存储的链接相同。保留的链每链接一个事件花费 32 字节，持续增长的写句柄因缓冲区倍增而最多持有两倍；读取链由交接 memo 与读句柄共享，写句柄扩展一份私有副本。
 
 ### 源码地图
 
@@ -116,6 +121,7 @@ kind: "package-reference"
 |---|---|
 | [`src/index.ts`](src/index.ts) | 插件入口：`Config` schema、后端服务类与文件存储原语 |
 | [`src/storage.ts`](src/storage.ts) | JSONL 句柄、已路由实时事件缓冲、进程内写入者记账、监听器、teardown |
+| [`src/chain.ts`](src/chain.ts) | JSONL 会话日志链构造器与共享的 append 行编码 |
 | [`src/format.ts`](src/format.ts) | 日志路径派生、header 编码与当前记录扫描 |
 | [`src/generation.ts`](src/generation.ts) | 单遍历史还原、有界 stage 编码、源 revision 检查与排他后继发布 |
 | [`src/migration-verifier.ts`](src/migration-verifier.ts) | stage 与竞争 generation 校验的 Worker 生命周期 |
@@ -162,6 +168,7 @@ JSONL 存储不修改实时请求前缀。只有重建历史、当前 envelope �
 这些限制说明本后端何时不合适，或何时需要特别的运维注意。它们是当前包约束，不是任务积压。
 
 - **格式迁移保留已配置编码，且只支持 catalog 中的链**——本 build 把受支持的历史代迁移到当前格式；更改压缩需要独立根，保留的旧版本不提供自动 fallback 或 downgrade 支持。
+- **迁移后的日志没有 会话日志链**——迁移到当前格式的日志在再次读取其当前代际之前没有链，因此在迁移它的那次 Host 加载期间 follower 无法恢复它。
 - **平铺文件存储布局不加载**——加载前使用独立根，或将预发布产物移入项目/会话目录布局。
 - **压缩文件不能直接按行读取**——使用后端加载；或在写入新根前选择 `compression: 'none'`，供外部行读取方使用。
 - **不删除会话文件**——日志在 `root` 下累积，直到外部移除；seam 无删除接口。

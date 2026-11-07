@@ -6,14 +6,17 @@
   en: d6ca00339e679318
   zh: 917896dfe65cd710
 /session-persistence/sessionhandle-one-open-channel-onto-a-stored-session:
-  en: 283765de86ff454d
-  zh: ef8fcf55a3071243
+  en: af9a07dba9081c1c
+  zh: e292473d1632d649
+/session-persistence/the-session-log-chain:
+  en: f62cf63398eacca2
+  zh: f8d85204027f2bb0
 /session-persistence/the-flush-checkpoint:
   en: a751d1952a47d938
   zh: f0ae8447fdc26dfb
 /session-persistence/crash-recovery-preserves-an-interrupted-turn:
-  en: 534044a0ce482d52
-  zh: d2e8a7dfeb066946
+  en: 23d3589e80b7a69c
+  zh: 7bb1c4bd389e0d38
 /session-persistence/sessionlocation-per-session-artifact-metadata:
   en: e310ff426d848262
   zh: 8a7667349b0549a7

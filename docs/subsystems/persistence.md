@@ -20,6 +20,11 @@ interface SessionHandleReadResult {
   readonly eventState: SessionSeedEventState
   /** Event values in a caller-owned outer array. */
   readonly events: readonly SessionEvent[]
+  /**
+   * Links over the stored lines of the log generation this slice was read
+   * from, indexed by absolute seq; absent when the backend keeps no chain for it.
+   */
+  readonly chain?: SessionLogChain
 }
 ```
 
@@ -101,13 +106,41 @@ interface SessionHandle extends AsyncDisposable {
 
 A created session is observable in this process from the moment `create` resolves, while a backend may defer physical materialization (a pure optimization) until the first `append` or `flush`; other processes see only materialized sessions, and a session that never materialized before a crash never existed.
 
+<a id="the-session-log-chain"></a>
+
+## The Session log chain
+
+A backend may keep SHA-256 links over the exact stored bytes of one log generation's lines, so equal links identify byte-identical log prefixes. `SessionHandle.read()` returns the chain of the generation it read, and `SessionPersistence.liveChain(id)` returns the chain of this process's active write handle, which covers every event the handle has accepted, including events whose write is still pending. The [Session log chain reference](../../packages/session/session-persistence/README.md#the-session-log-chain) states the link computation and the JSONL backend's guarantees.
+
+```ts type-equiv
+/** Links over the stored lines of one log generation, indexed by event seq. */
+interface SessionLogChain {
+  /** Number of linked events: `linkAt` answers for seqs `0` through `length - 1`. */
+  readonly length: number
+  /**
+   * Read one event's link.
+   * @param seq - event position in the log.
+   * @returns the link, or `undefined` when the chain does not cover `seq`.
+   */
+  linkAt(seq: number): SessionLogLink | undefined
+  /**
+   * Link events that would continue this chain, encoded exactly as this
+   * backend's write path encodes appended events, without changing this chain.
+   * @param events - events whose seqs continue at `length`, in order.
+   * @returns a chain that also covers `events`, or `undefined` when an event
+   *   does not continue the chain or cannot be encoded.
+   */
+  extend?(events: readonly SessionEvent[]): SessionLogChain | undefined
+}
+```
+
 ## The flush checkpoint
 
 `session/event` is a *synchronous* notification; the mounted backend routes it by session id into the active write handle's bounded write-behind window without blocking the producer (the backend installs these listeners once, because persistence already enforces one active write handle per id). The first pending event starts a fixed internal batching window, and later events join without resetting its deadline. Expiry starts one durable `append` through the session's write handle; events admitted during that write receive their own deadline and form a follow-up batch. `session/flush` cancels the wait and drains through quiescence, so the loop still uses it as the ordering and error-observation checkpoint before claiming the next ordinary turn. A rejected background write retains its events in order, pauses the automatic path, and is reported through the logger; the next explicit flush retries and rejects loudly to its caller. `session/disposed` performs the same final drain and closes the handle, and `close()` itself drains the routed buffer through the still-open storage, so backend teardown's close sweep loses nothing. The window bounds only intentional batching wait, not event-loop scheduling or backend durability latency.
 
 ## Crash recovery preserves an interrupted turn
 
-A log crashed mid-turn ends with an open `turn/start` and no `turn/end`. Persistence does **not** truncate or repair it — a single turn can be huge in a long-horizon task (many steps, large tool output), and those events were durably appended before the crash. It returns the physically valid contiguous log; only the incomplete fragment of a torn physical tail, belonging to an append that never resolved, is discarded — complete records recovered from it (the JSONL backend partially decodes a torn Zstandard frame) are durably rewritten by the write path before the handle's first new append. Repair is the reader's job: resume (agent-loop) reads the stored log through its write handle, computes `interruptedTurnClosers` — missing tool errors, any open `step/end`, and a synthetic `turn/end { reason: { kind: 'interrupted' } }` — and appends them through the same handle as an ordinary batch before publishing the Session. `interrupted` is the one `TurnEndReason` no loop emits (see [session.md](session.md#why-a-turn-ended-turnendreasonmap)).
+A log crashed mid-turn ends with an open `turn/start` and no `turn/end`. Persistence does **not** truncate or repair it — a single turn can be huge in a long-horizon task (many steps, large tool output), and those events were durably appended before the crash. It returns the physically valid contiguous log; only the incomplete fragment of a torn physical tail, belonging to an append that never resolved, is discarded — complete records recovered from it (the JSONL backend partially decodes a torn Zstandard frame) are durably rewritten byte for byte by the write path before the handle's first new append. Repair is the reader's job: resume (agent-loop) reads the stored log through its write handle, computes `interruptedTurnClosers` — missing tool errors, any open `step/end`, and a synthetic `turn/end { reason: { kind: 'interrupted' } }` — and appends them through the same handle as an ordinary batch before publishing the Session. `interrupted` is the one `TurnEndReason` no loop emits (see [session.md](session.md#why-a-turn-ended-turnendreasonmap)).
 
 Repair therefore writes only under write ownership: a live session's write handle is held by its lifecycle owner, so a concurrent `open(id, 'write')` rejects with `SessionAlreadyOwnedError` instead of racing repair against a live turn. Read-only observers (session-query) balance an interrupted cold log with the same closers in memory only, writing nothing back.
 
@@ -420,6 +453,16 @@ abstract stat(id: SessionId, options?: SessionPersistenceStatOptions): Promise<S
  * @returns one snapshot per stored session.
  */
 abstract list(options?: SessionPersistenceListOptions): Promise<readonly SessionPersistenceSnapshot[]>
+
+/**
+ * Read the chain kept by this process's active write handle for a Session.
+ * It covers every event the handle has accepted, including events whose
+ * write is still pending, so a follower can receive a link before its line
+ * is durable.
+ * @param id - the Session whose write handle is asked.
+ * @returns the live chain, or `undefined` without an active write handle or chain here.
+ */
+liveChain?(id: SessionId): SessionLogChain | undefined
 ```
 
 Types: [SessionId](core.md)

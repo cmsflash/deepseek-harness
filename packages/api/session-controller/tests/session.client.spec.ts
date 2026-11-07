@@ -20,7 +20,8 @@ import type { SessionExpandStepsValue, SessionFollowRequest, SessionEventsPage, 
 import { collapsedRecords, entries, ev, historyValue, plainTurn } from './event-script.client.ts'
 import { sessionBench } from './remote/bench.client.ts'
 import {
-  FOLLOW, PAGE, err, followScript, followSnapshot, frame, history, pageRule, pushAssistantStream, pushEvent,
+  FOLLOW, PAGE, err, followResumed, followScript, followSnapshot, frame, history, linkFor, linkRecords, pageRule,
+  pushAssistantStream, pushEvent,
 } from './remote/session.client.ts'
 
 /** A Session talks through the Gateway client; its dependency cone is the Typert registry and the Connection. */
@@ -968,7 +969,7 @@ describe('remaining branches', () => {
     const historyResult = ev.toolResult(SessionSeq(7), 1, 'h1', 'done')
     mock.stream(FOLLOW, followScript(history([...plainTurn(SessionSeq(0), 0, 'a', 'b'), historyCall, historyResult])))
     await session.open()
-    expect(windowEntries(session).slice(-2)).toEqual(entries([historyCall, historyResult]))
+    expect(windowEntries(session).slice(-2)).toEqual(linkRecords(entries([historyCall, historyResult])))
     const liveCall = ev.toolCall(SessionSeq(8), 2, 'l1', 'write', '{"file_path":"a.ts"}')
     await pushEvent(mock, liveCall)
     expect(windowEntries(session).at(-1)).toEqual(frame(liveCall))
@@ -1054,6 +1055,66 @@ describe('resync', () => {
     const snapshot = session.getSnapshot()
     expect(snapshot.openState).toBe('open') // stale failure did not settle the fresh generation into error
     expect(eventSeqs(session)).toEqual(plainTurn(SessionSeq(6), 1, '新', '代').map(event => event.seq))
+  })
+})
+
+describe('reconnect', () => {
+  it('continues the held window, keeping pages loaded by scrolling up', async ({ mock, start }) => {
+    const older = plainTurn(SessionSeq(0), 0, '旧问', '旧答')
+    const newer = plainTurn(SessionSeq(6), 1, '新问', '新答')
+    const missed = plainTurn(SessionSeq(12), 2, '断线时问', '断线时答')
+    const session = await sessionBench(mock, start, SID)
+    mock.stream(FOLLOW, followScript(history(newer, true)))
+    mock.remote.session.page.mockImplementation(pageRule(history(older)))
+    await session.open()
+    await session.loadOlder()
+    mock.stream(FOLLOW, async ([request], stream) => {
+      stream.push(followResumed(request as SessionFollowRequest, entries(missed)))
+    })
+
+    mock.streams.fail(FOLLOW, new RemoteStreamCarrierError('lost'))
+    await vi.waitFor(() => { expect(eventSeqs(session)).toEqual([...older, ...newer, ...missed].map(event => event.seq)) })
+
+    const reconnect = mock.log.requests(FOLLOW)[1] as SessionFollowRequest
+    expect(reconnect.resume).toEqual({ afterSeq: 11, link: linkFor(11) })
+    expect(mock.log.requests(PAGE)).toHaveLength(1)
+    expect(session.getSnapshot()).toMatchObject({ openState: 'open', hasMore: false })
+  })
+
+  it('keeps the loaded pages when the reconnect opening is the snapshot it already holds', async ({ mock, start }) => {
+    const older = plainTurn(SessionSeq(0), 0, '旧问', '旧答')
+    const newer = plainTurn(SessionSeq(6), 1, '新问', '新答')
+    const session = await sessionBench(mock, start, SID)
+    mock.stream(FOLLOW, followScript(history(newer, true)))
+    mock.remote.session.page.mockImplementation(pageRule(history(older)))
+    await session.open()
+    await session.loadOlder()
+    // Offline reading replays the recorded opening, which ends at the held window's newest record.
+    mock.stream(FOLLOW, followScript(history(newer, true)))
+
+    mock.streams.fail(FOLLOW, new RemoteStreamCarrierError('lost'))
+    await vi.waitFor(() => { expect(mock.log.requests(FOLLOW)).toHaveLength(2) })
+    await vi.waitFor(() => { expect(session.getSnapshot().openState).toBe('open') })
+
+    expect(eventSeqs(session)).toEqual([...older, ...newer].map(event => event.seq))
+    expect(mock.log.requests(PAGE)).toHaveLength(1)
+    expect(session.getSnapshot()).toMatchObject({ hasMore: false })
+  })
+
+  it('replaces the window when the Host answers a reconnect with a snapshot behind it', async ({ mock, start }) => {
+    const turn = plainTurn(SessionSeq(0), 0, '问', '答')
+    const session = await sessionBench(mock, start, SID)
+    mock.stream(FOLLOW, followScript(history(turn)))
+    await session.open()
+    await pushEvent(mock, ev.turnStart(SessionSeq(6), 1))
+    // The Host crashed before writing seq 6, so its log ends at seq 5 again.
+    mock.stream(FOLLOW, followScript(history(turn, true)))
+
+    mock.streams.fail(FOLLOW, new RemoteStreamCarrierError('lost'))
+    await vi.waitFor(() => { expect(eventSeqs(session)).toEqual([0, 1, 2, 3, 4, 5]) })
+
+    expect((mock.log.requests(FOLLOW)[1] as SessionFollowRequest).resume).toEqual({ afterSeq: 6, link: linkFor(6) })
+    expect(session.getSnapshot()).toMatchObject({ openState: 'open', openError: null, hasMore: true })
   })
 })
 

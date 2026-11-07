@@ -21,8 +21,8 @@
   en: bced4b90cb03525d
   zh: b0c1ca4bf1064f89
 /agent-note-session-observations-and-projection-owned-client-state/decision/projection-execution-boundary:
-  en: b3b235fa0250868a
-  zh: 0bb5eedf14cdafee
+  en: c729e8a79a89a86a
+  zh: 1b572497a6afd19e
 /agent-note-session-observations-and-projection-owned-client-state/decision/read-audiences:
   en: e394e9480340f69c
   zh: 7eea994ee9fa380d
@@ -36,8 +36,8 @@
   en: 4dcae9e00148b11e
   zh: acfd1b6831cf50fe
 /agent-note-session-observations-and-projection-owned-client-state/decision/failure-and-readiness-boundaries:
-  en: 0f90a8bccedf9e71
-  zh: 8452dfdf0af00fb3
+  en: affe1f17838ef526
+  zh: 3d68d0a56a736cdb
 /agent-note-session-observations-and-projection-owned-client-state/decision/ownership-matrix:
   en: 4f25ea5ac5b18fb3
   zh: 30af4b15936fc455

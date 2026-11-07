@@ -1,0 +1,19 @@
+# Bilingual-pair consistency record for 2026-11-03-resumable-session-follow.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/architecture/2026-11-03-resumable-session-follow.md
+/agent-note-resumable-session-follow:
+  en: a2025604f99e5c5c
+  zh: 3f87be8a1fbf3f69
+/agent-note-resumable-session-follow/problem:
+  en: 1e0c5624904acb30
+  zh: dbac6ff8813793ab
+/agent-note-resumable-session-follow/decision:
+  en: af9a424adadb9b19
+  zh: 41ad00cf43d39778
+/agent-note-resumable-session-follow/alternatives-considered:
+  en: 957bdfa0adfbad39
+  zh: 2c61d7afc0b90d64
+/agent-note-resumable-session-follow/consequences:
+  en: e2cbe9f1629a3eda
+  zh: a90fabdc0228155b

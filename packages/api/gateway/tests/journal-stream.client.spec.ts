@@ -5,6 +5,7 @@ import {
   RemoteStreamCarrierError,
   type RemoteJournalChange,
   type RemoteJournalFrame,
+  type RemoteJournalResumePoint,
   type RemoteStreamFactory,
   type RemoteStreamItem,
   type RemoteStreamOptions,
@@ -70,6 +71,8 @@ const STREAM_FACTORY = {
   },
 }
 
+type ResumePoint = RemoteJournalResumePoint<Entry, number>
+
 class FixtureJournal extends RemoteJournalStream<Page, Entry, number, PageRequest, string> {
   constructor(
     private readonly generations: Generation[],
@@ -81,6 +84,8 @@ class FixtureJournal extends RemoteJournalStream<Page, Entry, number, PageReques
     changes: RemoteJournalChange<Page, Entry, string>[],
     failed: (error: unknown) => void,
     factory: RemoteStreamFactory = STREAM_FACTORY,
+    private readonly resumes: (ResumePoint | undefined)[] = [],
+    resumeEntries?: number,
   ) {
     super(factory, {
       name: 'fixture journal',
@@ -91,6 +96,7 @@ class FixtureJournal extends RemoteJournalStream<Page, Entry, number, PageReques
       last: entry => entry.lastSeq ?? entry.seq,
       compare: (left, right) => left - right,
       follows: (left, right) => right === left + 1,
+      ...(resumeEntries === undefined ? {} : { resumeEntries }),
       publish: (change) => { changes.push(change) },
       failed,
     })
@@ -100,9 +106,11 @@ class FixtureJournal extends RemoteJournalStream<Page, Entry, number, PageReques
   protected override async * follow(
     request: PageRequest,
     signal: AbortSignal,
+    resume: ResumePoint | undefined,
   ): AsyncIterable<JournalFrame> {
     this.calls.push('follow')
     this.followRequests.push(request)
+    this.resumes.push(resume)
     const generation = this.generations.shift()
     if (generation === undefined) throw new Error('no scripted journal generation')
     for (const [index, frame] of generation.frames.entries()) {
@@ -147,6 +155,7 @@ function journalFixture(
   generations: Generation[],
   pages: PageSource[],
   factory: RemoteStreamFactory = STREAM_FACTORY,
+  resumeEntries?: number,
 ): {
   readonly journal: FixtureJournal
   readonly changes: RemoteJournalChange<Page, Entry, string>[]
@@ -155,11 +164,13 @@ function journalFixture(
   readonly pageRequests: PageRequest[]
   readonly pageCursors: number[]
   readonly followRequests: PageRequest[]
+  readonly resumes: (ResumePoint | undefined)[]
 } {
   const calls: string[] = []
   const pageRequests: PageRequest[] = []
   const pageCursors: number[] = []
   const followRequests: PageRequest[] = []
+  const resumes: (ResumePoint | undefined)[] = []
   const changes: RemoteJournalChange<Page, Entry, string>[] = []
   const failed = vi.fn()
   const journal = new FixtureJournal(
@@ -172,12 +183,18 @@ function journalFixture(
     changes,
     failed,
     factory,
+    resumes,
+    resumeEntries,
   )
-  return { journal, changes, failed, calls, pageRequests, pageCursors, followRequests }
+  return { journal, changes, failed, calls, pageRequests, pageCursors, followRequests, resumes }
 }
 
 function opened(cursor: number, value: Page): JournalFrame {
   return { type: 'opened', cursor, page: value }
+}
+
+function resumed(after: number, cursor: number, value: Page): JournalFrame {
+  return { type: 'resumed', after, cursor, page: value }
 }
 
 function remoteItem(
@@ -1058,39 +1075,154 @@ describe('RemoteJournalStream', () => {
     await expect(longPage.journal.open({})).rejects.toThrow('page did not end at its requested cursor')
   })
 
-  it('reports duplicate and regressed generation cursors as terminal failures', async () => {
-    const duplicate = journalFixture(
-      [{
-        frames: [
-          opened(1, page('initial', [0, 1])),
-          opened(1, page('duplicate', [0, 1])),
-        ],
-      }],
-      [],
-    )
-    await duplicate.journal.open({})
-    await vi.waitFor(() => { expect(duplicate.failed).toHaveBeenCalledOnce() })
-    const duplicateFailure: unknown = duplicate.failed.mock.calls[0]?.[0]
-    expect(duplicateFailure).toBeInstanceOf(Error)
-    if (!(duplicateFailure instanceof Error)) throw new Error('expected duplicate-cursor failure')
-    expect(duplicateFailure.message).toContain('more than one opening cursor')
+  it.each([opened(1, page('duplicate', [0, 1])), resumed(1, 1, page('duplicate', []))])(
+    'reports a second opening in one generation as a terminal failure: %j',
+    async (second) => {
+      const duplicate = journalFixture([{ frames: [opened(1, page('initial', [0, 1])), second] }], [], STREAM_FACTORY, 2)
+      await duplicate.journal.open({})
+      await vi.waitFor(() => { expect(duplicate.failed).toHaveBeenCalledOnce() })
+      const duplicateFailure: unknown = duplicate.failed.mock.calls[0]?.[0]
+      expect(duplicateFailure).toBeInstanceOf(Error)
+      if (!(duplicateFailure instanceof Error)) throw new Error('expected duplicate-cursor failure')
+      expect(duplicateFailure.message).toContain('more than one opening cursor')
+    },
+  )
 
+  it('replaces the held window from a reconnect snapshot behind it, as after a Host lost unwritten events', async () => {
     const regressed = journalFixture(
       [
         {
           frames: [opened(1, page('initial', [0, 1])), { type: 'entry', entry: { seq: 2 } }],
           terminal: new RemoteStreamCarrierError('lost'),
         },
-        { frames: [opened(1, page('regressed', [0, 1]))] },
+        { frames: [opened(1, page('rewritten', [0, 1]))], hold: true },
+      ],
+      [],
+      STREAM_FACTORY,
+      2,
+    )
+    await regressed.journal.open({})
+    await vi.waitFor(() => { expect(regressed.changes).toHaveLength(3) })
+
+    expect(regressed.resumes).toEqual([undefined, { after: 2, entries: entries(1, 2) }])
+    expect(regressed.changes[2]).toEqual({
+      type: 'replace', page: page('rewritten', [0, 1]), entries: entries(0, 1), hasMore: false,
+    })
+    expect(regressed.journal.heldCursor()).toBe(1)
+    expect(regressed.failed).not.toHaveBeenCalled()
+    await regressed.journal.dispose()
+  })
+
+  it('offers the newest held entries on reconnect and appends the resumed page after the held window', async () => {
+    const lose = Promise.withResolvers<undefined>()
+    const fixture = journalFixture(
+      [
+        {
+          frames: [opened(3, page('initial', [2, 3], true))],
+          waitAfterFrames: lose.promise,
+          terminal: new RemoteStreamCarrierError('lost'),
+        },
+        { frames: [resumed(3, 5, page('resumed', [4, 5])), { type: 'entry', entry: { seq: 6 } }], hold: true },
+      ],
+      [page('older', [0, 1])],
+      STREAM_FACTORY,
+      2,
+    )
+
+    await fixture.journal.open({})
+    await fixture.journal.prepend({ before: 2 })
+    lose.resolve(undefined)
+    await vi.waitFor(() => { expect(fixture.changes).toHaveLength(4) })
+
+    expect(fixture.resumes).toEqual([undefined, { after: 3, entries: entries(2, 3) }])
+    expect(fixture.changes.map(change => change.type)).toEqual(['replace', 'prepend', 'resume', 'append'])
+    expect(fixture.changes[2]).toEqual({ type: 'resume', page: page('resumed', [4, 5]), entries: entries(4, 5) })
+    expect(fixture.journal.heldCursor()).toBe(6)
+    expect(fixture.failed).not.toHaveBeenCalled()
+    await fixture.journal.dispose()
+  })
+
+  it('offers no resume point when resume is disabled or the held window is empty', async () => {
+    const disabled = journalFixture(
+      [
+        { frames: [opened(1, page('initial', [0, 1]))], terminal: new RemoteStreamCarrierError('lost') },
+        { frames: [opened(1, page('again', [0, 1]))], hold: true },
       ],
       [],
     )
-    await regressed.journal.open({})
-    await vi.waitFor(() => { expect(regressed.failed).toHaveBeenCalledOnce() })
-    const regressedFailure: unknown = regressed.failed.mock.calls[0]?.[0]
-    expect(regressedFailure).toBeInstanceOf(Error)
-    if (!(regressedFailure instanceof Error)) throw new Error('expected regressed-cursor failure')
-    expect(regressedFailure.message).toContain('behind the last applied entry')
+    await disabled.journal.open({})
+    await vi.waitFor(() => { expect(disabled.changes).toHaveLength(2) })
+    expect(disabled.resumes).toEqual([undefined, undefined])
+    await disabled.journal.dispose()
+
+    const empty = journalFixture(
+      [
+        { frames: [opened(-1, page('empty', []))], terminal: new RemoteStreamCarrierError('lost') },
+        { frames: [opened(-1, page('still empty', []))], hold: true },
+      ],
+      [],
+      STREAM_FACTORY,
+      2,
+    )
+    await empty.journal.open({})
+    await vi.waitFor(() => { expect(empty.changes).toHaveLength(2) })
+    expect(empty.resumes).toEqual([undefined, undefined])
+    await empty.journal.dispose()
+  })
+
+  it.each([
+    ['a resumed opening that was not offered', undefined, resumed(1, 2, page('resumed', [2])), 'not offered'],
+    ['a resumed opening after another cursor', 2, resumed(0, 1, page('resumed', [1])), 'not offered'],
+    ['a resumed page that skips past its resume cursor', 2, resumed(1, 3, page('resumed', [3])), 'does not continue'],
+    ['a resumed page that ends before its cursor', 2, resumed(1, 3, page('resumed', [2])), 'did not end at its requested cursor'],
+  ] as const)('reports %s as a terminal failure', async (_name, resumeEntries, frame, message) => {
+    const fixture = journalFixture(
+      [
+        { frames: [opened(1, page('initial', [0, 1]))], terminal: new RemoteStreamCarrierError('lost') },
+        { frames: [frame], hold: true },
+      ],
+      [],
+      STREAM_FACTORY,
+      resumeEntries,
+    )
+    await fixture.journal.open({})
+    await vi.waitFor(() => { expect(fixture.failed).toHaveBeenCalledOnce() })
+    const failure: unknown = fixture.failed.mock.calls[0]?.[0]
+    if (!(failure instanceof Error)) throw new Error('expected a resume failure')
+    expect(failure.message).toContain(message)
+    await fixture.journal.dispose()
+  })
+
+  it('rejects a first opening that claims to resume', async () => {
+    const fixture = journalFixture([{ frames: [resumed(1, 2, page('resumed', [2]))], hold: true }], [], STREAM_FACTORY, 2)
+    await expect(fixture.journal.open({})).rejects.toThrow('not offered')
+  })
+
+  it('resumes from the window held before a gap repair that its generation\'s end interrupted', async () => {
+    const fixture = journalFixture(
+      [
+        {
+          frames: [opened(1, page('initial', [0, 1])), { type: 'entry', entry: { seq: 3 } }],
+          terminal: new RemoteStreamCarrierError('lost'),
+        },
+        { frames: [resumed(1, 3, page('resumed', [2, 3]))], hold: true },
+      ],
+      [signal => new Promise<Page>((_resolve, reject) => {
+        signal.addEventListener('abort', () => { reject(signal.reason as Error) }, { once: true })
+      })],
+      STREAM_FACTORY,
+      2,
+    )
+
+    await fixture.journal.open({})
+    await vi.waitFor(() => { expect(fixture.changes).toHaveLength(2) })
+
+    expect(fixture.pageCursors).toEqual([3])
+    expect(fixture.resumes).toEqual([undefined, { after: 1, entries: entries(0, 1) }])
+    expect(fixture.changes[1]).toEqual({ type: 'resume', page: page('resumed', [2, 3]), entries: entries(2, 3) })
+    expect(fixture.journal.heldCursor()).toBe(3)
+    expect(fixture.failed).not.toHaveBeenCalled()
+    await fixture.journal.dispose()
   })
 
   it('rejects a discontinuous older page after publishing the fail-soft pagination state', async () => {

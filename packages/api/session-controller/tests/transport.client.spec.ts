@@ -21,14 +21,15 @@ import type {
   SessionAssistantStreamBaseline,
   SessionAssistantStreamFrame,
   SessionControlFrame,
-  SessionEventEntry,
   SessionFollowFrame,
   SessionFollowRequest,
   SessionHistoryRecord,
   SessionEventsPage,
   SessionPageRequest,
+  SessionProjectionBaseline,
   SessionWireEvent,
 } from '../src/types.ts'
+import { linkFor } from './remote/history.client.ts'
 
 type SessionTransportRemote = Pick<SessionRemote, 'control' | 'follow' | 'page'>
 
@@ -40,8 +41,36 @@ const AVAILABLE_CONNECTION = {
   },
 }
 
-function entry(seq: number): SessionEventEntry {
+/** One journal record, and live frame, with the link the Host sends for its seq. */
+function entry(seq: number): SessionHistoryRecord {
+  return { type: 'event', event: { type: 'turn/start', seq, time: seq, data: { turn: seq } }, link: linkFor(seq) }
+}
+
+/** One journal record whose log kept no chain, so it carries no link. */
+function unlinked(seq: number): SessionHistoryRecord {
   return { type: 'event', event: { type: 'turn/start', seq, time: seq, data: { turn: seq } } }
+}
+
+function resumed(
+  after: number,
+  cursor: number,
+  records: readonly SessionHistoryRecord[],
+  assistantStream: SessionAssistantStreamBaseline = { revision: 0 },
+): SessionFollowFrame {
+  return {
+    type: 'resumed',
+    header: {
+      version: SESSION_FORMAT_VERSION,
+      id: ADDRESS.kind === 'session' ? ADDRESS.sessionId : ADDRESS.childSessionId,
+      createdAt: 0,
+      isSeeded: false,
+    },
+    after,
+    cursor,
+    records,
+    projections: { asOfSeq: cursor, values: {} },
+    assistantStream,
+  }
 }
 
 function page(records: readonly SessionHistoryRecord[], hasMore = false): SessionEventsPage {
@@ -53,6 +82,7 @@ function snapshot(
   records: readonly SessionHistoryRecord[],
   hasMore = false,
   assistantStream: SessionAssistantStreamBaseline = { revision: 0 },
+  projections: SessionProjectionBaseline = { asOfSeq: cursor, values: {} },
 ): SessionFollowFrame {
   return {
     type: 'snapshot',
@@ -65,7 +95,7 @@ function snapshot(
     cursor,
     records,
     hasMore,
-    projections: { asOfSeq: cursor, values: {} },
+    projections,
     assistantStream,
   }
 }
@@ -464,10 +494,10 @@ describe('Session Client stream adapters', () => {
     await vi.waitFor(() => { expect(remote.followRequests).toHaveLength(2) })
 
     expect(changes.map(change => change.type)).toEqual([
-      'replace', 'assistant-stream', 'replace',
+      'replace', 'assistant-stream', 'resume',
     ])
     expect(changes.at(-1)).toMatchObject({
-      type: 'replace', page: { assistantStream: replacement },
+      type: 'resume', page: { records: [], assistantStream: replacement },
     })
     expect(remote.pageRequests).toEqual([])
     expect(carrierFailed).toHaveBeenCalledWith(expect.objectContaining({
@@ -523,7 +553,7 @@ describe('Session Client stream adapters', () => {
       await vi.waitFor(() => { expect(remote.followRequests).toHaveLength(2) })
       expect(changes).toMatchObject([
         { type: 'replace', page: { assistantStream: previous } },
-        { type: 'replace', page: { assistantStream: replacement } },
+        { type: 'resume', page: { records: [], assistantStream: replacement } },
       ])
       expect(carrierFailed).toHaveBeenCalledWith(expect.objectContaining({
         message: 'session assistant stream skipped revision 3',
@@ -623,12 +653,254 @@ describe('Session Client stream adapters', () => {
 
     expect(remote.followRequests).toEqual([
       { address: ADDRESS, activate: true, assistantStream: true, maxMessages: 500, turnWindow: { minMessages: 50, minTurns: 2 } },
-      { address: ADDRESS, activate: true, assistantStream: true, maxMessages: 500, turnWindow: { minMessages: 50, minTurns: 2 } },
+      {
+        address: ADDRESS, activate: true, assistantStream: true, maxMessages: 500, turnWindow: { minMessages: 50, minTurns: 2 },
+        resume: { afterSeq: 2, link: linkFor(2) },
+      },
     ])
     expect(remote.pageRequests).toEqual([])
     expect(changes.map(change => change.type)).toEqual(['replace', 'append', 'replace'])
     expect(carrierFailed).toHaveBeenCalledWith(lost)
     await stream.dispose()
+  })
+
+  it('appends only the events a resumed reconnect carries after the held window', async () => {
+    const remote = new ScriptedSessionRemote(
+      [
+        {
+          frames: [snapshot(1, [entry(0), entry(1)], true), entry(2)],
+          terminal: new RemoteStreamCarrierError('lost'),
+        },
+        { frames: [resumed(2, 4, [entry(3), entry(4)], { revision: 3 }), entry(5)], hold: true },
+      ],
+      [],
+    )
+    const changes: SessionJournalChange[] = []
+    const stream = new SessionEventStream(sessionClient(remote), ADDRESS, {
+      publish: (change) => { changes.push(change) },
+      failed: vi.fn(),
+    })
+
+    await stream.open({})
+    await vi.waitFor(() => { expect(changes).toHaveLength(4) })
+
+    expect(remote.followRequests[1]?.resume).toEqual({ afterSeq: 2, link: linkFor(2) })
+    expect(changes.slice(2)).toEqual([
+      {
+        type: 'resume',
+        page: {
+          records: [entry(3), entry(4)],
+          hasMore: false,
+          projections: { asOfSeq: 4, values: {} },
+          assistantStream: { revision: 3 },
+        },
+        entries: [entry(3), entry(4)],
+      },
+      { type: 'append', entry: entry(5) },
+    ])
+    expect(remote.pageRequests).toEqual([])
+    await stream.dispose()
+  })
+
+  it('continues the held window when a snapshot opening ends at the offered link', async () => {
+    const remote = new ScriptedSessionRemote(
+      [
+        { frames: [snapshot(1, [entry(0), entry(1)])], terminal: new RemoteStreamCarrierError('lost') },
+        {
+          frames: [snapshot(1, [entry(0), entry(1)], true, { revision: 4 }, { asOfSeq: 1, values: { title: 'held' } })],
+          hold: true,
+        },
+      ],
+      [],
+    )
+    const changes: SessionJournalChange[] = []
+    const stream = new SessionEventStream(sessionClient(remote), ADDRESS, {
+      publish: (change) => { changes.push(change) },
+      failed: vi.fn(),
+    })
+
+    await stream.open({})
+    await vi.waitFor(() => { expect(changes).toHaveLength(2) })
+
+    expect(remote.followRequests[1]?.resume).toEqual({ afterSeq: 1, link: linkFor(1) })
+    expect(changes[1]).toEqual({
+      type: 'resume',
+      page: {
+        records: [],
+        hasMore: false,
+        projections: { asOfSeq: 1, values: { title: 'held' } },
+        assistantStream: { revision: 4 },
+      },
+      entries: [],
+    })
+    await stream.dispose()
+  })
+
+  it('replaces the window when the snapshot opening ends at the offered seq with another link', async () => {
+    const otherLink: SessionHistoryRecord = { ...entry(1), link: linkFor(9) }
+    const remote = new ScriptedSessionRemote(
+      [
+        { frames: [snapshot(1, [entry(0), entry(1)])], terminal: new RemoteStreamCarrierError('lost') },
+        { frames: [snapshot(1, [entry(0), otherLink])], hold: true },
+      ],
+      [],
+    )
+    const changes: SessionJournalChange[] = []
+    const stream = new SessionEventStream(sessionClient(remote), ADDRESS, {
+      publish: (change) => { changes.push(change) },
+      failed: vi.fn(),
+    })
+
+    await stream.open({})
+    await vi.waitFor(() => { expect(changes).toHaveLength(2) })
+
+    expect(changes.map(change => change.type)).toEqual(['replace', 'replace'])
+    await stream.dispose()
+  })
+
+  it('replaces the window when the snapshot opening ends past the offered seq', async () => {
+    const remote = new ScriptedSessionRemote(
+      [
+        { frames: [snapshot(1, [entry(0), entry(1)])], terminal: new RemoteStreamCarrierError('lost') },
+        { frames: [snapshot(2, [entry(0), entry(1), entry(2)])], hold: true },
+      ],
+      [],
+    )
+    const changes: SessionJournalChange[] = []
+    const stream = new SessionEventStream(sessionClient(remote), ADDRESS, {
+      publish: (change) => { changes.push(change) },
+      failed: vi.fn(),
+    })
+
+    await stream.open({})
+    await vi.waitFor(() => { expect(changes).toHaveLength(2) })
+
+    expect(changes.map(change => change.type)).toEqual(['replace', 'replace'])
+    await stream.dispose()
+  })
+
+  it('replaces the window when the snapshot opening carries no record', async () => {
+    const remote = new ScriptedSessionRemote(
+      [
+        { frames: [snapshot(1, [entry(0), entry(1)])], terminal: new RemoteStreamCarrierError('lost') },
+        { frames: [snapshot(-1, [])], hold: true },
+      ],
+      [],
+    )
+    const changes: SessionJournalChange[] = []
+    const stream = new SessionEventStream(sessionClient(remote), ADDRESS, {
+      publish: (change) => { changes.push(change) },
+      failed: vi.fn(),
+    })
+
+    await stream.open({})
+    await vi.waitFor(() => { expect(changes).toHaveLength(2) })
+
+    expect(changes.map(change => change.type)).toEqual(['replace', 'replace'])
+    await stream.dispose()
+  })
+
+  it('replaces the window on a first opening, which offers no resume point', async () => {
+    const remote = new ScriptedSessionRemote(
+      [{ frames: [snapshot(1, [entry(0), entry(1)])], hold: true }],
+      [],
+    )
+    const changes: SessionJournalChange[] = []
+    const stream = new SessionEventStream(sessionClient(remote), ADDRESS, {
+      publish: (change) => { changes.push(change) },
+      failed: vi.fn(),
+    })
+
+    await stream.open({})
+    await vi.waitFor(() => { expect(changes).toHaveLength(1) })
+
+    expect(remote.followRequests[0]).not.toHaveProperty('resume')
+    expect(changes.map(change => change.type)).toEqual(['replace'])
+    await stream.dispose()
+  })
+
+  it('names only the newest held record, whose link addresses the whole window', async () => {
+    const records = Array.from({ length: 21 }, (_, seq) => entry(seq))
+    const remote = new ScriptedSessionRemote(
+      [
+        { frames: [snapshot(20, records)], terminal: new RemoteStreamCarrierError('lost') },
+        { frames: [snapshot(20, records)], hold: true },
+      ],
+      [],
+    )
+    const stream = new SessionEventStream(sessionClient(remote), ADDRESS, { publish: vi.fn(), failed: vi.fn() })
+
+    await stream.open({})
+    await vi.waitFor(() => { expect(remote.followRequests).toHaveLength(2) })
+
+    expect(remote.followRequests[1]?.resume).toEqual({ afterSeq: 20, link: linkFor(20) })
+    await stream.dispose()
+  })
+
+  it('offers the link of the last event a covering record stands for', async () => {
+    const covering: SessionHistoryRecord = { ...entry(3), covers: { from: 1, to: 3 } }
+    const remote = new ScriptedSessionRemote(
+      [
+        { frames: [snapshot(3, [entry(0), covering])], terminal: new RemoteStreamCarrierError('lost') },
+        { frames: [snapshot(3, [entry(0), covering])], hold: true },
+      ],
+      [],
+    )
+    const stream = new SessionEventStream(sessionClient(remote), ADDRESS, { publish: vi.fn(), failed: vi.fn() })
+
+    await stream.open({ stepDetail: 'collapsed' })
+    await vi.waitFor(() => { expect(remote.followRequests).toHaveLength(2) })
+
+    expect(remote.followRequests[1]?.resume).toEqual({ afterSeq: 3, link: linkFor(3) })
+    await stream.dispose()
+  })
+
+  it('asks for a snapshot when the newest held record carries no link', async () => {
+    const remote = new ScriptedSessionRemote(
+      [
+        { frames: [snapshot(2, [entry(0), entry(1), unlinked(2)])], terminal: new RemoteStreamCarrierError('lost') },
+        { frames: [snapshot(2, [entry(0), entry(1), unlinked(2)])], hold: true },
+      ],
+      [],
+    )
+    const stream = new SessionEventStream(sessionClient(remote), ADDRESS, { publish: vi.fn(), failed: vi.fn() })
+
+    await stream.open({})
+    await vi.waitFor(() => { expect(remote.followRequests).toHaveLength(2) })
+
+    expect(remote.followRequests[1]).not.toHaveProperty('resume')
+    await stream.dispose()
+  })
+
+  it('offers the link of the newest record a resumed opening carried', async () => {
+    const remote = new ScriptedSessionRemote(
+      [
+        { frames: [snapshot(1, [entry(0), entry(1)]), entry(2)], terminal: new RemoteStreamCarrierError('lost') },
+        { frames: [resumed(2, 4, [entry(3), entry(4)])], terminal: new RemoteStreamCarrierError('lost') },
+        { frames: [snapshot(4, [entry(0), entry(1), entry(2), entry(3), entry(4)])], hold: true },
+      ],
+      [],
+    )
+    const stream = new SessionEventStream(sessionClient(remote), ADDRESS, { publish: vi.fn(), failed: vi.fn() })
+
+    await stream.open({})
+    await vi.waitFor(() => { expect(remote.followRequests).toHaveLength(3) })
+
+    expect(remote.followRequests.map(request => request.resume)).toEqual([
+      undefined,
+      { afterSeq: 2, link: linkFor(2) },
+      { afterSeq: 4, link: linkFor(4) },
+    ])
+    await stream.dispose()
+  })
+
+  it('rejects a resumed opening that answers a request without a resume point', async () => {
+    const remote = new ScriptedSessionRemote([{ frames: [resumed(0, 1, [entry(1)])], hold: true }], [])
+    const stream = new SessionEventStream(sessionClient(remote), ADDRESS, { publish: vi.fn(), failed: vi.fn() })
+
+    const opening = stream.open({})
+    await expect(opening).rejects.toThrow('not offered')
+    await expect(opening).rejects.toMatchObject({ code: 'gateway/internal' })
   })
 
   it('repairs a resumed event stream without an optional message limit', async () => {
@@ -654,7 +926,7 @@ describe('Session Client stream adapters', () => {
     await vi.waitFor(() => { expect(remote.followRequests).toHaveLength(2) })
     expect(remote.followRequests).toEqual([
       { address: ADDRESS, activate: true, assistantStream: true },
-      { address: ADDRESS, activate: true, assistantStream: true },
+      { address: ADDRESS, activate: true, assistantStream: true, resume: { afterSeq: 0, link: linkFor(0) } },
     ])
     expect(remote.pageRequests).toEqual([])
     await stream.dispose()

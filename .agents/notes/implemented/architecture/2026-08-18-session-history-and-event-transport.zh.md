@@ -127,7 +127,7 @@ Session control 与 Workspace state 各使用一个独立的 `RemoteSnapshotStre
 
 通用层按 cursor 去除 page 与 queued entries 的重叠，验证连续性，并在 page 覆盖 opening cursor 后发布一份完整 window。
 
-连续 live entry 发布 `append`，更早的历史页发布 `prepend`。重连、cursor 跳跃或无法证明连续性时触发 tail page repair。
+连续 live entry 发布 `append`，更早的历史页发布 `prepend`。cursor 跳跃或无法证明连续性时触发 tail page repair。重连的 generation 以快照开场；若领域提交了所持有的最新 entry，则接续所持有的窗口（[可续接的 follow](2026-11-03-resumable-session-follow.zh.md)）。
 
 repair 期间旧 window 保持可读；page 与期间积累的 live entries 拼成连续窗口后只发布一次 `replace`，不会把半修复状态暴露给消费者。
 

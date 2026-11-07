@@ -72,7 +72,7 @@ The registry owns fold state; each domain owns its `init`, `apply`, `view`, sche
 
 Corpus listing remains a separate lightweight operation. `listSessions()` returns live-preferred headers without materializing every log. Session list first uses live projection state or durable projection-cache rows. Subagent discovery reads parent-catalog projections through exact observations. Session list may take one complete observation for an individually stored artifact within its configured small-log limit when cached metadata cannot establish whether it is blank; a large or unreadable cache miss remains visible with unknown hints.
 
-`session.follow` publishes a required opening snapshot containing header, cursor, the initial event window, and a complete projection baseline. Reconnect replaces the previous generation from another complete snapshot. `session.page` supports current or fixed-cut history reads, older-history reads, and gap repair. Observation-only reads never activate an Agent; only an activation-enabled ordinary Follow may retain its prepared observation and request promotion once the opening snapshot is computed, before it is delivered. The [snapshot and subscription decision](2026-10-21-session-history-stream-and-snapshot.md) defines the Controller composition and passive subscription semantics.
+`session.follow` publishes a required opening snapshot containing header, cursor, the initial event window, and a complete projection baseline. Reconnect replaces the previous generation from another complete snapshot, or continues the held window when the Host can prove it matches its log ([resumable follow](2026-11-03-resumable-session-follow.md)). `session.page` supports current or fixed-cut history reads, older-history reads, and gap repair. Observation-only reads never activate an Agent; only an activation-enabled ordinary Follow may retain its prepared observation and request promotion once the opening snapshot is computed, before it is delivered. The [snapshot and subscription decision](2026-10-21-session-history-stream-and-snapshot.md) defines the Controller composition and passive subscription semantics.
 
 ### Read audiences
 
@@ -134,7 +134,7 @@ These migrations remove special-case Client state without making projection own 
 - A projection failure during an exact cold observation makes that observation fail as corrupt Session data; callers do not publish a mixture of successful keys and failed keys.
 - A subagent candidate's failed cold observation is isolated to that candidate's diagnostic row; sibling candidates remain usable.
 - A catalog load failure is Client-visible catalog state. It does not erase a previously complete catalog during refresh and does not synthesize a Session selection.
-- A follow carrier generation is not accepted until its opening snapshot is validated and applied. The previous generation remains visible during reconnect.
+- A follow carrier generation is not accepted until its opening snapshot or resumed opening is validated and applied. The previous generation remains visible during reconnect.
 
 Cancellation stops queued or in-flight cold resolution at documented checkpoints and releases every acquired lease. Cancellation does not convert into not-found, nor may it leave a prepared entry pinned.
 

@@ -69,6 +69,8 @@ Client 列表刷新保留未变化的行对象，并在顺序和值均相同时�
 
 Client 适配器提供 `SessionEventStream`，即绑定到一个普通 Session 或 direct subagent address 的 Gateway `RemoteJournalStream`。它在读取首个 page 前打开 follow，只发布连续的 `replace`、`prepend`、`append`、`splice` 与 `settle-assistant` 变更，并通过 tail page 修复重连或 seq 缺口。向后分页有两个动词：`loadOlder()` 拉一页按轮次开头对齐的历史，而 `loadThrough(seq)`——轮次跳转加载器——按轮次开头对齐页面循环拉取直到窗口覆盖目标 seq，重复调用会下调共享目标，遇到无进展的页即停止，忙碌状态复用同一个 `loadingOlder` 快照位。Web 适配器显式选择接收无 cursor 的 Assistant frame：每个 opening 携带活跃 attempt 的 `startedAfterSeq`、`nextIndex` 与紧凑 stream，每个 stream member 都成为排在持久 cursor 之间的 Client-only `assistant/live-chunk` 条目。Host 会随该 baseline 捕获 follower 本地到达序号，并抑制该 cut 及之前的 buffered frame；replacement Agent 可以从 revision 一重新开始。活跃 opening 之后到达的持久 `assistant/message` 或 `assistant/attempt` 只有在其 seq 晚于 `startedAfterSeq` 且轮次与步骤匹配时才会保持暂存；匹配的 end type、seq 与 index 会发布持久条目。成功消息的瞬态 row 保留到所属 `step/end`，让待派发工具的身份持续可用；失败或中断的 settlement 立即移除对应 row，同一步骤中更早的 retry 仍然保留。已知 attempt 的 revision、密集 index 或 settlement 缺口会重新打开 follow；若 controller 错过 start，则忽略 unknown-attempt frame，并正常发布其持久 settlement。Abandoned end 会发布不含持久条目的 settlement delta，使瞬态 row 立即退出。持久缺口修复 page 不携带 Assistant baseline，因此 held notification 会重新打开 follow 一次，以取得配对的 page 与 baseline。完整详情的历史 record 只覆盖自身的事件 seq；折叠分页 record 的 `covers` 还涵盖其旁边被省略的事件。业务、persistence 或无法恢复的连续性错误会终止 stream，只有物理载体断开才触发自动恢复。`SessionControlStream` 是 Gateway `RemoteSnapshotStream`；每代都以完整的进程本地 baseline 开始，因此重连会替换 projection 状态，而不会把瞬态值当作 durable event。每次 Host generation 就绪时，同步的 Client 订阅会先清除保留的投影值及其水位，再刷新查询并重新打开 control stream，其中也包括 control baseline 中没有列出的 Session。首次 control stream 会等待 generation 就绪，确保其 opening 值不会先于旧状态清理到达。上一代尚未完成的 list 响应无法重新发布这些值。同一 generation 内，延迟到达的 control baseline 不能覆盖或清除较新的 sequenced 值，无论它们来自活 Session 的 list block、history page 还是 frame；冷 Session 从 projection cache 看出来的 cached list block 则不论水位都让位于建连 Session 的 baseline。持久 `inbox` 投影通过与其他投影相同的冷读取和重连路径传输两份待处理列表。Client Agent 上下文提供独立 [`fileUpload`](../../client/file-upload/README.zh.md) 服务使用的身份；Session 对象提供生命周期、prompt、queue 与历史操作，不提供文件传输。
 
+重连的 follow 以 `resume` 提交它持有的窗口：`afterSeq`，即其最新 record 代表的最后 seq，以及 `link`，即 Host 随该 record 发送的会话日志链链接值。当 Host 为日志保留链时，`follow`、`page` 与 `events` 的每条 record 以及每个 live 事件帧都携带 `link`，即其事件的[会话日志链链接值](../../session/session-persistence/README.zh.md#the-session-log-chain)；代表被省略事件的 record 携带最后一个事件的链接值。若 Host 在 `afterSeq` 处的链接值等于 `link`，且其后最多有 `followResumeEvents` 个事件，它以 `resumed` 开场应答，只携带 `afterSeq` 之后的完整详情事件，以及当前 header、projection baseline 与 Assistant baseline。若快照开场正好结束在所提交的 seq、且携带所提交的链接值，它同样会续接所持窗口，因此在 Host 不可达期间由离线阅读回放其记录快照的窗口仍会保留读者已加载的页面。否则 Host 发送完整 `snapshot`，即使其 cursor 落后于所持窗口也会替换窗口，因此窗口永远不会接续存储字节不同的日志，例如崩溃丢失了所持事件或发生格式迁移之后。跨过晋升（promotion）仍保持打开的 follow 会在其第一个 live 事件处核对一次：live 日志在开场 cursor 处的链接值是否仍与开场时相同；若不同就结束该 generation，让 Client 重连并获得快照。续接的重连保留更早的页面、step digest 与已展开的轮次；它从新的 baseline 重建 live Assistant 行，并补入期间已结束的 attempt 所暂存的持久 settlement。每次首次开场都使用快照，最新 record 没有 `link` 的重连同样使用快照（[决策](../../../.agents/notes/implemented/architecture/2026-11-03-resumable-session-follow.zh.md)）。
+
 Session 对象还承载本地提交回显：`session.beginSubmission` 在调用方序列化与发送提示词之前登记一条回显，Host 接收该提示词后，Session 才把它公开在 `SessionSnapshot.pendingSubmissions` 中；`prompt` 的回执和带有该请求 id 的 `inbox` 行都能表明已接收，以先到者为准。因此会话 UI 从接收起显示消息，直到它的持久条目渲染出来，Chat 和 QueueDock 也从对应的 Inbox 行到达起就把它排除。新会话从空白进入 engaging 也发生在这次接收时。回显按顺序存放图片预览与持久文件引用。Session 根据当前运行状态与请求的投递模式推导其 `transcript`、`queued` 或 `steering` 位置，并保留该位置直到展示接管。提示词的 `requestId` 是关联标识：Host 把它回显为 durable user source 的 `rpcId`，`inbox` 投影中的待处理消息也保留同一 source。排队回显在队列接受后延迟一个动画帧退休；Chat 回显遵循下述入档规则。尚未入档的回显在带标识的提示词失败或被放弃时立即退休。销毁时保留已观察到的入档结果，其余未结算提交按 failed 退休。接收时触发一次 `onAccept`，与公开回显处于同一次更新，让发送方与回显同时结算输入框。每次退休恰好触发一次 `onRetire`；observed 退休还会携带有序的持久附件引用，让发送方释放或移交已发送的附件。回显只存在于 Client 内存；刷新与重连只从持久事件重建会话。
 
 
@@ -82,7 +84,7 @@ Fork 将 `atSeq` 选定的含边界事件前缀（包括开放轮次内的截点
 
 `loadThrough(seq)` 在共享目标被覆盖或加载结束前私下保留较早页面，随后把成功取得的页面按顺序作为一次前插发布。历史加载期间实时事件仍然可见。后续页面失败时保留已成功取得的部分；历史窗口被替换时丢弃被替换窗口的暂存页面。普通 `loadOlder()` 直接发布 Host 选取的一页结果。
 
-Client 的首次 `follow`、重连首屏与 `loadOlder()` 至少请求 50 条以 append 方式追加的 `user/message` 和 `assistant/message` 事件，并向前跨过至少两个 `turn/start`，其中包含已加载窗口开头尚未补齐的轮次。Host 在首次同时满足两个下限的轮次开头停止；若先达到 500 条计数消息或历史已耗尽，则立即返回。Steering 不增加轮次分界。区间内的其他事件随页返回，但不计入消息预算。分页和 follow 请求可选的 `turnWindow` 在 `maxMessages` 上限内指定这两个下限。折叠步骤细节下，Client 在同一上限内把消息数下限提高到 300，因为折叠页每条消息携带的字节更少。`loadThrough()` 复用相同规则，仅将每页消息数下限设为 200；500 条上限不限制整次跳转。不带 `turnWindow` 的请求保留按消息对齐的分页方式。
+Client 的首次 `follow`、Host 以快照应答的重连首屏与 `loadOlder()` 至少请求 50 条以 append 方式追加的 `user/message` 和 `assistant/message` 事件，并向前跨过至少两个 `turn/start`，其中包含已加载窗口开头尚未补齐的轮次。Host 在首次同时满足两个下限的轮次开头停止；若先达到 500 条计数消息或历史已耗尽，则立即返回。Steering 不增加轮次分界。区间内的其他事件随页返回，但不计入消息预算。分页和 follow 请求可选的 `turnWindow` 在 `maxMessages` 上限内指定这两个下限。折叠步骤细节下，Client 在同一上限内把消息数下限提高到 300，因为折叠页每条消息携带的字节更少。`loadThrough()` 复用相同规则，仅将每页消息数下限设为 200；500 条上限不限制整次跳转。不带 `turnWindow` 的请求保留按消息对齐的分页方式。
 
 队列编辑仅允许用非空文本替换待处理内容。
 
@@ -115,6 +117,7 @@ GUI 模型选择要求确切提供方／模型对出现在可用目录中；不�
 |---|---:|---|
 | `nativeOpen` | 平台探测 | 是否能把 Session 工作区路径交给原生桌面打开器 |
 | `listWorkSliceMs` | `16` | 列表工作时间片，单位为毫秒，取正整数；在完整条目之间检查 |
+| `followResumeEvents` | `1000` | 续接的 `follow` 开场最多携带的事件数；落后更多的续接点以快照开场，`0` 表示禁用续接 |
 
 生成的[配置目录](../../../docs/config-catalog.zh.md#deepseek-aidsh-api-session-controller)是所有受支持字段及其 JSDoc 的完整来源。
 
@@ -138,6 +141,9 @@ Blockquote 作为普通 prompt 文本传递，不携带 quote 元数据。本地
 - 单个摘要、查询提供方自身的枚举、最终排序和响应序列化都可能超出列表时间片目标；它不是 Host 延迟的硬上限。
 - 图片字节上限不校验解码后的尺寸或像素数。
 - follow 恢复失败会对调用方可见，而不会无限重试。
+- 续接的重连把整个所持窗口作为一次替换重新发布，因此会话会像收到快照后一样重新渲染它；减少的只是传输量。重新打开一个 Client 对象已被释放的 Session 时仍会发送快照。
+- 续接开场仍携带完整的 projection baseline，因为 Client 在每次新连接时都会清除 projection 值；其中的 `turnOutline` 每轮约增加 200 字节。
+- 若离线副本在其开场之后还记录了 live 事件，它会先回放那份开场；该开场早于所持窗口结束，因此会替换窗口，读者已加载的页面必须重新加载。
 - 浏览器原始字节上传使用一次不带断点续传偏移的流式 HTTP 请求；重试会从第零字节重新传输整个文件。
 - 文件引用补全使用共享 Agent lookup，因此可能恢复冷 Session；`skills/list` 目录是不激活 Agent 的 skill 元数据读取路径。
 - 受理/运行的展示记忆只存在于客户端内存，页面重载后即丢失。

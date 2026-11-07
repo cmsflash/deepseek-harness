@@ -819,7 +819,7 @@ The optional `application` selects a registered file handler without changing th
 
 ## Remote history paging: `SessionPageRequest` and `StepDigest`
 
-`SessionEventEntry` carries an unchanged `event` and optional `turnUsage` metadata. History pages and live follow attach this field to each served `turn/end`; a pure `observeEvent` subscription omits it. A `TurnTokenUsage` value describes the complete turn through that end, while `null` means exact accounting is unavailable. The summary stays outside `SessionEventMap` and is not persisted. Collapse, page boundaries, and exact interval reads do not narrow its accounting scope. The [controller reference](../../packages/api/session-controller/README.md#use-this-package) owns delivery behavior; [token-meter](../../packages/llm/token-meter/README.md#turn-accounting) owns the accounting rules.
+`SessionEventEntry` carries an unchanged `event` and optional `turnUsage` metadata. History pages and live follow attach this field to each served `turn/end`; a pure `observeEvent` subscription omits it. A `TurnTokenUsage` value describes the complete turn through that end, while `null` means exact accounting is unavailable. The summary stays outside `SessionEventMap` and is not persisted. Collapse, page boundaries, and exact interval reads do not narrow its accounting scope. The [controller reference](../../packages/api/session-controller/README.md#use-this-package) owns delivery behavior; [token-meter](../../packages/llm/token-meter/README.md#turn-accounting) owns the accounting rules. On `follow`, `page`, and `events`, each entry also carries `link`, the Session log chain link of its event, or of the last withheld event a covering record stands for, when the Host keeps a chain for the log; a reconnecting follow names its newest held link to resume.
 
 The `events` Remote and its deprecated `page` alias read history without activating an Agent. Without `fromSeq` they serve one backwards page, aligned to a Turn start when `turnWindow` is present and to a message otherwise; with `fromSeq` they serve the exact inclusive interval from `fromSeq` through the cut at full detail, where an omitted `throughSeq` selects the observed log end. The Host rejects the request as `gateway/bad-request` rather than truncating when `fromSeq` is not a safe non-negative integer at or before the cut plus one, or when `beforeSeq`, `maxMessages`, `turnWindow`, or `stepDetail: 'collapsed'` accompanies it. The Client's full-detail recovery uses this interval to refill a loaded window, so the controller's [package reference](../../packages/api/session-controller/README.md) owns the paging and recovery behavior.
 
@@ -1089,11 +1089,12 @@ workspaceDesktop(): { name: string; available: boolean; fileManager: 'finder' | 
 @Remote wait(request: SessionWaitRequest, signal: AbortSignal): Promise<SessionWaitValue>
 
 /**
- * Follow one Session log from its opening or resume cursor.
- * @param request - durable address and last committed sequence already held by the caller.
+ * Follow one Session log from a snapshot, or from the end of a window the caller already holds.
+ * @param request - durable address, opening window, and an optional resume point naming the newest held event and its chain link.
  * @param signal - cancellation owned by the Remote stream carrier.
- * @returns a complete opening snapshot followed by gap-free durable event
- *   frames and optional cursorless assistant-stream frames.
+ * @returns a complete opening snapshot, or a `resumed` opening holding only the
+ *   events after the resume point, followed by gap-free durable event frames and
+ *   optional cursorless assistant-stream frames.
  */
 @Remote({ mode: 'stream' }) follow(request: SessionFollowRequest, signal: AbortSignal): AsyncIterable<SessionFollowFrame>
 

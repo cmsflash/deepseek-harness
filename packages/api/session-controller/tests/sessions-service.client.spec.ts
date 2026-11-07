@@ -14,7 +14,7 @@ import { scopeOf } from '../src/client/scope.ts'
 import type {
   SessionAssistantStreamBaseline, SessionFollowFrame, SessionFollowRequest, SessionHistoryRecord,
 } from '../src/types.ts'
-import { FOLLOW, err, followScript, sessionWorld } from './remote/session.client.ts'
+import { FOLLOW, err, followResumed, followScript, linkFor, sessionWorld } from './remote/session.client.ts'
 
 const sid = (s: string): SessionId => s as SessionId
 /** ClientSessions uses the Gateway client for stream supervision and the native Remote mocks for responses. */
@@ -411,6 +411,68 @@ describe('scope tree', () => {
     expect(binding.eventSource.getSnapshot().change).toEqual({
       kind: 'append', entries: [currentMessage],
     })
+  })
+
+  it('keeps a staged settlement when a reconnect resumes after its attempt ended', async ({ bench }) => {
+    const b = bench()
+    const attemptId = LlmAttemptId('resumed-settlement-attempt')
+    const prior = {
+      type: 'event' as const,
+      event: { type: 'turn/start', seq: 0, time: 19, data: { turn: 1 } },
+    }
+    const settlement = {
+      type: 'event' as const,
+      link: linkFor(1),
+      event: {
+        type: 'assistant/message', seq: 1, time: 21,
+        data: {
+          turn: 1,
+          step: 1,
+          message: {
+            role: 'assistant',
+            content: [{ type: 'text', text: 'settled' }],
+            source: { kind: 'model', provider: 'p', model: 'm' },
+            id: 'resumed-attempt-message',
+          },
+          stream: [{ type: 'text-chunks', time0: 20, index: 0, dt: [], texts: ['settled'] }],
+        },
+        surfaceOp: 'append' as const,
+      },
+    }
+    b.mock.stream(FOLLOW, followScript(ok({ cursor: 0, records: [prior] as never[], hasMore: false }), {
+      assistantStream: {
+        revision: 2,
+        activeAttempt: {
+          attemptId, startedAfterSeq: SessionSeq(0), turn: 1, step: 1, nextIndex: 1, stream: settlement.event.data.stream,
+        },
+      },
+    }))
+    await feedList(b, [{ id: 's1' }])
+    using _reference = b.svc.retain(sid('s1'), { source: 'controllerOperation' })
+    await _reference.ready
+    const binding = b.svc.binding(sid('s1'))
+    if (binding === undefined) throw new Error('expected Session binding')
+    await vi.waitFor(() => { expect(binding.session.getSnapshot().openState).toBe('open') })
+    b.mock.streams.push(FOLLOW, settlement)
+    await b.mock.streams.drained(FOLLOW)
+    expect(binding.eventSource.getSnapshot().entries.map(entry => entry.event.type))
+      .toEqual(['turn/start', 'assistant/live-chunk'])
+    // The attempt's end frame is lost with the carrier; the reconnect baseline has no active attempt.
+    b.mock.stream(FOLLOW, async ([request], stream) => {
+      stream.push(followResumed(request as SessionFollowRequest, [], { revision: 3 }))
+    })
+
+    b.mock.streams.fail(FOLLOW, new RemoteStreamCarrierError('lost'))
+    await vi.waitFor(() => {
+      expect(binding.eventSource.getSnapshot().entries.map(entry => entry.event.type))
+        .toEqual(['turn/start', 'assistant/message'])
+    })
+
+    expect((b.mock.log.requests(FOLLOW)[1] as SessionFollowRequest).resume).toEqual({
+      afterSeq: 1,
+      link: linkFor(1),
+    })
+    expect(binding.eventSource.getSnapshot().entries[1]?.event).toBe(settlement.event)
   })
 
   it('replaces an invalid settlement with the authoritative post-end baseline', async ({ bench }) => {

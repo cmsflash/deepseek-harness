@@ -3,7 +3,7 @@
 import { interruptedTurnClosers } from '@deepseek-ai/dsh-session'
 import type { SessionEvent, SessionHeader, SessionId, SessionLogOffset, SessionSeedEventState } from '@deepseek-ai/dsh-session'
 import type SessionPersistence from '@deepseek-ai/dsh-session-persistence'
-import type { SessionHandleReadResult } from '@deepseek-ai/dsh-session-persistence'
+import type { SessionHandleReadResult, SessionLogChain } from '@deepseek-ai/dsh-session-persistence'
 
 /** A stored session log balanced for read-only viewing. */
 export interface ColdSessionLog {
@@ -15,6 +15,11 @@ export interface ColdSessionLog {
   readonly inheritedEventCount: SessionLogOffset
   /** Stored events plus deterministic in-memory closers for an interrupted final turn; nothing is written back. */
   readonly events: SessionEvent[]
+  /**
+   * Links over the stored lines of the log generation this read opened, indexed by absolute seq;
+   * it also covers the appended closers when the backend can link them; absent without a backend chain.
+   */
+  readonly chain?: SessionLogChain
 }
 
 /**
@@ -48,10 +53,19 @@ export async function readColdSessionLog(
   }
   await handle.close()
   const { events } = read
+  const closers = interruptedTurnClosers(events)
+  // For an unchanged stored log these closers equal the ones Agent resume
+  // appends, so extend, which encodes them as the backend's write path does,
+  // gives them the links the log will have; if the stored log changes first,
+  // the links stop matching and a resume gets a snapshot.
+  const chain = read.chain === undefined
+    ? undefined
+    : (closers.length === 0 ? read.chain : read.chain.extend?.(closers) ?? read.chain)
   return {
     eventState: read.eventState,
     header: handle.header,
     inheritedEventCount: handle.inheritedEventCount,
-    events: [...events, ...interruptedTurnClosers(events)],
+    events: [...events, ...closers],
+    ...(chain === undefined ? {} : { chain }),
   }
 }

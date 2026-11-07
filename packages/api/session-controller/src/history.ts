@@ -1,9 +1,11 @@
 /** Shared Session history pagination, step detail, address validation and wire conversion. */
 
+import { brandString } from '@deepseek-ai/dsh-brand'
 import {
   isAppendSurfaceEvent,
   SessionLogOffset,
 } from '@deepseek-ai/dsh-session'
+import type { SessionLogChain } from '@deepseek-ai/dsh-session-persistence'
 import type {
   SessionEvent,
   SessionHeader,
@@ -18,6 +20,7 @@ import { RemoteError } from '@deepseek-ai/dsh-typert-protocol'
 import { collapseSteps } from './step-collapse.ts'
 import type {
   SessionAddress,
+  SessionChainLink,
   SessionEventEntry,
   SessionExpandStepsRequest,
   SessionHistoryRecord,
@@ -217,28 +220,45 @@ export function paginate(
  * Convert a committed event to its wire entry.
  * @param event - committed Session event.
  * @param turnUsage - whole-turn accounting for a `turn/end`; reads that do not compute it omit the field.
+ * @param link - the event's Session log chain link, when the Host keeps a chain that covers it.
  * @returns the wire event entry.
  */
-export function entryFor(event: SessionEvent, turnUsage?: TurnTokenUsage | null): SessionEventEntry {
+export function entryFor(
+  event: SessionEvent, turnUsage?: TurnTokenUsage | null, link?: SessionChainLink,
+): SessionEventEntry {
   return {
     type: 'event',
     // Session.append validates and freezes event data as JSON before publication.
     event: event as unknown as SessionWireEvent,
     ...event.type === 'turn/end' && turnUsage !== undefined ? { turnUsage } : {},
+    ...link === undefined ? {} : { link },
   }
+}
+
+/**
+ * Brand the observed log's chain link of one event position for the wire.
+ * @param chain - the observed Session log chain, when the Host keeps one.
+ * @param seq - event position the record stands for.
+ * @returns the chain link, or `undefined` when no chain covers `seq`.
+ */
+export function chainLink(chain: SessionLogChain | undefined, seq: number): SessionChainLink | undefined {
+  const link = chain?.linkAt(seq)
+  return link === undefined ? undefined : brandString<SessionChainLink>(link)
 }
 
 /**
  * Encode one bounded logical page without changing its pagination cut.
  * @param events - page events.
  * @param usage - complete-turn accounting keyed by each served end sequence.
+ * @param chain - the observed log's chain, whose link each record carries at its event.
  * @returns the wire records.
  */
 export function pageRecords(
   events: readonly SessionEvent[],
   usage?: ReadonlyMap<number, TurnTokenUsage | null>,
+  chain?: SessionLogChain,
 ): SessionHistoryRecord[] {
-  return events.map(event => entryFor(event, usage?.get(event.seq)))
+  return events.map(event => entryFor(event, usage?.get(event.seq), chainLink(chain, event.seq)))
 }
 
 /**
@@ -252,6 +272,7 @@ export function pageRecords(
  * @param scope - every event through the cut.
  * @param detail - requested step detail; omitted means `full`.
  * @param usage - complete-turn accounting keyed by each served end sequence.
+ * @param chain - the observed log's chain, whose link each record carries at the last event it stands for.
  * @returns the page records, plus digests when steps were elided.
  */
 export function detailPage(
@@ -259,11 +280,12 @@ export function detailPage(
   scope: readonly SessionEvent[],
   detail: SessionStepDetail | undefined,
   usage: ReadonlyMap<number, TurnTokenUsage | null>,
+  chain?: SessionLogChain,
 ): { readonly records: SessionHistoryRecord[]; readonly digests?: readonly StepDigest[] } {
-  if (detail !== 'collapsed') return { records: pageRecords(page, usage) }
+  if (detail !== 'collapsed') return { records: pageRecords(page, usage, chain) }
   const collapsed = collapseSteps(page, scope)
-  if (collapsed.digests.length === 0 || collapsed.events.length === 0) return { records: pageRecords(page, usage) }
-  return { records: coveringRecords(page, collapsed.events, usage), digests: collapsed.digests }
+  if (collapsed.digests.length === 0 || collapsed.events.length === 0) return { records: pageRecords(page, usage, chain) }
+  return { records: coveringRecords(page, collapsed.events, usage, chain), digests: collapsed.digests }
 }
 
 /**
@@ -273,19 +295,21 @@ export function detailPage(
  * @param page - the complete contiguous page the kept events were drawn from.
  * @param kept - the events the collapsed page serves, ascending by seq; non-empty.
  * @param usage - complete-turn accounting keyed by each served end sequence.
+ * @param chain - the observed log's chain, whose link each record carries at the last event it stands for.
  * @returns records whose coverage joins end to end from the page's first seq to its last.
  */
 function coveringRecords(
   page: readonly SessionEvent[],
   kept: readonly SessionEvent[],
   usage: ReadonlyMap<number, TurnTokenUsage | null>,
+  chain?: SessionLogChain,
 ): SessionHistoryRecord[] {
   const pageStart = (page[0] as SessionEvent).seq
   const pageEnd = (page.at(-1) as SessionEvent).seq
   return kept.map((event, index) => {
     const from = index === 0 ? pageStart : (kept[index - 1] as SessionEvent).seq + 1
     const to = index === kept.length - 1 ? pageEnd : event.seq
-    const record = entryFor(event, usage.get(event.seq))
+    const record = entryFor(event, usage.get(event.seq), chainLink(chain, to))
     return from === event.seq && to === event.seq ? record : { ...record, covers: { from, to } }
   })
 }

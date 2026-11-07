@@ -156,7 +156,7 @@ it.each([false, true])('keeps the same revision, Session and page across a serve
       if (message.type === 'error') streamErrors.push(message.error)
       if (message.type === 'item' && message.value?.type === 'ready') readyFrames++
       if (message.type === 'item' && endpoints.get(message.streamId) === 'session/follow'
-        && message.value?.type === 'snapshot') sessionBaselines++
+        && (message.value?.type === 'snapshot' || message.value?.type === 'resumed')) sessionBaselines++
     })
   })
   const network = await page.context().newCDPSession(page)

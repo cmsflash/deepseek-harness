@@ -89,7 +89,7 @@ function controllers(
   roots.add(ctx.root)
   installSessionReadTestServices(ctx)
   const history = new HistoryController(ctx)
-  return { history, web: new WebController(ctx, history, promote) }
+  return { history, web: new WebController(ctx, history, promote, 0) }
 }
 
 async function setup(): Promise<{ ctx: Context; history: HistoryController; web: WebController }> {

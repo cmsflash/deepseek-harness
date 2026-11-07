@@ -831,6 +831,13 @@ export class Session implements SessionFace {
       case 'prepend':
         this.prependWindow(change.entries, change.hasMore, historyPageFirstSeq(change.page.records), change.page.digests)
         return
+      case 'resume':
+        this.resumeWindow(
+          change.entries,
+          change.page.projections === undefined ? undefined : projectionsBaseline(change.page.projections),
+          change.page.assistantStream,
+        )
+        return
       case 'append':
         this.publishAssistantEntry(this.assistantStream.acceptDurable(change.entry))
         return
@@ -872,6 +879,37 @@ export class Session implements SessionFace {
     if (visible.some(entry => entry.event.type === 'turn/start')) this.firstPromptPendingTurn = false
     if (projections !== undefined) this.projections.seed(projections)
     this.eventSource.replace(visible, hasMore)
+    this.observeBaseline(visible, projections)
+    this.notifier.markDirty()
+    void this.completeHistoryIfRequired()
+  }
+
+  /**
+   * Continue the held window with the events a resumed opening added after it.
+   * The window keeps its head, older pages, collapsed-step digests and expanded
+   * turns. Its live Assistant rows are rebuilt from the opening's baseline,
+   * because the previous generation can end between an attempt's frames.
+   */
+  private resumeWindow(
+    entries: readonly SessionEventLikeEntry[],
+    projections?: ProjectionsBaseline,
+    assistantStream?: SessionAssistantStreamBaseline,
+  ): void {
+    const staged = this.assistantStream.staged()
+    const held = this.eventSource.getSnapshot().entries.filter(entry => entry.type === 'event')
+    const durable = staged.length === 0
+      ? held
+      : [...held, ...staged].sort((left, right) => left.event.seq - right.event.seq)
+    const visible = this.assistantStream.replace([...durable, ...entries], assistantStream)
+    if (entries.some(entry => entry.event.type === 'turn/start')) this.firstPromptPendingTurn = false
+    if (projections !== undefined) this.projections.seed(projections)
+    this.eventSource.replace(visible, this.hasMore)
+    this.observeBaseline([...staged, ...entries], projections)
+    this.notifier.markDirty()
+  }
+
+  /** Reconcile submission echoes with newly visible events and an opening's projections. */
+  private observeBaseline(entries: readonly SessionEventLikeEntry[], projections?: ProjectionsBaseline): void {
     // A new follow baseline replaces confirmed optimistic inputs with Host-owned rows.
     // Receipt-backed inputs are accepted, not failed, even if their history is outside this window.
     if (projections !== undefined) {
@@ -881,15 +919,13 @@ export class Session implements SessionFace {
         }
       }
     }
-    for (const entry of visible) this.observeSubmissionEvent(entry.event)
+    for (const entry of entries) this.observeSubmissionEvent(entry.event)
     if (projections !== undefined) {
       const inbox = projections.values.inbox as InboxState | undefined
       for (const target of ['next-turn', 'next-step'] as const) {
         this.observeSubmissionInsertions(target, inbox?.[target] ?? [], 0, projections.asOfSeq)
       }
     }
-    this.notifier.markDirty()
-    void this.completeHistoryIfRequired()
   }
 
   private publishAssistantEntry(result: ClientAssistantStreamResult): void {

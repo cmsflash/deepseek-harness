@@ -9,12 +9,14 @@ import {
   type ClientRemote,
   type RemoteJournalChange,
   type RemoteJournalFrame,
+  type RemoteJournalResumePoint,
 } from '@deepseek-ai/dsh-api-gateway/client'
 import type {
   SessionAddress,
   SessionAssistantStreamBaseline,
   SessionAssistantStreamFrame,
   SessionControlFrame,
+  SessionFollowResume,
   SessionHistoryRecord,
   SessionPage,
   SessionPageRequest,
@@ -55,6 +57,12 @@ export type SessionJournalChange =
     readonly entries: readonly SessionEventLikeEntry[]
     readonly hasMore: boolean
   }
+  | {
+    /** A reconnect continued the held window: `entries` are every full-detail event after it. */
+    readonly type: 'resume'
+    readonly page: SessionJournalPage
+    readonly entries: readonly SessionEventLikeEntry[]
+  }
   | { readonly type: 'append'; readonly entry: SessionLiveEventEntry }
   | { readonly type: 'assistant-stream'; readonly frame: SessionAssistantStreamFrame }
 
@@ -66,6 +74,7 @@ function toSessionJournalChange(
   switch (change.type) {
     case 'replace':
     case 'prepend':
+    case 'resume':
       return { ...change, entries: historyEntries(change.entries) }
     case 'append': {
       return {
@@ -76,6 +85,41 @@ function toSessionJournalChange(
     case 'notification':
       return { type: 'assistant-stream', frame: change.notification }
   }
+}
+
+/**
+ * Describe a held window by the chain link of its newest record. A record
+ * without a link cannot name the window, so that generation opens with a
+ * snapshot.
+ * @param held - the journal's resume point, when the window holds a record.
+ * @returns the follow request's resume point, or `undefined` to request a snapshot.
+ */
+function resumePoint(
+  held: RemoteJournalResumePoint<SessionHistoryRecord, number> | undefined,
+): SessionFollowResume | undefined {
+  const newest = held?.entries.at(-1)
+  const link = newest?.link
+  if (held === undefined || link === undefined) return undefined
+  return { afterSeq: held.after, link }
+}
+
+/**
+ * The held window a snapshot opening already ends at. Equal links at the same
+ * seq identify byte-identical log prefixes, so the window holds every event the
+ * snapshot carries, and the snapshot's baselines are as of that same cursor.
+ * @param records - records of the snapshot opening.
+ * @param cursor - the snapshot's cursor.
+ * @param resume - the resume point this generation offered.
+ * @returns the resume point the opening ends at, or `undefined` when it opens a new window.
+ */
+function continuation(
+  records: readonly SessionHistoryRecord[],
+  cursor: number,
+  resume: SessionFollowResume | undefined,
+): SessionFollowResume | undefined {
+  const newest = records.at(-1)
+  if (resume === undefined || cursor !== resume.afterSeq || newest === undefined) return undefined
+  return historyRecordLastSeq(newest) === resume.afterSeq && newest.link === resume.link ? resume : undefined
 }
 
 type SessionControlBaselineFrame = Extract<SessionControlFrame, { type: 'baseline' }>
@@ -165,6 +209,7 @@ export class SessionEventStream extends RemoteJournalStream<
       last: historyRecordLastSeq,
       compare: (left, right) => left - right,
       follows: (left, right) => right === left + 1,
+      resumeEntries: 1,
       publish: (change) => { options.publish(toSessionJournalChange(change)) },
       ...(options.carrierFailed === undefined
         ? {}
@@ -222,18 +267,21 @@ export class SessionEventStream extends RemoteJournalStream<
   protected override async * follow(
     request: ClientSessionPageRequest,
     signal: AbortSignal,
+    held: RemoteJournalResumePoint<SessionHistoryRecord, number> | undefined,
   ): AsyncIterable<RemoteJournalFrame<
     SessionHistoryRecord, number, SessionJournalPage, SessionAssistantStreamFrame
   >> {
     let assistantRevision: number | undefined
     const resolved = this.resolveRequest(request)
+    const resume = resumePoint(held)
     for await (const frame of this.remote.session.follow({
       address: this.address,
       activate: true,
       assistantStream: true,
       ...this.repairRequest(resolved),
+      ...(resume === undefined ? {} : { resume }),
     }, signal)) {
-      if (frame.type === 'snapshot') {
+      if (frame.type === 'snapshot' || frame.type === 'resumed') {
         for (const record of frame.records) assertSessionWireEvent(record.event)
         if (frame.assistantStream === undefined) {
           throw new RemoteError(
@@ -243,6 +291,40 @@ export class SessionEventStream extends RemoteJournalStream<
           )
         }
         assistantRevision = frame.assistantStream.revision
+        if (frame.type === 'resumed') {
+          if (resume === undefined) {
+            throw new RemoteError('gateway/internal', 'session follow resumed a window it was not offered', {})
+          }
+          yield {
+            type: 'resumed',
+            after: frame.after,
+            cursor: frame.cursor,
+            page: {
+              records: frame.records,
+              // A resumed page continues the held window; it carries no older-history bound.
+              hasMore: false,
+              projections: frame.projections,
+              assistantStream: frame.assistantStream,
+            },
+          }
+          continue
+        }
+        const continues = continuation(frame.records, frame.cursor, resume)
+        if (continues !== undefined) {
+          yield {
+            type: 'resumed',
+            after: continues.afterSeq,
+            cursor: continues.afterSeq,
+            page: {
+              records: [],
+              // The snapshot already ends at the held window, so continuing it carries no entry.
+              hasMore: false,
+              projections: frame.projections,
+              assistantStream: frame.assistantStream,
+            },
+          }
+          continue
+        }
         yield {
           type: 'opened',
           cursor: frame.cursor,

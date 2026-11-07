@@ -36,14 +36,17 @@
   en: a35407bb25671e7e
   zh: 6a00f9510c85adcb
 /deepseek-ai-dsh-session-persistence-jsonl/understand-the-implementation/design-concept:
-  en: a422bd0f74a5b31a
-  zh: edc47e9530c87f67
+  en: ceb6b87205fba726
+  zh: 4f6ab227f7427be5
 /deepseek-ai-dsh-session-persistence-jsonl/understand-the-implementation/physical-encoding:
-  en: 5aaf80115840318f
-  zh: 0b0fb2b2e085a111
+  en: 18701b0338fc6eec
+  zh: 4d3b9e9c94af1de4
+/deepseek-ai-dsh-session-persistence-jsonl/understand-the-implementation/the-session-log-chain:
+  en: 777df2cbfa78621a
+  zh: c3025641ce24c2f5
 /deepseek-ai-dsh-session-persistence-jsonl/understand-the-implementation/source-map:
-  en: 2a4fd4bde1da0a1b
-  zh: d7a8cbdad7beee09
+  en: 2c8a5bbbfeadce9c
+  zh: 7b587bd73dc485e4
 /deepseek-ai-dsh-session-persistence-jsonl/further-exploration:
   en: 71fbff06a098440a
   zh: d3c07db42668ea18
@@ -63,8 +66,8 @@
   en: 53ce4da7ce68d21c
   zh: 10f40bc354100f77
 /deepseek-ai-dsh-session-persistence-jsonl/known-limitations-and-deferred-work:
-  en: c46c91a811abc547
-  zh: 41fb942d4e61e544
+  en: 315481aa209b731e
+  zh: 44aeac1908d76992
 /deepseek-ai-dsh-session-persistence-jsonl/known-limitations-and-deferred-work/dev-note:
   en: e67f633dc6fe7773
   zh: 3bb0c20c93f16f98

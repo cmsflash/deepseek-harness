@@ -72,7 +72,7 @@ Registry 拥有 fold state；各领域拥有自己的 `init`、`apply`、`view`�
 
 语料库 list 仍是独立的轻量操作。`listSessions()` 返回 live-preferred header，而不物化每份日志。Session list 先读取 live projection 状态或持久 projection-cache row。Subagent 发现通过精确 observation 读取父目录 projection。当 cache 无法判断 Session 是否为空，且该 Session 拥有的独立产物未超过配置的小日志限制时，Session list 可以执行一次完整 observation；大型或不可读的 cache miss 仍以 hints 未知但 row 可见的方式返回。
 
-`session.follow` 发布必需的 opening snapshot，包含 header、cursor、初始事件窗口与完整 projection baseline。重连通过另一份完整快照替换之前的 generation。`session.page` 支持当前或固定切点的历史读取、旧历史分页及缺口修复。只读 Observation 不激活 Agent；只有显式启用激活的普通 Follow 可以在开场计算完成后、交付之前 retain prepared observation 并请求提升。[快照与订阅决策](2026-10-21-session-history-stream-and-snapshot.zh.md)定义 Controller 组合和纯订阅语义。
+`session.follow` 发布必需的 opening snapshot，包含 header、cursor、初始事件窗口与完整 projection baseline。重连通过另一份完整快照替换之前的 generation；若 Host 能证明所持有的窗口与其日志一致，则接续该窗口（[可续接的 follow](2026-11-03-resumable-session-follow.zh.md)）。`session.page` 支持当前或固定切点的历史读取、旧历史分页及缺口修复。只读 Observation 不激活 Agent；只有显式启用激活的普通 Follow 可以在开场计算完成后、交付之前 retain prepared observation 并请求提升。[快照与订阅决策](2026-10-21-session-history-stream-and-snapshot.zh.md)定义 Controller 组合和纯订阅语义。
 
 ### 读取 audience
 
@@ -134,7 +134,7 @@ Client 本地交互状态也继续留在本地：loading 和 error 状态、打�
 - 精确 cold observation 中的 projection failure 使整份 observation 按损坏的 Session data 失败；调用方不会发布成功 key 与失败 key 的混合结果。
 - 一个 subagent candidate 的 cold observation 失败只影响该 candidate 的 diagnostic row；sibling candidate 继续可用。
 - Catalog load failure 是 Client 可见的 catalog state。它不会在 refresh 期间清除上一份完整 catalog，也不会合成 Session selection。
-- Follow carrier generation 只有在 opening snapshot 完成校验与应用后才被接受。Reconnect 期间继续显示上一 generation。
+- Follow carrier generation 只有在 opening snapshot 或续接开场完成校验与应用后才被接受。Reconnect 期间继续显示上一 generation。
 
 取消会在文档规定的检查点终止排队中或进行中的 cold resolution，并释放每一份已获得 lease。取消不会变成 not-found，也不能让 prepared entry 保持 pinned。
 

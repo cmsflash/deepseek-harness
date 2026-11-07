@@ -5,6 +5,7 @@
  */
 
 import type { SessionEvent, SessionHeader, SessionId, SessionLogOffset, SessionSeedEventState } from '@deepseek-ai/dsh-session'
+import type { SessionLogChain } from './chain.ts'
 
 /**
  * Log access granted by an open. `write` is read-write: the session's single
@@ -28,6 +29,11 @@ export interface SessionHandleReadResult {
   readonly eventState: SessionSeedEventState
   /** Event values in a caller-owned outer array. */
   readonly events: readonly SessionEvent[]
+  /**
+   * Links over the stored lines of the log generation this slice was read
+   * from, indexed by absolute seq; absent when the backend keeps no chain for it.
+   */
+  readonly chain?: SessionLogChain
 }
 
 /** Options for {@link SessionHandle.append}. */

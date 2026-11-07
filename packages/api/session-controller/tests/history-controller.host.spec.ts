@@ -19,7 +19,7 @@ async function fixture() {
   await ctx.plugin(SessionStore)
   installSessionReadTestServices(ctx)
   const history = new HistoryController(ctx)
-  const web = new WebController(ctx, history, (observation) => { observation[Symbol.dispose]() })
+  const web = new WebController(ctx, history, (observation) => { observation[Symbol.dispose]() }, 0)
   const session = ctx.sessions.create(SessionId('history-target'), { meta: { cwd: '/history-test' } })
   const abort = new AbortController()
   aborters.push(abort)
@@ -160,7 +160,7 @@ describe('HistoryController passive reads', () => {
   it('does not promote a live Session when activation was requested', async () => {
     const f = await fixture()
     const promote = vi.fn()
-    const web = new WebController(f.ctx, f.history, promote)
+    const web = new WebController(f.ctx, f.history, promote, 0)
     const stream = web.follow({ address: f.address, activate: true }, f.abort.signal)[Symbol.asyncIterator]()
     expect(await stream.next()).toMatchObject({ value: { type: 'snapshot' } })
     const pending = stream.next()

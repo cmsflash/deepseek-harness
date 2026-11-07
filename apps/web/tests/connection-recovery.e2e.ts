@@ -44,7 +44,7 @@ it.each([false, true])('retains the mounted application across WebSocket recover
         const frame = JSON.parse(message) as { type?: string; streamId: string; value?: { type?: string } }
         if (frame.type === 'item' && frame.value?.type === 'ready') readyFrames++
         if (frame.type === 'item' && endpoints.get(frame.streamId) === 'session/follow'
-          && frame.value?.type === 'snapshot') sessionBaselines++
+          && (frame.value?.type === 'snapshot' || frame.value?.type === 'resumed')) sessionBaselines++
       }
       client.send(message)
     })

@@ -150,6 +150,92 @@ describe('OfflineReplay', () => {
     restored.dispose()
   })
 
+  it('folds a resumed Session follow into its recorded snapshot under the key without the resume point', async () => {
+    const store = memoryStore()
+    const replay = new OfflineReplay(store, fakeConnection(), fakeEnvironment())
+    const signal = new AbortController().signal
+    const record = (seq: number) => ({ type: 'event', event: { seq } })
+    const request = { address: { kind: 'session', sessionId: 's' } }
+    const snapshot = {
+      type: 'snapshot', header: { version: 4 }, cursor: 1, records: [record(0), record(1)], hasMore: true,
+      projections: { asOfSeq: 1 }, assistantStream: { revision: 0 },
+    }
+    await collect(replay.stream('session/follow', { args: { request } }, signal,
+      () => items(snapshot, record(2), { type: 'assistant-stream', frame: { revision: 1 } })), 3)
+    await vi.advanceTimersByTimeAsync(1_000)
+    const resumed = {
+      type: 'resumed', header: { version: 4 }, after: 2, cursor: 3, records: [record(3)],
+      projections: { asOfSeq: 3 }, assistantStream: { revision: 7 },
+    }
+    await collect(replay.stream('session/follow', { args: { request: { ...request, resume: { afterSeq: 2 } } } }, signal,
+      () => items(resumed, record(4))), 2)
+    await vi.advanceTimersByTimeAsync(1_000)
+
+    expect([...store.data.entries()]).toEqual([[
+      'stream session/follow {"args":{"request":{"address":{"kind":"session","sessionId":"s"}}}}',
+      [
+        {
+          type: 'snapshot', header: { version: 4 }, cursor: 3, records: [record(0), record(1), record(2), record(3)],
+          hasMore: true, projections: { asOfSeq: 3 }, assistantStream: { revision: 7 },
+        },
+        record(4),
+      ],
+    ]])
+    replay.dispose()
+  })
+
+  it('keeps the recorded Session follow when a resumed opening does not continue it', async () => {
+    const store = memoryStore()
+    const replay = new OfflineReplay(store, fakeConnection(), fakeEnvironment())
+    const signal = new AbortController().signal
+    const record = (seq: number) => ({ type: 'event', event: { seq } })
+    const snapshot = { type: 'snapshot', cursor: 1, records: [record(0), record(1)] }
+    await collect(replay.stream('session/follow', { args: { request: {} } }, signal, () => items(snapshot)), 1)
+    const resumed = { type: 'resumed', after: 5, cursor: 6, records: [record(6)] }
+    await collect(replay.stream('session/follow', { args: { request: { resume: {} } } }, signal,
+      () => items(resumed, record(7))), 2)
+    await vi.advanceTimersByTimeAsync(1_000)
+
+    expect([...store.data.values()]).toEqual([[snapshot]])
+    replay.dispose()
+  })
+
+  it('continues the persisted Session follow record when this page has no log of it', async () => {
+    const store = memoryStore()
+    const record = (seq: number) => ({ type: 'event', event: { seq } })
+    const key = 'stream session/follow {"args":{"request":{}}}'
+    store.data.set(key, [{ type: 'snapshot', cursor: 0, records: [record(0)] }, record(1)])
+    const replay = new OfflineReplay(store, fakeConnection(), fakeEnvironment())
+    const signal = new AbortController().signal
+
+    await collect(replay.stream('session/follow', { args: { request: { resume: {} } } }, signal,
+      () => items({ type: 'resumed', after: 1, cursor: 2, records: [record(2)] })), 1)
+    await collect(replay.stream('session/follow', { args: { request: { other: true, resume: {} } } }, signal,
+      () => items({ type: 'resumed', after: 3, cursor: 4, records: [record(4)] })), 1)
+    await vi.advanceTimersByTimeAsync(1_000)
+
+    expect(store.data.get(key)).toEqual([{ type: 'snapshot', cursor: 2, records: [record(0), record(1), record(2)] }])
+    expect(store.data.size).toBe(1)
+    replay.dispose()
+  })
+
+  it('stops recording a Session follow whose folded window would pass the log limit', async () => {
+    const store = memoryStore()
+    const record = (seq: number) => ({ type: 'event', event: { seq } })
+    const records = Array.from({ length: 20_000 }, (_, seq) => record(seq))
+    const snapshot = { type: 'snapshot', cursor: 19_999, records }
+    const replay = new OfflineReplay(store, fakeConnection(), fakeEnvironment())
+    const signal = new AbortController().signal
+    await collect(replay.stream('session/follow', { args: { request: {} } }, signal, () => items(snapshot)), 1)
+
+    await collect(replay.stream('session/follow', { args: { request: { resume: {} } } }, signal,
+      () => items({ type: 'resumed', after: 19_999, cursor: 20_000, records: [record(20_000)] }, record(20_001))), 2)
+    await vi.advanceTimersByTimeAsync(1_000)
+
+    expect([...store.data.values()]).toEqual([[snapshot]])
+    replay.dispose()
+  })
+
   it('probes when a live stream fails before its opening item', async () => {
     const environment = fakeEnvironment()
     environment.reachable = false

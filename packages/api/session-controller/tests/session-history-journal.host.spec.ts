@@ -61,7 +61,7 @@ async function harness(): Promise<{ ctx: Context }> {
 /** Initialize the independent snapshot owner and Web aggregation for direct journal tests. */
 async function controllers(ctx: Context): Promise<{ history: HistoryController; web: WebController }> {
   const history = new HistoryController(ctx)
-  return { history, web: new WebController(ctx, history, (observation) => { observation[Symbol.dispose]() }) }
+  return { history, web: new WebController(ctx, history, (observation) => { observation[Symbol.dispose]() }, 0) }
 }
 
 /** Drain one Session follow until `count` event frames arrive. */

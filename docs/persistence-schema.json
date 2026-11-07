@@ -122,7 +122,7 @@
     {"digest":"17aae616ef020b8b9f011ec398ec935450fb06d3e2a0722c456f63aeaf5ff728","names":[],"sources":[]},
     {"digest":"17d1afb770d9941936130996da00dc86782cfef731d8d6526162c301256a4ac3","names":[],"sources":["packages/core/session/src/types.ts:435"]},
     {"digest":"18dc21f12bbac8ade8377e6fbb54179e20c3d955d73fba3244c57fb6bf001df0","names":["packages/schedule/schedule/src/types.ts#ScheduleDeleteChange"],"sources":["packages/schedule/schedule/src/types.ts:238"]},
-    {"digest":"18ee62b8900a4c3d046700f05d7a4d49d6cab2a660a020c87481d1603dd8bd4f","names":["packages/session/session-persistence-jsonl/src/format.ts#HeaderLine"],"sources":["packages/session/session-persistence-jsonl/src/format.ts:83"]},
+    {"digest":"18ee62b8900a4c3d046700f05d7a4d49d6cab2a660a020c87481d1603dd8bd4f","names":["packages/session/session-persistence-jsonl/src/format.ts#HeaderLine"],"sources":["packages/session/session-persistence-jsonl/src/format.ts:84"]},
     {"digest":"18fcdd273a2f2f9d813a3be5e71df5903a963a5c88e46b90b14de6e2db890da0","names":[],"sources":[]},
     {"digest":"18fce9540bb20897a66275499faee6b8296c97e9901fa1ff45a191772448ad1a","names":[],"sources":[]},
     {"digest":"1922cd79a70806c17758185a6ef0458bc1fb3900363906733421c16414da2509","names":[],"sources":[]},

@@ -742,6 +742,11 @@
     },
     {
       "doc": "docs/subsystems/persistence.md",
+      "symbol": "SessionLogChain",
+      "source": "packages/session/session-persistence/src/chain.ts"
+    },
+    {
+      "doc": "docs/subsystems/persistence.md",
       "symbol": "SessionHandle",
       "source": "packages/session/session-persistence/src/handle.ts"
     },

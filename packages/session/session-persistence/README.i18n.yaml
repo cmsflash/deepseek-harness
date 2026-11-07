@@ -21,17 +21,20 @@
   en: 170892270261aae0
   zh: 7daf1edd4f764409
 /deepseek-ai-dsh-session-persistence/use-this-package/what-the-service-provides:
-  en: c10b9c7d9bad305c
-  zh: 0e9c391e9df37da6
+  en: 050462c4d596c246
+  zh: e62851ed1f204fd3
 /deepseek-ai-dsh-session-persistence/use-this-package/ownership-and-visibility:
   en: 16d4abbb05a67360
   zh: fc91863169570795
 /deepseek-ai-dsh-session-persistence/use-this-package/the-live-write-path-and-shutdown-drain:
-  en: 282c5bc8a391159f
-  zh: 96682e345ef301f6
+  en: b25de4c35d6fc90c
+  zh: 61bf6bb21dedabf5
 /deepseek-ai-dsh-session-persistence/use-this-package/resuming-and-crash-recovery:
-  en: 08b09dce0bcf47c8
-  zh: b6c5926d6e440a7b
+  en: 05515f5e38007ecf
+  zh: 8aca22326afd7827
+/deepseek-ai-dsh-session-persistence/use-this-package/the-session-log-chain:
+  en: 518f3c63fa717ad3
+  zh: 0123999b42c4daf8
 /deepseek-ai-dsh-session-persistence/use-this-package/failures-and-recovery:
   en: 3b536d66137e8f2a
   zh: e1f0fbbad61f515e

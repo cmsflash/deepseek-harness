@@ -127,7 +127,7 @@ Initial opening establishes follow and obtains its opening cursor before reading
 
 The general layer removes overlap between the page and queued entries by cursor, verifies continuity, and publishes one complete window after the page covers the opening cursor.
 
-Contiguous live entries publish `append`; older history pages publish `prepend`. Reconnect, cursor jumps, or continuity that cannot be proven trigger a tail-page repair.
+Contiguous live entries publish `append`; older history pages publish `prepend`. Cursor jumps or continuity that cannot be proven trigger a tail-page repair. A reconnecting generation opens with a snapshot or, for a domain that offers its newest held entries, continues the held window ([resumable follow](2026-11-03-resumable-session-follow.md)).
 
 The old window remains readable during repair. The page and live entries accumulated during that read form a continuous window and publish one `replace`, never exposing a half-repaired state.
 

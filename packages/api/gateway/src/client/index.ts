@@ -40,6 +40,7 @@ export { RemoteJournalStream } from './journal-stream.ts'
 export type {
   RemoteJournalChange,
   RemoteJournalFrame,
+  RemoteJournalResumePoint,
   RemoteJournalStreamOptions,
   RemoteStreamFactory,
 } from './journal-stream.ts'

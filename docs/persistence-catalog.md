@@ -3680,7 +3680,7 @@ Sources: [`packages/goal/goal/src/domain.ts:24`](../packages/goal/goal/src/domai
 
 SHA-256: `18ee62b8900a4c3d046700f05d7a4d49d6cab2a660a020c87481d1603dd8bd4f`
 
-Sources: [`packages/session/session-persistence-jsonl/src/format.ts:83`](../packages/session/session-persistence-jsonl/src/format.ts)
+Sources: [`packages/session/session-persistence-jsonl/src/format.ts:84`](../packages/session/session-persistence-jsonl/src/format.ts)
 
 | Property | Presence | Type |
 |---|---|---|

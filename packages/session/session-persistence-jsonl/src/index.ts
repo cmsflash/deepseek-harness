@@ -26,19 +26,20 @@ import {
   SessionAlreadyExistsError, SessionPersistenceNotFoundError,
   assertStoredId, materializeCreateHeader, sessionFormatVersionRefusal, validateStoredEvents,
   type SessionAccess, type SessionHandle,
-  type SessionHandleReadResult,
+  type SessionHandleReadResult, type SessionLogChain,
   type SessionLocation, type SessionPersistenceCreateOptions,
   type SessionPersistenceListOptions, type SessionPersistenceOpenOptions,
   type SessionPersistenceSnapshot, type SessionPersistenceStatOptions,
   type SessionPersistenceRevision as PersistenceRevision,
 } from '@deepseek-ai/dsh-session-persistence'
 import { JsonlBackendTracker, JsonlSessionHandle, type StorageHandleState } from './storage.ts'
+import { SessionLogChainBuilder } from './chain.ts'
 import { SessionWriteLease } from './lease.ts'
 import { SESSION_FORMAT_VERSION, SessionId as makeSessionId, SessionLogOffset } from '@deepseek-ai/dsh-session'
 import type { SessionEvent, SessionId, SessionHeader, SessionLogOffset as SessionLogOffsetType } from '@deepseek-ai/dsh-session'
 import {
-  assertNoRetiredHeaderFields, encodeSegment, eventLines, generationLogFilename, generationLogPath, logPath, logSuffix,
-  parseGenerationLogFilename, projectDir, scanLog, sessionDir, SessionLogScanner, toHeaderLine,
+  assertNoRetiredHeaderFields, encodeHeaderLine, encodeSegment, generationLogFilename, generationLogPath,
+  logPath, logSuffix, parseGenerationLogFilename, projectDir, scanLog, sessionDir, SessionLogScanner,
   type JsonlCompression,
 } from './format.ts'
 import {
@@ -59,12 +60,39 @@ import {
 
 export type { JsonlCompression } from './format.ts'
 
-/**
- * Internal handoff-reuse policy, not deployment configuration: a cold
+/** Internal handoff-reuse policy, not deployment configuration: a cold
  * observation and the resume that immediately follows it reuse one parsed
  * log, so the memo only needs the sessions in flight between those steps.
  */
 const COLD_LOG_MEMO_MAX_ENTRIES = 2
+
+/** One JSONL record terminator, shared so every written line ends in the same byte. */
+const NEWLINE = Buffer.from('\n')
+
+/** Join encoded lines into one write payload, each line followed by its newline. */
+function joinLines(lines: readonly Buffer[]): Buffer {
+  const parts: Buffer[] = []
+  for (const line of lines) {
+    parts.push(line, NEWLINE)
+  }
+  return Buffer.concat(parts)
+}
+
+/**
+ * Split complete newline-terminated records into their lines, without the
+ * newline. A trailing fragment without a newline is a torn tail, not a record.
+ * @param records - record bytes whose last complete record ends on a newline.
+ * @returns one line Buffer per record.
+ */
+function recordLines(records: Buffer): Buffer[] {
+  const lines: Buffer[] = []
+  let start = 0
+  for (let newline = records.indexOf(0x0A); newline !== -1; newline = records.indexOf(0x0A, start)) {
+    lines.push(records.subarray(start, newline))
+    start = newline + 1
+  }
+  return lines
+}
 
 const DEFAULT_COMPRESSION: JsonlCompression = 'zstd'
 /**
@@ -125,11 +153,17 @@ interface FrozenStoredEvents extends SessionHandleReadResult {
 interface StoredLogBase extends FrozenStoredEvents {
   readonly meta: SessionHeader
   readonly tornTruncateTo: number | undefined
-  /** Complete events recovered from the torn final frame; the write path rewrites them durably. */
-  readonly recoveredTail: SessionEvent[]
+  /** Complete raw records recovered from the torn final frame; the write path rewrites them durably. */
+  readonly recoveredTail: readonly Buffer[]
   /** Exact fork-inherited prefix length stored in the header line. */
   readonly inheritedEventCount: SessionLogOffsetType
   readonly revision: PersistenceRevision
+  /**
+   * Links over the current generation's stored lines, indexed by seq; the
+   * compacted builder from the scanner, shared while the memo or read handles
+   * hold this log.
+   */
+  readonly chain?: SessionLogChainBuilder
 }
 
 /** A decoded current generation that is already durable. */
@@ -361,8 +395,9 @@ class JsonlSessionPersistence extends SessionPersistence {
     options?.signal?.throwIfAborted()
     const snapshot = materializeCreateHeader(header)
     // Fail fast on a seeded/cut mismatch with the exact refusal the header
-    // line encoder enforces at materialization.
-    toHeaderLine(snapshot, options?.inheritedEventCount)
+    // line encoder enforces at materialization; the encoded bytes are kept so
+    // materialization writes exactly what this check accepted.
+    const headerLine = encodeHeaderLine(snapshot, options?.inheritedEventCount)
     const inheritedEventCount = SessionLogOffset(options?.inheritedEventCount ?? 0)
     await this.ensureRootEncoding()
     options?.signal?.throwIfAborted()
@@ -375,7 +410,13 @@ class JsonlSessionPersistence extends SessionPersistence {
     // before its first log bytes publish (ensureLease); an unmaterialized
     // session leaves no filesystem footprint at all.
     this.tracker.registerCreated(snapshot, inheritedEventCount)
-    return this.tracker.adopt(new JsonlSessionHandle(this, snapshot.id, snapshot, 'write', { cursor: 0, materialized: false, inheritedEventCount }))
+    return this.tracker.adopt(new JsonlSessionHandle(this, snapshot.id, snapshot, 'write', {
+      cursor: 0,
+      materialized: false,
+      inheritedEventCount,
+      headerLine,
+      chain: SessionLogChainBuilder.start(headerLine),
+    }))
   }
 
   /**
@@ -441,6 +482,7 @@ class JsonlSessionPersistence extends SessionPersistence {
         tornTruncateTo: stored.tornTruncateTo,
         recoveredTail: stored.recoveredTail,
         inheritedEventCount: stored.inheritedEventCount,
+        ...(stored.chain === undefined ? {} : { chain: stored.chain.copy() }),
         primed: stored,
       }, lease))
     } catch (error) {
@@ -462,6 +504,15 @@ class JsonlSessionPersistence extends SessionPersistence {
       }
       throw failure
     }
+  }
+
+  /**
+   * Read the chain kept by this process's active write handle for a session.
+   * @param id - the session whose write handle is asked.
+   * @returns the live chain, or `undefined` without an active write handle here.
+   */
+  override liveChain(id: SessionId): SessionLogChain | undefined {
+    return this.tracker.liveChain(id)
   }
 
   /**
@@ -728,11 +779,15 @@ class JsonlSessionPersistence extends SessionPersistence {
     assertStoredId(id, meta)
     const events = prepared.artifact.events as SessionEvent[]
     validateStoredEvents(meta, events, { kind: 'jsonl', path: selected.sourcePath })
+    // A historical preparation carries no chain: its links are not the current
+    // generation's, and the published successor gains them on the next read.
+    const { eventState, events: frozen } = freezeStoredEvents(events)
     const stored: PreparedStoredLog = {
       status: 'prepared',
       validateRelatedSources,
       meta,
-      ...freezeStoredEvents(events),
+      eventState,
+      events: frozen,
       tornTruncateTo: undefined,
       recoveredTail: [],
       inheritedEventCount: SessionLogOffset(prepared.artifact.inheritedEventCount),
@@ -824,14 +879,15 @@ class JsonlSessionPersistence extends SessionPersistence {
       inheritedEventCount: SessionLogOffsetType
       events: SessionEvent[]
       tornTruncateTo: number | undefined
-      recoveredTail: SessionEvent[]
+      recoveredTail: readonly Buffer[]
+      chain: SessionLogChainBuilder
     }
     try {
       if (this.compression === 'zstd') {
         parsed = await this.readZstdPrefix(buffer, signal)
       } else {
         signal?.throwIfAborted()
-        const { meta, inheritedEventCount, events, committedBytes } = scanLog(buffer)
+        const { meta, inheritedEventCount, events, committedBytes, chain } = scanLog(buffer)
         signal?.throwIfAborted()
         parsed = {
           meta,
@@ -841,6 +897,7 @@ class JsonlSessionPersistence extends SessionPersistence {
           // A torn raw tail is one incomplete JSONL line; it holds no complete
           // record to recover.
           recoveredTail: [],
+          chain,
         }
       }
     } catch (error: unknown) {
@@ -860,11 +917,12 @@ class JsonlSessionPersistence extends SessionPersistence {
     assertStoredId(expectedId, parsed.meta)
     const location = this.locate(parsed.meta)
     validateStoredEvents(parsed.meta, parsed.events, location)
-    const { events, ...rest } = parsed
+    const { events, chain, ...rest } = parsed
     const stored: CurrentStoredLog = {
       status: 'current',
       ...rest,
       ...freezeStoredEvents(events),
+      chain,
       revision,
     }
     this.memoizeStoredLog(expectedId, stored)
@@ -902,37 +960,36 @@ class JsonlSessionPersistence extends SessionPersistence {
   }
 
   /**
-   * Durably append one validated batch; lazily materializes on the first write.
+   * Durably write one accepted batch; lazily materializes on the first write.
    * @param header - the session's stored header.
-   * @param events - the validated contiguous batch, in seq order.
-   * @param isMaterialized - whether the session already has a durable artifact.
-   * @param inheritedEventCount - the exact fork-inherited prefix length written into a materializing header line.
+   * @param lines - the batch's encoded lines, in log order.
+   * @param headerLine - the stored header-line bytes, given to materialize a
+   *   not-yet-materialized session and omitted otherwise.
    */
   async persistBatch(
     header: SessionHeader,
-    events: readonly SessionEvent[],
-    isMaterialized: boolean,
-    inheritedEventCount: SessionLogOffsetType,
+    lines: readonly Buffer[],
+    headerLine: Buffer | undefined,
   ): Promise<void> {
     this.coldLogMemo.delete(header.id)
     await this.ensureRootEncoding()
-    if (isMaterialized) {
-      await this.appendLines(header, events)
-    } else {
-      await this.materialize(header, inheritedEventCount, events)
+    if (headerLine !== undefined) {
+      await this.materialize(header, headerLine, lines)
       this.tracker.materialized(header.id)
+    } else {
+      await this.appendLines(header, lines)
     }
   }
 
   /**
    * Materialize a header-only artifact for an explicitly durable empty session.
    * @param header - the session's stored header.
-   * @param inheritedEventCount - the exact fork-inherited prefix length written into the header line.
+   * @param headerLine - the stored header-line bytes.
    */
-  async persistHeader(header: SessionHeader, inheritedEventCount: SessionLogOffsetType): Promise<void> {
+  async persistHeader(header: SessionHeader, headerLine: Buffer): Promise<void> {
     this.coldLogMemo.delete(header.id)
     await this.ensureRootEncoding()
-    await this.materialize(header, inheritedEventCount, [])
+    await this.materialize(header, headerLine, [])
     this.tracker.materialized(header.id)
   }
 
@@ -999,7 +1056,8 @@ class JsonlSessionPersistence extends SessionPersistence {
     inheritedEventCount: SessionLogOffsetType
     events: SessionEvent[]
     tornTruncateTo: number | undefined
-    recoveredTail: SessionEvent[]
+    recoveredTail: readonly Buffer[]
+    chain: SessionLogChainBuilder
   }> {
     signal?.throwIfAborted()
     const { frames, tornStart } = scanZstdFrames(buffer)
@@ -1042,6 +1100,7 @@ class JsonlSessionPersistence extends SessionPersistence {
           events: prefix.events,
           tornTruncateTo: undefined,
           recoveredTail: [],
+          chain: prefix.chain,
         }
       }
       // A torn final frame's append never resolved, but complete JSONL records
@@ -1059,13 +1118,19 @@ class JsonlSessionPersistence extends SessionPersistence {
       }
       signal?.throwIfAborted()
       scanner.write(recoveredPlaintext)
+      const tail = scanner.checkpoint()
       const prefix = scanner.finish()
       return {
         meta: prefix.meta,
         inheritedEventCount: prefix.inheritedEventCount,
         events: prefix.events,
         tornTruncateTo: tornStart,
-        recoveredTail: prefix.events.slice(complete.eventCount),
+        // The recovered plaintext's committed records end on a newline, so
+        // each split piece is one complete record to rewrite byte for byte.
+        recoveredTail: recordLines(
+          recoveredPlaintext.subarray(0, tail.committedBytes - complete.committedBytes),
+        ),
+        chain: prefix.chain,
       }
     } catch (error) {
       /* v8 ignore next -- decoder failure plus concurrent abort is timing-dependent */
@@ -1264,14 +1329,14 @@ class JsonlSessionPersistence extends SessionPersistence {
   /** Atomically write the header line + first batch (temp-write, fsync, publish). */
   private async materialize(
     meta: SessionHeader,
-    inheritedEventCount: SessionLogOffsetType,
-    events: readonly SessionEvent[],
+    headerLine: Buffer,
+    lines: readonly Buffer[],
   ): Promise<void> {
     const project = projectDir(this.root, meta.cwd)
     const dir = sessionDir(this.root, meta.cwd, meta.id)
     const finalPath = logPath(this.root, meta.cwd, meta.id, this.compression)
     await this.rejectOppositeArtifact(meta.cwd, meta.id)
-    const content = await this.encodeMaterialization(meta, inheritedEventCount, events)
+    const content = await this.encodeMaterialization(headerLine, lines)
     /* v8 ignore next -- native Windows coverage exercises this platform dispatch; Linux covers the POSIX peer */
     if (process.platform === 'win32') {
       await this.materializeWin32(project, dir, finalPath, meta.id, content)
@@ -1370,26 +1435,25 @@ class JsonlSessionPersistence extends SessionPersistence {
     return tmp
   }
 
-  /** Encode the header and first batch without combining their frame boundaries. */
+  /** Encode the header line + first batch without combining their frame boundaries. */
   private async encodeMaterialization(
-    meta: SessionHeader,
-    inheritedEventCount: SessionLogOffsetType,
-    events: readonly SessionEvent[],
-  ): Promise<Buffer | string> {
-    const header = JSON.stringify(toHeaderLine(meta, meta.isSeeded ? inheritedEventCount : undefined)) + '\n'
-    if (events.length === 0) {
+    headerLine: Buffer,
+    lines: readonly Buffer[],
+  ): Promise<Buffer> {
+    const header = Buffer.concat([headerLine, NEWLINE])
+    if (lines.length === 0) {
       return this.compression === 'none' ? header : compressZstdFrame(header)
     }
-    const body = eventLines(events) + '\n'
-    if (this.compression === 'none') return header + body
+    const body = joinLines(lines)
+    if (this.compression === 'none') return Buffer.concat([header, body])
     const headerFrame = await compressZstdFrame(header)
     const eventFrame = await compressZstdFrame(body)
     return Buffer.concat([headerFrame, eventFrame])
   }
 
   /** Encode one durable append batch in the configured physical representation. */
-  private async encodeEventBatch(events: readonly SessionEvent[]): Promise<Buffer | string> {
-    const body = eventLines(events) + '\n'
+  private async encodeEventBatch(lines: readonly Buffer[]): Promise<Buffer> {
+    const body = joinLines(lines)
     return this.compression === 'zstd' ? compressZstdFrame(body) : body
   }
 
@@ -1410,8 +1474,8 @@ class JsonlSessionPersistence extends SessionPersistence {
    * previous size before rethrowing because the unchanged cursor will retry the
    * batch; leaving partial bytes would create duplicate sequence numbers.
    */
-  private async appendLines(meta: SessionHeader, events: readonly SessionEvent[]): Promise<void> {
-    const content = await this.encodeEventBatch(events)
+  private async appendLines(meta: SessionHeader, lines: readonly Buffer[]): Promise<void> {
+    const content = await this.encodeEventBatch(lines)
     const path = logPath(this.root, meta.cwd, meta.id, this.compression)
     const handle = await open(path, 'a')
     let closed = false

@@ -114,10 +114,16 @@ export interface Config {
   readonly nativeOpen?: boolean
   /** Positive integral milliseconds of list work before yielding between complete rows. */
   readonly listWorkSliceMs?: number
+  /**
+   * Most events a resumed `follow` opening may carry; a resume point further
+   * behind the log opens with a snapshot instead. 0 disables resume, so every
+   * opening is a snapshot.
+   */
+  readonly followResumeEvents?: number
 }
 
 /** Deployment policy after schema defaults have been applied. */
-type ResolvedConfig = Config & { readonly listWorkSliceMs: number }
+type ResolvedConfig = Config & { readonly listWorkSliceMs: number; readonly followResumeEvents: number }
 
 /** Host integrations replaceable by direct unit tests. */
 export interface SessionControllerInternals {
@@ -154,6 +160,8 @@ export class SessionController extends TypertRemoteService {
   static Config: z<Config, ResolvedConfig> = z.object({
     nativeOpen: z.boolean(),
     listWorkSliceMs: z.natural().min(1).default(16),
+    // About 3 MB at the 3.3 KB average event size, comparable to a large snapshot.
+    followResumeEvents: z.natural().default(1000),
   })
 
   private historyController!: HistoryController
@@ -170,16 +178,19 @@ export class SessionController extends TypertRemoteService {
   private readonly revealPath: (path: string, signal: AbortSignal) => Promise<void>
   private readonly canOpenPath: () => boolean
   private readonly listWorkSliceMs: number
+  private readonly followResumeEvents: number
   private readonly promotions = new Set<Promise<void>>()
 
   /**
    * @param ctx - Host context containing the Session capability assembly.
-   * @param config - native-opener and list-scheduling deployment policy.
+   * @param config - native-opener, list-scheduling, and follow-resume deployment policy.
    * @param internals - host integrations replaceable by direct unit tests.
    */
   constructor(ctx: Context, config: Config, internals: SessionControllerInternals = {}) {
     super(ctx, 'sessionController', { namespace: 'session' })
-    this.listWorkSliceMs = SessionController.Config(config).listWorkSliceMs
+    const resolved = SessionController.Config(config)
+    this.listWorkSliceMs = resolved.listWorkSliceMs
+    this.followResumeEvents = resolved.followResumeEvents
     this.fileApplications = internals.fileApplications ?? nativeFileApplications
     this.openFileApplication = internals.openFileApplication ?? openNativeFileApplication
     this.openPath = internals.openPath ?? openNativeAssociatedPath
@@ -209,7 +220,9 @@ export class SessionController extends TypertRemoteService {
     // opening frame arriving during that await would otherwise have no listener.
     this.historyController = new HistoryController(ctx)
     this.stateController = new StateController(ctx, this.historyController)
-    this.webController = new WebController(ctx, this.historyController, (observation) => { this.promote(observation) })
+    this.webController = new WebController(
+      ctx, this.historyController, (observation) => { this.promote(observation) }, this.followResumeEvents,
+    )
     this.listState = new ApiSessionList(ctx, this.listWorkSliceMs)
     await this.listState.initialize()
     ctx.plugin(SessionFileReferences)
@@ -611,11 +624,12 @@ export class SessionController extends TypertRemoteService {
   }
 
   /**
-   * Follow one Session log from its opening or resume cursor.
-   * @param request - durable address and last committed sequence already held by the caller.
+   * Follow one Session log from a snapshot, or from the end of a window the caller already holds.
+   * @param request - durable address, opening window, and an optional resume point naming the newest held event and its chain link.
    * @param signal - cancellation owned by the Remote stream carrier.
-   * @returns a complete opening snapshot followed by gap-free durable event
-   *   frames and optional cursorless assistant-stream frames.
+   * @returns a complete opening snapshot, or a `resumed` opening holding only the
+   *   events after the resume point, followed by gap-free durable event frames and
+   *   optional cursorless assistant-stream frames.
    */
   @Remote({ mode: 'stream' })
   follow(request: SessionFollowRequest, signal: AbortSignal): AsyncIterable<SessionFollowFrame> {

@@ -3682,7 +3682,7 @@ SHA-256: `1df34a6c086866ffdc2dd9e8e5c581c3751a010cdf6b8538a7327f7a3237f0b4`
 
 SHA-256: `18ee62b8900a4c3d046700f05d7a4d49d6cab2a660a020c87481d1603dd8bd4f`
 
-来源：[`packages/session/session-persistence-jsonl/src/format.ts:83`](../packages/session/session-persistence-jsonl/src/format.ts)
+来源：[`packages/session/session-persistence-jsonl/src/format.ts:84`](../packages/session/session-persistence-jsonl/src/format.ts)
 
 | 属性 | 存在性 | 类型 |
 |---|---|---|

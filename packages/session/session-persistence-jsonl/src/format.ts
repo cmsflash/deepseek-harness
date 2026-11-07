@@ -30,6 +30,7 @@ import {
   sessionFormatVersionRefusal,
   type SessionStorageMetadata,
 } from '@deepseek-ai/dsh-session-persistence'
+import { SessionLogChainBuilder } from './chain.ts'
 
 /** Physical encoding selected for JSONL session artifacts. */
 export type JsonlCompression = 'zstd' | 'none'
@@ -305,13 +306,25 @@ export function logPath(
 }
 
 /**
- * Serialize a current event batch as JSONL lines (no trailing newline). Compact
- * Assistant streams are nested event data; every event occupies one row.
- * @param events - the batch to serialize, in log order.
- * @returns the batch's JSONL text; the writer adds the final newline.
+ * Serialize the header line for one stored Session as the exact bytes its JSONL
+ * record is written with; `create` computes this once and hands the same bytes
+ * to materialization.
+ * @param header - the immutable session metadata to serialize.
+ * @param inheritedEventCount - exact inherited prefix length; required for a
+ *   seeded header and omitted only for an unseeded header.
+ * @returns the header record's stored bytes without its newline.
  */
-export function eventLines(events: readonly SessionEvent[]): string {
-  return events.map(eventLine).join('\n')
+export function encodeHeaderLine(header: SessionHeader, inheritedEventCount?: SessionLogOffsetType): Buffer {
+  return Buffer.from(JSON.stringify(toHeaderLine(header, inheritedEventCount)), 'utf8')
+}
+
+/**
+ * Encode one current event as the exact bytes one JSONL record is written with.
+ * @param event - current event to encode.
+ * @returns one physical JSON record's bytes without its trailing newline.
+ */
+export function encodeEventLine(event: SessionEvent): Buffer {
+  return Buffer.from(eventLine(event), 'utf8')
 }
 
 /**
@@ -328,6 +341,7 @@ interface SessionLogScan {
   inheritedEventCount: SessionLogOffsetType
   events: SessionEvent[]
   committedBytes: number
+  chain: SessionLogChainBuilder
 }
 
 /**
@@ -382,10 +396,12 @@ function parseHeaderRecord(record: Buffer): { readonly meta: SessionHeader; read
  * supplied header record. Newline search and byte offsets stay on raw buffers;
  * only complete records are decoded to UTF-8. A fragment crossing writes is
  * copied because a decoder may reuse its output buffer after `write()` returns.
+ * Each committed row's raw bytes are linked into the Session log chain.
  */
 export class SessionLogScanner {
   private readonly meta: SessionHeader
   private readonly restore: SessionFormatRestore
+  private readonly chain: SessionLogChainBuilder
   private eventCount = 0
   private fragments: Buffer[] = []
   private fragmentBytes = 0
@@ -396,7 +412,8 @@ export class SessionLogScanner {
   private finished = false
 
   /**
-   * Create an event scanner from exactly one newline-terminated header record.
+   * Create an event scanner from exactly one newline-terminated header record,
+   * started on the header line without its newline.
    * @param headerRecord - the complete first JSONL record, including its newline.
    */
   constructor(
@@ -406,6 +423,7 @@ export class SessionLogScanner {
     const parsed = parseHeaderRecord(headerRecord)
     this.meta = parsed.meta
     this.restore = parsed.restore
+    this.chain = SessionLogChainBuilder.start(headerRecord.subarray(0, -1))
     this.inputBytes = headerRecord.length
     this.committedBytes = headerRecord.length
   }
@@ -460,17 +478,24 @@ export class SessionLogScanner {
 
   /**
    * Finish scanning, ignoring a final record without a newline as a torn tail.
-   * @returns the header, contiguous event prefix, and safe truncation offset.
+   * @returns the header, contiguous event prefix, safe truncation offset, and
+   *   the chain over the header line and every committed row.
    */
   finish(): SessionLogScan {
     this.finished = true
     const artifact = this.restore.finish()
     assertReleasedV4Relationships(artifact, KNOWN_SESSION_EVENT_TYPES)
+    /* v8 ignore next -- each current-format row emits exactly one event */
+    if (this.chain.length !== artifact.events.length) {
+      throw new Error('session log chain does not cover every decoded event')
+    }
+    this.chain.compact()
     return {
       meta: this.meta,
       inheritedEventCount: SessionLogOffset(artifact.inheritedEventCount),
       events: artifact.events as unknown as SessionEvent[],
       committedBytes: this.committedBytes,
+      chain: this.chain,
     }
   }
 
@@ -518,6 +543,7 @@ export class SessionLogScanner {
     }
     this.eventCount += 1
     this.committedBytes = endByte
+    this.chain.append(this.eventCount - 1, line)
   }
 }
 
@@ -527,7 +553,8 @@ export class SessionLogScanner {
  * event rows to {@link SessionLogScanner}.
  *
  * @param buffer - the raw bytes of the log file (header line first).
- * @returns the header, preserved event prefix, and byte offset safe to append at.
+ * @returns the header, preserved event prefix, byte offset safe to append at,
+ *   and the chain over the header line and every committed row.
  */
 export function scanLog(buffer: Buffer): SessionLogScan {
   const headerEnd = buffer.indexOf(0x0A)

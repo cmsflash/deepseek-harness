@@ -1,6 +1,6 @@
 /**
  * The JSONL provider's session storage runtime: its concrete write/read
- * handle with a per-handle mutation chain and a routed live write-behind
+ * handle with a per-handle mutation queue and a routed live write-behind
  * buffer, the in-process bookkeeping that enforces one active writer per
  * session id, and the backend's live event routing and teardown. Deliberately
  * provider-local: the persistence seam exposes only the service and handle
@@ -15,7 +15,6 @@ import type { Session, SessionEvent, SessionHeader, SessionId, SessionLogOffset 
 import {
   assertContiguous,
   SessionAlreadyExistsError,
-  materializeAppendBatch,
   SessionAlreadyOwnedError,
   SessionHandleClosedError,
   SessionPersistenceNotFoundError,
@@ -29,23 +28,40 @@ import type {
   SessionHandleFlushOptions,
   SessionHandleReadOptions,
   SessionHandleReadResult,
+  SessionLogChain,
 } from '@deepseek-ai/dsh-session-persistence'
 import type { SessionWriteLease } from './lease.ts'
+import { encodeAppendLines, type SessionLogChainBuilder } from './chain.ts'
+import { encodeEventLine } from './format.ts'
 
 /** Maximum intentional wait before a routed live session batch starts writing. */
 export const LIVE_WRITE_BATCH_MAX_DELAY_MS = 200
 
+/** One encoded event line: the exact bytes the write path stores for it. */
+export interface EncodedLine {
+  readonly seq: number
+  readonly line: Buffer
+}
+
+/** One live event whose encoding at acceptance failed. */
+export interface LiveEncodeFailure {
+  readonly seq: number
+  readonly failure: unknown
+}
+
+/** Routed live event entries awaiting their batching deadline. */
+type LiveBuffered = EncodedLine | LiveEncodeFailure
+
 /** The file-storage primitives the handle drives on its owning service. */
 export interface JsonlHandleStorage {
-  /** Append encoded lines; `isMaterialized` selects create-vs-extend publication. */
+  /** Append encoded lines; `headerLine` materializes a not-yet-materialized session when given. */
   persistBatch(
     header: SessionHeader,
-    events: readonly SessionEvent[],
-    isMaterialized: boolean,
-    inheritedEventCount: SessionLogOffset,
+    lines: readonly Buffer[],
+    headerLine: Buffer | undefined,
   ): Promise<void>
   /** Materialize the header-only artifact for an explicitly flushed empty session. */
-  persistHeader(header: SessionHeader, inheritedEventCount: SessionLogOffset): Promise<void>
+  persistHeader(header: SessionHeader, headerLine: Buffer): Promise<void>
   /** Truncate a torn physical tail before the first new append lands. */
   truncateTornTail(header: SessionHeader, truncateTo: number): Promise<void>
   /** Resolve the current-generation artifact path, or `undefined` when absent. */
@@ -68,26 +84,30 @@ export interface StorageHandleState {
   materialized: boolean
   /** Torn-tail truncation point, consumed by the first new append. */
   tornTruncateTo?: number | undefined
-  /** Complete events recovered from the torn final frame; the first mutation rewrites them durably. */
-  recoveredTail?: SessionEvent[] | undefined
+  /** Complete raw records recovered from the torn final frame; the first mutation rewrites them durably. */
+  recoveredTail?: readonly Buffer[] | undefined
   /** Exact fork-inherited prefix length stored with the log; `0` when unseeded. */
   inheritedEventCount: SessionLogOffset
+  /** The stored bytes of the header line a created session will materialize with. */
+  headerLine?: Buffer | undefined
+  /** The Session log chain this handle's accepted events extend; a private copy. */
+  chain?: SessionLogChainBuilder | undefined
   /** The validated stored prefix from a write open, served to reads until the first append. */
   primed?: SessionHandleReadResult | undefined
 }
 
 /**
  * The JSONL session handle. Mutations serialize on a per-handle promise
- * chain; reads re-scan the artifact on demand and never observe a shorter log
+ * queue; reads re-scan the artifact on demand and never observe a shorter log
  * than a prior read on this handle. Routed live events buffer in a bounded
- * window and drain through the same chain as explicit appends.
+ * window and drain through the same queue as explicit appends.
  */
 export class JsonlSessionHandle implements SessionHandle {
-  private chain: Promise<unknown> = Promise.resolve()
+  private mutationQueue: Promise<unknown> = Promise.resolve()
   private closing: Promise<void> | undefined
   private observedLength = 0
-  /** Routed live events awaiting their batching deadline (persistence-owned copies). */
-  private buffered: SessionEvent[] = []
+  /** Routed live event entries awaiting their batching deadline (encoded lines or their encode failures). */
+  private buffered: LiveBuffered[] = []
   private batchTimer: ReturnType<typeof setTimeout> | undefined
   /** Set when a drain failed; the automatic timer stays quiet until the next drain. */
   private drainPaused = false
@@ -106,6 +126,11 @@ export class JsonlSessionHandle implements SessionHandle {
   /** Exact fork-inherited prefix length stored with this session's log. */
   get inheritedEventCount(): SessionLogOffset {
     return this.state.inheritedEventCount
+  }
+
+  /** The chain this handle's accepted events extend; the private copy a write handle keeps. */
+  get chain(): SessionLogChain | undefined {
+    return this.state.chain
   }
 
   /**
@@ -158,7 +183,11 @@ export class JsonlSessionHandle implements SessionHandle {
   /** Read one slice from the prepared historical prefix retained by this handle. */
   private readPrimed(source: SessionHandleReadResult, offset: number, length: number): SessionHandleReadResult {
     this.observedLength = Math.max(this.observedLength, source.events.length)
-    return { eventState: source.eventState, events: source.events.slice(offset, offset + length) }
+    return {
+      eventState: source.eventState,
+      events: source.events.slice(offset, offset + length),
+      ...(source.chain === undefined ? {} : { chain: source.chain }),
+    }
   }
 
   /** Read one current physical generation and enforce this handle's monotonic view. */
@@ -176,6 +205,7 @@ export class JsonlSessionHandle implements SessionHandle {
     return {
       eventState: source.eventState,
       events: source.events.slice(offset, offset + length),
+      ...(source.chain === undefined ? {} : { chain: source.chain }),
     }
   }
 
@@ -186,12 +216,26 @@ export class JsonlSessionHandle implements SessionHandle {
    */
   async append(events: readonly SessionEvent[], options?: SessionHandleAppendOptions): Promise<void> {
     this.assertOpen('append')
-    // Validate and deep-snapshot the batch HERE, before queueing behind the
-    // chain, so the checked value is exactly the value persisted.
-    const batch = materializeAppendBatch(events)
+    // Validate and encode the batch HERE, before queueing behind the
+    // mutation queue, so the checked value is exactly the value persisted.
+    const lines = encodeAppendLines(events)
+    // The encoded lines zip one-for-one with the caller's batch.
+    const batch: EncodedLine[] = lines.map((line, index) => ({
+      line,
+      // oxlint-disable-next-line typescript/no-non-null-assertion -- encodeAppendLines emits exactly one line per event, in order.
+      seq: events[index]!.seq,
+    }))
+    const chain = this.state.chain
+    const chainBase = chain?.length ?? 0
+    for (const { seq, line } of batch) chain?.append(seq, line)
     return this.run('append', async () => {
       options?.signal?.throwIfAborted()
       await this.persistContiguous(batch)
+    }).catch((error: unknown) => {
+      // Any rejection of the queued write — including a refusal by close()
+      // before the operation ran — removes the links this call added.
+      chain?.truncate(chainBase)
+      throw error
     })
   }
 
@@ -206,7 +250,7 @@ export class JsonlSessionHandle implements SessionHandle {
       if (this.access !== 'write') throw new SessionReadOnlyError(this.id, 'flush')
       if (this.state.materialized) return // appends are durable on resolution
       await this.ensureLease()
-      await this.storage.persistHeader(this.header, this.state.inheritedEventCount)
+      await this.storage.persistHeader(this.header, this.requireHeaderLine())
       this.state.materialized = true
     })
   }
@@ -225,9 +269,9 @@ export class JsonlSessionHandle implements SessionHandle {
       let drainFailure: unknown
       // Producers on other fibers may still publish while close waits for
       // in-flight mutations (root disposal is concurrent), so drain again
-      // until a full pass leaves the routed buffer empty. The chain never
-      // rejects because run() swallows each operation's rejection after its
-      // caller observed it.
+      // until a full pass leaves the routed buffer empty. The mutation queue
+      // never rejects because run() swallows each operation's rejection after
+      // its caller observed it.
       for (;;) {
         try {
           await this.drainLive()
@@ -235,11 +279,11 @@ export class JsonlSessionHandle implements SessionHandle {
           drainFailure = error
           break
         }
-        await this.chain
+        await this.mutationQueue
         if (this.buffered.length === 0) break
       }
-      // After a drain failure the chain may still hold in-flight mutations.
-      await this.chain
+      // After a drain failure the mutation queue may still hold in-flight mutations.
+      await this.mutationQueue
       // Free the in-process claim no matter how the kernel-lock release
       // fares: a skipped releaseHandle would wedge the id in this process
       // behind a lock the kernel may already have dropped.
@@ -267,12 +311,21 @@ export class JsonlSessionHandle implements SessionHandle {
   /**
    * Buffer one published live session event and arm the bounded batching
    * window when it is idle. The routing installer is the only caller.
-   * @param event - the live event, retained as a persistence-owned copy.
+   * @param event - the live event, encoded to its line here so the bytes
+   *   written are the bytes accepted.
    * @param reportBackgroundFailure - observes a deadline-driven drain failure
    *   (the events stay buffered; the next {@link drainLive} retries loudly).
    */
   enqueueLive(event: SessionEvent, reportBackgroundFailure: (error: unknown) => void): void {
-    this.buffered.push(structuredClone(event))
+    let entry: LiveBuffered
+    try {
+      const line = encodeEventLine(event)
+      this.state.chain?.append(event.seq, line)
+      entry = { seq: event.seq, line }
+    } catch (error: unknown) {
+      entry = { seq: event.seq, failure: error }
+    }
+    this.buffered.push(entry)
     if (this.batchTimer !== undefined || this.drainPaused) return
     this.batchTimer = setTimeout(() => {
       this.batchTimer = undefined
@@ -281,7 +334,7 @@ export class JsonlSessionHandle implements SessionHandle {
   }
 
   /**
-   * Durably drain the routed live buffer through the mutation chain;
+   * Durably drain the routed live buffer through the mutation queue;
    * concurrent callers join one drain, and a failure retains the batch in
    * order so `session/flush` can retry and reject loudly.
    */
@@ -304,8 +357,15 @@ export class JsonlSessionHandle implements SessionHandle {
         // Only this single-flight drain splices the buffer, so the batch the
         // while-guard saw is still here when the chained turn runs.
         const batch = this.buffered.splice(0)
+        const failure = batch.find((entry): entry is LiveEncodeFailure => 'failure' in entry)
+        if (failure !== undefined) {
+          this.buffered = batch.concat(this.buffered)
+          this.drainPaused = true
+          throw failure.failure
+        }
         try {
-          await this.persistContiguous(materializeAppendBatch(batch))
+          // The failure guard above already rejected every non-line entry.
+          await this.persistContiguous(batch as readonly EncodedLine[])
         } catch (error: unknown) {
           this.buffered = batch.concat(this.buffered)
           this.drainPaused = true
@@ -316,14 +376,14 @@ export class JsonlSessionHandle implements SessionHandle {
   }
 
   /** The shared durable-append body: contiguity, ownership, torn-tail repair, storage write, state advance. */
-  private async persistContiguous(batch: readonly SessionEvent[]): Promise<void> {
+  private async persistContiguous(batch: readonly EncodedLine[]): Promise<void> {
     if (this.access !== 'write') throw new SessionReadOnlyError(this.id, 'append')
     if (batch.length === 0) return
     await this.ensureLease()
     assertContiguous(this.id, batch, this.state.cursor)
     // Commit any pending torn-tail repair first, clearing each step's state
     // only once it lands so a failed step retries on the next mutation:
-    // truncate the torn bytes, then durably rewrite the complete events
+    // truncate the torn bytes, then durably rewrite the complete records
     // recovered from them (already counted in the primed cursor).
     if (this.state.tornTruncateTo !== undefined) {
       await this.storage.truncateTornTail(this.header, this.state.tornTruncateTo)
@@ -331,15 +391,31 @@ export class JsonlSessionHandle implements SessionHandle {
     }
     if (this.state.recoveredTail !== undefined) {
       if (this.state.recoveredTail.length > 0) {
-        await this.storage.persistBatch(this.header, this.state.recoveredTail, this.state.materialized, this.state.inheritedEventCount)
+        await this.storage.persistBatch(this.header, this.state.recoveredTail, undefined)
       }
       this.state.recoveredTail = undefined
     }
-    await this.storage.persistBatch(this.header, batch, this.state.materialized, this.state.inheritedEventCount)
+    await this.storage.persistBatch(
+      this.header,
+      batch.map(entry => entry.line),
+      this.state.materialized ? undefined : this.requireHeaderLine(),
+    )
     this.state.materialized = true
     this.state.cursor += batch.length
     this.state.primed = undefined
     this.observedLength = this.state.cursor
+  }
+
+  /**
+   * The header line recorded at `create`; materialization writes these bytes.
+   * @returns the stored header-line bytes.
+   */
+  private requireHeaderLine(): Buffer {
+    /* v8 ignore next -- only create() makes an unmaterialized write handle, and it records the header line */
+    if (this.state.headerLine === undefined) {
+      throw new Error(`session "${this.id}": unmaterialized handle has no header line`)
+    }
+    return this.state.headerLine
   }
 
   /**
@@ -353,14 +429,14 @@ export class JsonlSessionHandle implements SessionHandle {
     this.lease ??= await this.storage.acquireWriteLease(this.header)
   }
 
-  /** Serialize one operation onto the chain without the closed-handle refusal (drain-from-close). */
+  /** Serialize one operation onto the mutation queue without the closed-handle refusal (drain-from-close). */
   private enqueueChain(op: () => Promise<void>): Promise<void> {
-    const next = this.chain.then(op)
-    this.chain = next.catch(() => {})
+    const next = this.mutationQueue.then(op)
+    this.mutationQueue = next.catch(() => {})
     return next
   }
 
-  /** Serialize one public mutating operation onto this handle's chain. */
+  /** Serialize one public mutating operation onto this handle's mutation queue. */
   private async run(operation: string, op: () => Promise<void>): Promise<void> {
     this.assertOpen(operation)
     return this.enqueueChain(async () => {
@@ -471,6 +547,17 @@ export class JsonlBackendTracker {
    */
   materialized(id: SessionId): void {
     this.pending.delete(id)
+  }
+
+  /**
+   * Read the session's live chain kept by this tracker's active write handle.
+   * @param id - the session whose write handle is asked.
+   * @returns the live chain, or `undefined` while no constructed write handle
+   *   holds the session here.
+   */
+  liveChain(id: SessionId): SessionLogChain | undefined {
+    const writer = this.writers.get(id)
+    return writer === undefined || writer === null ? undefined : writer.chain
   }
 
   /**

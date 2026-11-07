@@ -10,7 +10,7 @@ import type { SessionEvent, SessionHeader } from '@deepseek-ai/dsh-session'
 import type { SessionPersistence } from '@deepseek-ai/dsh-session-persistence'
 import * as JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
 import {
-  assertNoRetiredHeaderFields, encodeSegment, eventLines, generationLogFilename, generationLogPath,
+  assertNoRetiredHeaderFields, encodeSegment, eventLine, generationLogFilename, generationLogPath,
   logPath, parseGenerationLogFilename, projectDir, projectKey, scanLog, sessionDir, SessionLogScanner,
   toHeaderLine,
 } from '../src/format.ts'
@@ -1472,7 +1472,9 @@ describe('JsonlSessionPersistence: durability and crash semantics', () => {
     expect(await readFile(rawLogPath(root, '/work', m.id), 'utf8')).toBe(`${JSON.stringify(toHeaderLine(m))}\n`)
     const reader = await ctx.sessionPersistence.open(m.id, 'read')
     const read = await reader.read()
-    expect(read).toEqual({ eventState: 'shared-frozen', events: [] })
+    expect(read.eventState).toBe('shared-frozen')
+    expect(read.events).toEqual([])
+    expect(read.chain?.length).toBe(0)
     await reader.close()
   })
 
@@ -1480,7 +1482,7 @@ describe('JsonlSessionPersistence: durability and crash semantics', () => {
     const m = meta('late-closer', '/work')
     const handle = await ctx.sessionPersistence.create(m) as JsonlSessionHandle
     const service = ctx.sessionPersistence as unknown as {
-      persistBatch: (...args: [SessionHeader, readonly SessionEvent[], boolean]) => Promise<void>
+      persistBatch: (...args: [SessionHeader, readonly Buffer[], Buffer | undefined]) => Promise<void>
     }
     const original = service.persistBatch.bind(service)
     const gate = Promise.withResolvers<undefined>()
@@ -2557,9 +2559,9 @@ describe('JsonlSessionPersistence: nested Assistant streams', () => {
     expect(scanned.committedBytes).toBe(Buffer.byteLength(headerAndTurn, 'utf8'))
   })
 
-  it('eventLines keeps one event per line with nested compact stream records', () => {
+  it('encoded event lines keep one event per line with nested compact stream records', () => {
     const log = chunkRunLog()
-    const text = eventLines(log)
+    const text = log.map(eventLine).join('\n')
     const lines = text.split('\n')
     expect(lines).toHaveLength(log.length)
     for (const line of lines) {

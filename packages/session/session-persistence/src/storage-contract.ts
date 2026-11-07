@@ -139,10 +139,10 @@ export function materializeAppendBatch(events: readonly SessionEvent[]): readonl
 /**
  * Refuse a batch that does not contiguously continue the stored log.
  * @param id - the session the batch belongs to.
- * @param events - the batch, in seq order.
+ * @param events - the batch, in seq order; only each member's `seq` is read.
  * @param cursor - the stored next-seq.
  */
-export function assertContiguous(id: SessionId, events: readonly SessionEvent[], cursor: number): void {
+export function assertContiguous(id: SessionId, events: readonly { readonly seq: number }[], cursor: number): void {
   for (const [index, event] of events.entries()) {
     if (event.seq !== cursor + index) {
       throw new Error(`append seq mismatch for "${id}": expected ${cursor + index} at index ${index}, got ${event.seq}`)

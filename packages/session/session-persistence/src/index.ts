@@ -11,10 +11,13 @@ import type { SessionEvent, SessionHeader, SessionId, SessionLogOffset } from '@
 import type { SessionHandle, SessionAccess } from './handle.ts'
 import type { SessionLocation } from './errors.ts'
 import type { SessionPersistenceRevision } from './revision.ts'
+import type { SessionLogChain } from './chain.ts'
 
 // Re-export the metadata vocabulary so Consumers import it from the Service Definition.
 export type { SessionHeader } from '@deepseek-ai/dsh-session'
 export { SessionPersistenceRevision } from './revision.ts'
+export { SESSION_LOG_CHAIN_TAG, SessionLogLink } from './chain.ts'
+export type { SessionLogChain } from './chain.ts'
 export type {
   SessionAccess,
   SessionHandle,
@@ -208,6 +211,16 @@ export abstract class SessionPersistence extends Service {
    * @returns one snapshot per stored session.
    */
   abstract list(options?: SessionPersistenceListOptions): Promise<readonly SessionPersistenceSnapshot[]>
+
+  /**
+   * Read the chain kept by this process's active write handle for a Session.
+   * It covers every event the handle has accepted, including events whose
+   * write is still pending, so a follower can receive a link before its line
+   * is durable.
+   * @param id - the Session whose write handle is asked.
+   * @returns the live chain, or `undefined` without an active write handle or chain here.
+   */
+  liveChain?(id: SessionId): SessionLogChain | undefined
 }
 
 export default SessionPersistence

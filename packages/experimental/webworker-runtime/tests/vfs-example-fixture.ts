@@ -12,7 +12,7 @@ import {
   type SessionSeq as SessionSeqType,
 } from '@deepseek-ai/dsh-session'
 import {
-  eventLines, generationLogFilename, projectKey, toHeaderLine,
+  eventLine, generationLogFilename, projectKey, toHeaderLine,
 } from '@deepseek-ai/dsh-session-persistence-jsonl/src/format.ts'
 import { projectionCacheDomainSpec } from '@deepseek-ai/dsh-session-projection-cache'
 import { scheduleDomain } from '@deepseek-ai/dsh-schedule'
@@ -617,7 +617,7 @@ function renderLog(
   storage: { readonly meta: SessionHeader; readonly inheritedEventCount: SessionLogOffsetType },
   events: readonly SessionEvent[],
 ): string {
-  return `${JSON.stringify(toHeaderLine(storage.meta, storage.inheritedEventCount))}\n${eventLines(events)}\n`
+  return `${JSON.stringify(toHeaderLine(storage.meta, storage.inheritedEventCount))}\n${events.map(eventLine).join('\n')}\n`
 }
 
 /**

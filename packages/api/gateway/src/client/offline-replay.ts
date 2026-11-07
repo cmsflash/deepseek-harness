@@ -22,8 +22,11 @@ export interface OfflineReplayStore {
   put(key: string, value: unknown): Promise<void>
 }
 
-/** Whether a stream records only its opening item or its complete item log since that opening. */
-type StreamRecording = 'opening' | 'log'
+/**
+ * Whether a stream records only its opening item, its complete item log since
+ * that opening, or a resumable journal log (see {@link REPLAYED_STREAMS}).
+ */
+type StreamRecording = 'opening' | 'log' | 'journal'
 
 /**
  * Unary endpoints whose successful results are recorded and replayed. Only
@@ -54,12 +57,16 @@ const REPLAYED_CALLS: ReadonlySet<string> = new Set([
 /**
  * Streams replayed offline. The forwarded-event stream replays only its ready
  * item: its later frames are deliveries and requests that must not run twice.
+ * A `journal` stream speaks the Session follow vocabulary: its key ignores the
+ * request's `resume` point, and a `resumed` opening that continues the recorded
+ * log folds that log into one snapshot, so the record stays replayable from its
+ * first item.
  */
 const REPLAYED_STREAMS: ReadonlyMap<string, StreamRecording> = new Map([
   ['$events', 'opening'],
   ['job/list', 'log'],
   ['session/control', 'log'],
-  ['session/follow', 'log'],
+  ['session/follow', 'journal'],
   ['workspace/follow', 'log'],
 ])
 
@@ -185,9 +192,10 @@ export class OfflineReplay {
     live: () => AsyncIterable<unknown>,
   ): AsyncIterable<unknown> {
     const recording = REPLAYED_STREAMS.get(endpoint)
+    const key = streamKey(endpoint, recording === 'journal' ? withoutResume(payload) : payload)
     const episode = this.episode
-    if (episode !== undefined) return this.replay(recording, streamKey(endpoint, payload), signal, episode.signal)
-    return this.record(recording, streamKey(endpoint, payload), signal, live())
+    if (episode !== undefined) return this.replay(recording, key, signal, episode.signal)
+    return this.record(recording, key, signal, live())
   }
 
   /** Stop probing and flush pending stream logs. */
@@ -232,8 +240,9 @@ export class OfflineReplay {
       for await (const item of source) {
         if (!opened) {
           opened = true
-          if (recording !== undefined) this.restartLog(key, item)
-        } else if (recording === 'log') {
+          if (recording === 'journal') await this.openJournal(key, item)
+          else if (recording !== undefined) this.restartLog(key, item)
+        } else if (recording === 'log' || recording === 'journal') {
           this.appendLog(key, item)
         }
         yield item
@@ -249,6 +258,39 @@ export class OfflineReplay {
     clearTimeout(previous?.timer)
     this.logs.set(key, { items: [item], timer: undefined })
     this.schedulePersist(key)
+  }
+
+  /**
+   * Start or continue a journal record. A `resumed` opening that continues the
+   * recorded log becomes one snapshot holding every recorded event and the
+   * resumed records, with the resumed opening's header, projections and
+   * assistant baseline; the earlier assistant frames are dropped because their
+   * revisions precede that baseline. A resumed opening the record does not end
+   * at, or one that would fold more than the log limit of events, leaves the
+   * persisted record as it is and records nothing until the next snapshot opening.
+   */
+  private async openJournal(key: string, item: unknown): Promise<void> {
+    if (!isResumedOpening(item)) {
+      this.restartLog(key, item)
+      return
+    }
+    const previous = this.logs.get(key)
+    this.logs.delete(key)
+    if (previous?.timer !== undefined) {
+      clearTimeout(previous.timer)
+      this.write(key, previous.items)
+    }
+    // A window replayed from the record has no in-memory log to continue.
+    const recorded = previous?.items ?? await this.read(key)
+    const items: readonly unknown[] = Array.isArray(recorded) ? recorded : []
+    const [opening, ...rest] = items
+    if (!isSnapshotOpening(opening)) return
+    const events = rest.filter(isEventItem)
+    if ((events.at(-1)?.event.seq ?? opening.cursor) !== item.after) return
+    const { type: _resumed, after: _after, records, ...current } = item
+    const folded = [...opening.records, ...events, ...records]
+    if (folded.length > STREAM_LOG_LIMIT) return
+    this.restartLog(key, { ...opening, ...current, type: 'snapshot', records: folded })
   }
 
   private appendLog(key: string, item: unknown): void {
@@ -329,6 +371,48 @@ function callKey(endpoint: string, args: unknown): string {
 
 function streamKey(endpoint: string, payload: unknown): string {
   return `stream ${endpoint} ${stableJson(payload)}`
+}
+
+/** The wire payload of a journal stream without the `args.request.resume` point that varies per reconnect. */
+function withoutResume(payload: unknown): unknown {
+  if (!isRecord(payload) || !isRecord(payload.args) || !isRecord(payload.args.request)) return payload
+  const { resume: _resume, ...request } = payload.args.request
+  return { ...payload, args: { ...payload.args, request } }
+}
+
+function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/** A recorded journal event frame. */
+interface JournalEventItem {
+  readonly type: 'event'
+  readonly event: { readonly seq: number }
+}
+
+/** A recorded journal opening; the remaining fields are carried over unchanged. */
+interface JournalOpening {
+  readonly type: 'snapshot' | 'resumed'
+  readonly cursor: number
+  readonly records: readonly JournalEventItem[]
+}
+
+function isEventItem(item: unknown): item is JournalEventItem {
+  return isRecord(item) && item.type === 'event' && isRecord(item.event) && typeof item.event.seq === 'number'
+}
+
+function isJournalOpening(item: unknown): item is JournalOpening & Readonly<Record<string, unknown>> {
+  return isRecord(item) && typeof item.cursor === 'number' && Array.isArray(item.records)
+}
+
+function isSnapshotOpening(item: unknown): item is JournalOpening & Readonly<Record<string, unknown>> {
+  return isJournalOpening(item) && item.type === 'snapshot'
+}
+
+function isResumedOpening(
+  item: unknown,
+): item is JournalOpening & Readonly<Record<string, unknown>> & { readonly after: number } {
+  return isJournalOpening(item) && item.type === 'resumed' && typeof item.after === 'number'
 }
 
 function stableJson(value: unknown): string {

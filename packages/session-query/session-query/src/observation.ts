@@ -5,6 +5,7 @@ import { SessionLogOffset, SessionSeq } from '@deepseek-ai/dsh-session'
 import type { Session, SessionEvent, SessionHeader, SessionId , SessionLogOffset as SessionLogOffsetType , SessionSeqCursor } from '@deepseek-ai/dsh-session'
 import type SessionPersistence from '@deepseek-ai/dsh-session-persistence'
 import type {
+  SessionLogChain,
   SessionPersistenceRevision,
   SessionPersistenceSnapshot,
 } from '@deepseek-ai/dsh-session-persistence'
@@ -34,6 +35,12 @@ export interface SessionObservation extends Disposable {
   /** Exact projection baseline at {@link cursor}, when the registry is mounted. */
   readonly projections?: ProjectionSnapshot
   /**
+   * Links over the stored lines of {@link events}, indexed by seq; absent when
+   * the persistence backend keeps no chain for this log. It also covers the
+   * interrupted-turn closers a cold read appends when the backend can link them.
+   */
+  readonly chain?: SessionLogChain
+  /**
    * Retain the same immutable cut for another Host owner.
    * @returns an independently disposable lease over this observation.
    */
@@ -62,6 +69,8 @@ interface PreparedEntry {
   readonly session: Session
   /** Immutable balanced log (stored events plus in-memory interrupted-turn closers). */
   readonly events: readonly SessionEvent[]
+  /** Chain of the stored generation the entry was read from; covers the closers when the backend can link them. */
+  readonly chain?: SessionLogChain
   /** Active observation leases; a pinned entry (`refs > 0`) is never evicted. */
   refs: number
 }
@@ -143,6 +152,7 @@ export class SessionObservationReader {
           revision: snapshot.revision,
           session,
           events: Object.freeze(seed),
+          ...(loaded.chain === undefined ? {} : { chain: loaded.chain }),
           refs: 0,
         }
         this.store(sessionId, entry)
@@ -256,6 +266,7 @@ export class SessionObservationReader {
         cursor: entry.events.at(-1)?.seq ?? -1,
         revision: entry.revision,
         ...projections === undefined ? {} : { projections },
+        ...entry.chain === undefined ? {} : { chain: entry.chain },
         retain: () => {
           if (disposed) throw new Error(`session observation "${sessionId}" is disposed`)
           entry.refs += 1
@@ -279,6 +290,7 @@ export class SessionObservationReader {
     // The cut is the log length now. The log only appends, so the prefix
     // below `seq` is the same array whenever a consumer first reads `events`.
     const seq = session.seq
+    const chain = this.ctx.get('sessionPersistence')?.liveChain?.(session.id)
     let materialized: readonly SessionEvent[] | undefined
     let projections: ProjectionSnapshot | undefined
     try {
@@ -305,6 +317,7 @@ export class SessionObservationReader {
         },
         cursor: seq === 0 ? -1 : SessionSeq(seq - 1),
         ...projections === undefined ? {} : { projections },
+        ...chain === undefined ? {} : { chain },
         retain: () => {
           if (disposed) throw new Error(`session observation "${session.id}" is disposed`)
           return lease()

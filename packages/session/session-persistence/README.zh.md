@@ -46,7 +46,7 @@ await ctx.sessionPersistence.flush()                           // backend-wide d
 
 服务级 `flush()` 排空每个活跃写句柄已路由的事件并把其会话实体化，效果与各句柄自己的 `flush` 完全相同；失败按会话聚合为一个 `AggregateError` 而不中途放弃清扫，清扫途中被关闭的句柄视同已 flush，因为 close 本身会持久排空。
 
-每一次日志读写都流经返回的 `SessionHandle`；不存在按 id 寻址的 append 或 load 方法。`handle.read(offset?, length?)` 返回 `{ eventState, events }`：外层 slice 属于调用方，`eventState` 则区分由调用方独占的 `detached` 事件图与可能同时位于后端缓存中的 `shared-frozen` 事件图。该状态由生成方确定，即使切片为空也会保留。两种状态都能直接接管而无需复制；需要可变事件的消费方必须先克隆事件。读取绝不包含撕裂尾部，同一句柄上的重复读取绝不会观察到比先前读取更旧的状态，写句柄也能读到自己成功的 append。`handle.append(events)` 追加一个连续批次，其第一个 `seq` 等于已存储 next-seq；完成时的持久化是尽力而为的——批次被接受、有序，并对同一后端实例上的读取可见，只有完成的 `flush` 才承诺它在崩溃后依然存在（交付的 JSONL 后端恰好会立即持久化每个批次）。`handle.flush()` 是持久性屏障，同时把空的已创建会话实体化，使其可被持久列出。`handle.close()` 幂等且不可取消：读句柄释放本地资源；写句柄完成待处理的持久化并释放写所有权。一旦某次 `append` 或 `flush` 完成，其后在同一后端实例上开始的读取——无论经由任何句柄，还是经由 `stat`/`list`——至少能观察到该前缀。
+每一次日志读写都流经返回的 `SessionHandle`；不存在按 id 寻址的 append 或 load 方法。`handle.read(offset?, length?)` 返回 `{ eventState, events }` 以及所读代际的 `chain`（见 [会话日志链](#the-session-log-chain)）：外层 slice 属于调用方，`eventState` 则区分由调用方独占的 `detached` 事件图与可能同时位于后端缓存中的 `shared-frozen` 事件图。该状态由生成方确定，即使切片为空也会保留。两种状态都能直接接管而无需复制；需要可变事件的消费方必须先克隆事件。读取绝不包含撕裂尾部，同一句柄上的重复读取绝不会观察到比先前读取更旧的状态，写句柄也能读到自己成功的 append。`handle.append(events)` 追加一个连续批次，其第一个 `seq` 等于已存储 next-seq；完成时的持久化是尽力而为的——批次被接受、有序，并对同一后端实例上的读取可见，只有完成的 `flush` 才承诺它在崩溃后依然存在（交付的 JSONL 后端恰好会立即持久化每个批次）。`handle.flush()` 是持久性屏障，同时把空的已创建会话实体化，使其可被持久列出。`handle.close()` 幂等且不可取消：读句柄释放本地资源；写句柄完成待处理的持久化并释放写所有权。一旦某次 `append` 或 `flush` 完成，其后在同一后端实例上开始的读取——无论经由任何句柄，还是经由 `stat`/`list`——至少能观察到该前缀。
 
 ### 所有权与可见性
 
@@ -54,11 +54,18 @@ await ctx.sessionPersistence.flush()                           // backend-wide d
 
 ### 实时写路径与关闭排空
 
-实时写路径由后端自持：它一次性安装会话监听器，把每个已发布会话的事件按 id 路由到该会话的活跃写句柄——`session/event` 复制进有界的内部批处理窗口，`session/flush` 是即时的持久性与错误观察屏障，`session/disposed` 执行最终排空并关闭句柄。没有活跃写句柄的已发布会话不做任何持久化。后台写入失败时按序保留其事件、暂停自动路径并记入日志；下一次显式 flush 会重试，并在再次失败时明确返回拒绝。`close()` 本身会先经由仍然打开的存储排空路由缓冲区再释放所有权，因此即便根 fiber 的 dispose（资源释放）并发运行各 fiber 的 disposer，后端拆卸时的关闭清扫也能保证应用关闭不丢数据。
+实时写路径由后端自持：它一次性安装会话监听器，把每个已发布会话的事件按 id 路由到该会话的活跃写句柄——`session/event` 路由进有界的内部批处理窗口，`session/flush` 是即时的持久性与错误观察屏障，`session/disposed` 执行最终排空并关闭句柄。没有活跃写句柄的已发布会话不做任何持久化。后台写入失败时按序保留其事件、暂停自动路径并记入日志；下一次显式 flush 会重试，并在再次失败时明确返回拒绝。`close()` 本身会先经由仍然打开的存储排空路由缓冲区再释放所有权，因此即便根 fiber 的dispose（资源释放）并发运行各 fiber 的 disposer，后端拆卸时的关闭清扫也能保证应用关闭不丢数据。
 
 ### 恢复与崩溃恢复
 
 持久化返回物理上有效的日志；语义修复属于读方。中途崩溃的会话保留其未闭合的最终轮次——单个轮次可能很大，而这些事件在崩溃前已持久追加；只有从未确认的撕裂尾部中不完整的碎片会被丢弃——从中恢复的完整记录由写路径在句柄的第一次新 append 之前持久重写。恢复（agent-loop）通过其写句柄读取已存储日志，计算 `interruptedTurnClosers`——合成 `tool/result` 错误、任何未闭合的 `step/end`，以及 `turn/end {interrupted}`——并把它们作为普通批次通过同一句柄追加。只读观察方（session-query）仅在内存中用同样的 closer 配平被中断的冷日志。
+
+<a id="the-session-log-chain"></a>
+### 会话日志链
+
+后端可以为其读取或写入的每个日志代际保留一份会话日志链：对该日志各行确切存储字节计算的 SHA-256 链接。头部链接是 `SHA-256(SESSION_LOG_CHAIN_TAG ‖ headerLine)`，标签为 `dsh-session-chain/1`；seq 为 `n` 的事件链接是 `SHA-256(link(n − 1) ‖ line(n))`，其中前一个链接以其 32 个原始字节参与哈希，`link(−1)` 是头部链接，一行是去掉换行符的一条 JSONL 记录的存储 UTF-8 字节。因此一个链接覆盖头部及截至其事件（含）的每一行，相等的链接标识字节完全相同的日志前缀。`SessionLogChain.linkAt(seq)` 以 64 个小写十六进制字符返回链接。`SessionHandle.read()` 在 `chain` 中返回所读代际的链；`SessionPersistence.liveChain(id)` 返回本进程活跃写句柄的链，它覆盖该句柄已接受的全部事件，包括写入仍处于待定状态的事件。不保留链的后端省略两者；消费方将缺失的链或链接视为不可验证。
+
+链还可以提供 `extend(events)`：它将本会继续该链的事件按后端写路径对追加事件的完全相同编码进行链接，并返回一条不改动原链的新链；当事件不继续该链或无法编码时返回 `undefined`。session-query 用它为冷读取补入的被中断轮次 closer 生成链接。
 
 ### 失败与恢复
 

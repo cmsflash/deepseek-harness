@@ -8,7 +8,7 @@ import type { ContentBlock, StreamChunk } from '@deepseek-ai/dsh-llm'
 import { SESSION_FORMAT_VERSION, SessionId } from '@deepseek-ai/dsh-session'
 import type { SessionEvent, SessionEventMap, SessionEventType, SessionHeader } from '@deepseek-ai/dsh-session'
 import {
-  eventLines,
+  eventLine,
   generationLogPath,
   toHeaderLine,
 } from '../../packages/session/session-persistence-jsonl/src/format.ts'
@@ -274,7 +274,7 @@ function frameTexts(events: readonly SessionEvent[], frameStarts: ReadonlySet<nu
   let start = 0
   for (let index = 1; index <= events.length; index++) {
     if (index === events.length || frameStarts.has(index)) {
-      frames.push(eventLines(events.slice(start, index)) + '\n')
+      frames.push(events.slice(start, index).map(eventLine).join('\n') + '\n')
       start = index
     }
   }

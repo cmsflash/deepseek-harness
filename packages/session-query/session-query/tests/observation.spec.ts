@@ -1,18 +1,20 @@
 import { Context } from '@deepseek-ai/cordis'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
-import SessionStore, { SessionLogOffset, SessionSeq, SESSION_FORMAT_VERSION, SessionId } from '@deepseek-ai/dsh-session'
+import SessionStore, { interruptedTurnClosers, SessionLogOffset, SessionSeq, SESSION_FORMAT_VERSION, SessionId } from '@deepseek-ai/dsh-session'
 import type { SessionEvent, SessionHeader, SessionId as SessionIdType } from '@deepseek-ai/dsh-session'
 import SessionPersistence, {
   SessionPersistenceCorruptionError,
   SessionPersistenceNotFoundError,
   SessionPersistenceRevision,
   SessionReadOnlyError,
+  SessionLogLink,
 } from '@deepseek-ai/dsh-session-persistence'
 import type {
   SessionAccess,
   SessionHandle,
   SessionHandleReadOptions,
   SessionHandleReadResult,
+  SessionLogChain,
   SessionPersistenceSnapshot,
   SessionPersistenceStatOptions,
 } from '@deepseek-ai/dsh-session-persistence'
@@ -44,6 +46,17 @@ function interruptedLog(text: string): SessionEvent[] {
   ]
 }
 
+const constantLink = SessionLogLink('a'.repeat(64))
+
+/** A chain double that answers one constant link for every seq it covers. */
+function stubChain(covered: number, extendResult?: SessionLogChain): SessionLogChain {
+  return {
+    length: covered,
+    linkAt: (seq: number) => (0 <= seq && seq < covered ? constantLink : undefined),
+    ...extendResult === undefined ? {} : { extend: () => extendResult },
+  }
+}
+
 interface StoredEntry {
   header: SessionHeader
   events: SessionEvent[]
@@ -67,6 +80,10 @@ interface StubHooks {
   readFailure?: unknown
   /** Replaces the stat result. */
   statFailure?: unknown
+  /** Chain every read result carries, when the backend double keeps one. */
+  readChain?: SessionLogChain
+  /** `liveChain` of the stubbed persistence service; omit for no chain. */
+  liveChain?: (id: SessionIdType) => SessionLogChain | undefined
 }
 
 /** Object-stub persistence: only the members the observation reader touches. */
@@ -117,7 +134,7 @@ function stubPersistence(
         }
         const events = structuredClone(entry.events)
         hooks.onReadResult?.(events)
-        return Promise.resolve({ eventState: 'detached', events })
+        return Promise.resolve({ eventState: 'detached', events, ...hooks.readChain === undefined ? {} : { chain: hooks.readChain } })
       },
       append: () => Promise.reject(new SessionReadOnlyError(id, 'append')),
       flush: () => Promise.reject(new SessionReadOnlyError(id, 'flush')),
@@ -126,7 +143,7 @@ function stubPersistence(
     }
     return Promise.resolve(handle)
   }
-  return { stat, open } as never
+  return { stat, open, ...hooks.liveChain === undefined ? {} : { liveChain: hooks.liveChain } } as never
 }
 
 async function readerContext(): Promise<Context> {
@@ -211,6 +228,33 @@ describe('SessionObservationReader live path', () => {
     })
     await ctx.fiber.dispose()
   })
+
+  it('exposes the persistence service liveChain in a live observation', async () => {
+    const ctx = await readerContext()
+    const session = ctx.sessions.create(SessionId('live-chain'))
+    session.append('turn/start', { turn: 1 })
+    const chain = stubChain(1)
+    ctx.provide('sessionPersistence', { liveChain: (id: SessionIdType) => (id === session.id ? chain : undefined) } as never)
+    const reader = new SessionObservationReader(ctx)
+
+    using observed = await reader.read(session.id, { projectionMode: 'none' })
+
+    expect(observed.source).toBe('live')
+    expect(observed.chain).toBe(chain)
+    await ctx.fiber.dispose()
+  })
+
+  it('leaves a live observation without a chain key when no persistence service is mounted', async () => {
+    const ctx = await readerContext()
+    const session = ctx.sessions.create(SessionId('live-no-chain'))
+    session.append('turn/start', { turn: 1 })
+    const reader = new SessionObservationReader(ctx)
+
+    using observed = await reader.read(session.id, { projectionMode: 'none' })
+
+    expect('chain' in observed).toBe(false)
+    await ctx.fiber.dispose()
+  })
 })
 
 describe('SessionObservationReader cold path', () => {
@@ -251,6 +295,62 @@ describe('SessionObservationReader cold path', () => {
 
     expect(observed.events).toEqual([])
     expect(observed.cursor).toBe(-1)
+    await ctx.fiber.dispose()
+  })
+
+  it('exposes the read result chain in a prepared observation', async () => {
+    const ctx = await readerContext()
+    const meta = header('prepared-chain')
+    const store = new Map([[meta.id, { header: meta, events: [messageEvent(0, 'linked')], revision: 'r1' }]])
+    const chain = stubChain(1)
+    ctx.provide('sessionPersistence', stubPersistence(store, { stat: 0, open: 0, read: 0 }, { readChain: chain }))
+
+    using observed = await new SessionObservationReader(ctx).read(meta.id, { projectionMode: 'none' })
+
+    expect(observed.source).toBe('prepared')
+    expect(observed.chain).toBe(chain)
+    await ctx.fiber.dispose()
+  })
+
+  it('links the interrupted-turn closers of a prepared observation through extend', async () => {
+    const ctx = await readerContext()
+    const meta = header('prepared-closers-chain')
+    const store = new Map([[meta.id, { header: meta, events: interruptedLog('crashed'), revision: 'r1' }]])
+    const extendResult = stubChain(2 + interruptedTurnClosers(interruptedLog('crashed')).length)
+    const readChain = stubChain(2, extendResult)
+    ctx.provide('sessionPersistence', stubPersistence(store, { stat: 0, open: 0, read: 0 }, { readChain }))
+
+    using observed = await new SessionObservationReader(ctx).read(meta.id, { projectionMode: 'none' })
+
+    expect(observed.chain).toBe(extendResult)
+    expect(observed.chain?.length).toBe(observed.events.length)
+    expect(observed.chain?.linkAt(observed.cursor)).toBe(constantLink)
+    await ctx.fiber.dispose()
+  })
+
+  it('leaves a prepared observation unlinked past extendable closers', async () => {
+    const ctx = await readerContext()
+    const meta = header('prepared-closers-unlinked')
+    const store = new Map([[meta.id, { header: meta, events: interruptedLog('crashed'), revision: 'r1' }]])
+    const readChain = stubChain(2, undefined)
+    ctx.provide('sessionPersistence', stubPersistence(store, { stat: 0, open: 0, read: 0 }, { readChain }))
+
+    using observed = await new SessionObservationReader(ctx).read(meta.id, { projectionMode: 'none' })
+
+    expect(observed.chain).toBe(readChain)
+    expect(observed.chain?.length).toBe(2)
+    await ctx.fiber.dispose()
+  })
+
+  it('leaves a prepared observation without a chain key when the read carries none', async () => {
+    const ctx = await readerContext()
+    const meta = header('prepared-no-chain')
+    const store = new Map([[meta.id, { header: meta, events: [messageEvent(0, 'plain')], revision: 'r1' }]])
+    ctx.provide('sessionPersistence', stubPersistence(store, { stat: 0, open: 0, read: 0 }))
+
+    using observed = await new SessionObservationReader(ctx).read(meta.id, { projectionMode: 'none' })
+
+    expect('chain' in observed).toBe(false)
     await ctx.fiber.dispose()
   })
 

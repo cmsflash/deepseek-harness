@@ -46,7 +46,7 @@ describe('common paid translation persistence', () => {
       cleanups.push(async () => { release.resolve(undefined) })
       const persist = backend.persistBatch.bind(backend)
       vi.spyOn(backend, 'persistBatch').mockImplementation(async (...args) => {
-        if (results(args[1]).length > 0) {
+        if (args[1].some(line => line.includes('plugin:translator/result'))) {
           entered.resolve(undefined)
           await release.promise
         }

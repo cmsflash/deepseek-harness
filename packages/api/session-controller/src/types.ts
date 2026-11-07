@@ -445,6 +445,13 @@ export interface SessionEventEntry {
    * the page; null when exact usage is unavailable. Pure `observeEvent` subscriptions omit it.
    */
   readonly turnUsage?: TurnTokenUsage | null
+  /**
+   * Session log chain link of the event, or of the last event a covering
+   * record stands for, on `follow`, `page`, and `events` records whose log the
+   * Host keeps a chain for; `observeEvent` frames, `wait` records and step
+   * expansions omit it.
+   */
+  readonly link?: SessionChainLink
 }
 
 /** Current logical Session metadata carried on the browser wire. */
@@ -578,6 +585,21 @@ export interface SessionPageRequest {
   readonly stepDetail?: SessionStepDetail
 }
 
+/**
+ * One event's Session log chain link: 64 lowercase hexadecimal characters of
+ * SHA-256 over the previous link and the event's stored line (see
+ * `SESSION_LOG_CHAIN_TAG` in `@deepseek-ai/dsh-session-persistence`).
+ */
+export type SessionChainLink = Branded<'session-chain-link'>
+
+/** The held window a reopening follow continues instead of receiving a snapshot. */
+export interface SessionFollowResume {
+  /** The last seq the newest held record stands for. */
+  readonly afterSeq: number
+  /** The chain link the Host sent with that record. */
+  readonly link: SessionChainLink
+}
+
 /** One live event request for a durable Session address. */
 export interface SessionFollowRequest extends Pick<SessionPageRequest, 'maxMessages' | 'turnWindow'> {
   readonly address: SessionAddress
@@ -587,6 +609,12 @@ export interface SessionFollowRequest extends Pick<SessionPageRequest, 'maxMessa
   readonly assistantStream?: true
   /** Step detail served by the opening snapshot; omitted means `full`. */
   readonly stepDetail?: SessionStepDetail
+  /**
+   * Continue a held window. The Host answers with a `resumed` opening when its
+   * chain link at `resume.afterSeq` equals `resume.link` and the gap fits its
+   * configured limit, and with a complete `snapshot` otherwise.
+   */
+  readonly resume?: SessionFollowResume
 }
 
 /**
@@ -676,7 +704,10 @@ export interface SessionPage {
   readonly digests?: readonly StepDigest[]
 }
 
-/** Complete opening window followed by ordered durable events and opted-in assistant frames. */
+/**
+ * Complete opening window, or the continuation of a held window, followed by
+ * ordered durable events and opted-in assistant frames.
+ */
 export type SessionFollowFrame =
   | {
     readonly type: 'snapshot'
@@ -686,6 +717,17 @@ export type SessionFollowFrame =
     readonly hasMore: boolean
     /** One entry per elided step, ascending by `startSeq`; absent under `full` detail. */
     readonly digests?: readonly StepDigest[]
+    readonly projections: SessionProjectionBaseline
+    readonly assistantStream?: SessionAssistantStreamBaseline
+  }
+  | {
+    /** Answers a request's `resume`: `records` hold every event after `after` through `cursor`, at full detail. */
+    readonly type: 'resumed'
+    readonly header: SessionWireHeader
+    /** The request's `resume.afterSeq`. */
+    readonly after: number
+    readonly cursor: number
+    readonly records: readonly SessionHistoryRecord[]
     readonly projections: SessionProjectionBaseline
     readonly assistantStream?: SessionAssistantStreamBaseline
   }
