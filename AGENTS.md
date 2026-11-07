@@ -121,6 +121,7 @@ Before pushing, follow [dsh-pre-push-checks](.agents/skills/dsh-pre-push-checks/
 - `test:coverage`, not `test`, is the CI coverage gate ([why](docs/testing.md)).
 - Develop with `build:artifacts`; before claiming completion, run `build:check` after the latest `build:artifacts`, or `build` ([layout](docs/development.md#typescript-project-layout)).
 - **Web browser automation and GIF recording:** launch with `pnpm dsh web --patch apps/web/tests/pin-browse-picker.overlay.yml` to use the [in-page directory picker](apps/web/tests/pin-browse-picker.overlay.yml); omit this override only when testing native picker behavior explicitly.
+- **Browser validation tools:** validate through the Chrome Agent Bridge MCP (`chrome-agent`) unless it cannot do the job (for example WebKit, network emulation, WebSocket frame capture, or isolated sign-ins). Then use a standalone install of the tool's latest release, never the repository's development dependencies such as `apps/web`'s Playwright, which stay pinned for the test suites.
 
 ## Secrets / .env
 
