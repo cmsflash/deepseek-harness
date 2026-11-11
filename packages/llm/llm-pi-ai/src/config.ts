@@ -312,6 +312,14 @@ const modelFields = {
   // `{}`, and absent must stay distinguishable — it means "inherit the
   // installed catalog's capability", while `false` disables reasoning.
   reasoningEfforts: z.union([z.const(false), reasoningEfforts]),
+  // schemastery materializes an absent object as `{}`; resolution reads that
+  // as "no rates here" and requires all four once any is set.
+  cost: z.object({
+    input: z.number().min(0),
+    output: z.number().min(0),
+    cacheRead: z.number().min(0),
+    cacheWrite: z.number().min(0),
+  }),
   compat: compatProfile,
 }
 

@@ -212,6 +212,34 @@ describe('hand-declared providers', () => {
     }
   })
 
+  it('prices a model from its declared rates before the catalog’s', () => {
+    const rates = { input: 8, output: 40, cacheRead: 0.2, cacheWrite: 10 }
+    const resolved = resolveProfiles({
+      'acme-gateway': {
+        api: 'openai-completions',
+        baseURL: 'https://acme.test',
+        models: [
+          { id: 'bare', cost: rates },
+          { id: 'anthropic/claude-opus-5', cost: rates },
+          { id: 'anthropic/claude-opus-5-5', cost: {} },
+        ],
+      },
+    })
+    const costOf = (id: string): unknown =>
+      (resolved.get('acme-gateway')?.piProvider?.getModels() ?? []).find(m => m.id === id)?.cost
+
+    expect(costOf('bare')).toEqual(rates)
+    expect(costOf('anthropic/claude-opus-5')).toEqual(rates)
+    expect(costOf('anthropic/claude-opus-5-5')).toEqual({ input: 4, output: 20, cacheRead: 0.2, cacheWrite: 5 })
+    expect(() => resolveProfiles({
+      'acme-gateway': {
+        api: 'openai-completions',
+        baseURL: 'https://acme.test',
+        models: [{ id: 'bare', cost: { input: 8, output: 40 } }],
+      },
+    })).toThrow(/model "bare" cost is missing cacheRead, cacheWrite/)
+  })
+
   it('takes a model’s declared modalities, then the catalog’s, then the route’s', () => {
     const vision = getBuiltinModels('anthropic').find(model => model.input.includes('image'))
     if (vision === undefined) throw new Error('the installed catalog ships no anthropic vision model')

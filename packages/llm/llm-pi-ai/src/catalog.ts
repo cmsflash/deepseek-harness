@@ -654,6 +654,13 @@ export interface PiAiModelProfile {
    * declares the offered levels and their wire spellings.
    */
   reasoningEfforts?: false | PiAiReasoningEfforts
+  /**
+   * Rates in US dollars per million tokens, winning over the installed
+   * catalog's and the origin's. Absent or empty states no rates; otherwise all
+   * four are required, because a missing rate would price that token class at
+   * zero.
+   */
+  cost?: Partial<ModelCost>
   /** pi-ai wire-compatibility switches for this model, winning over the route's per field; one its protocol does not declare is refused. */
   compat?: PiAiCompatProfile
 }
@@ -693,6 +700,26 @@ export interface RouteCatalogRequest {
 export class PiAiCatalogError extends Error {}
 
 /** Report a route the deployment cannot serve, naming the settings key at fault. */
+const COST_FIELDS = ['input', 'output', 'cacheRead', 'cacheWrite'] as const
+
+/**
+ * Read the rates a model entry declares.
+ * @param provider - route key, for the diagnostic.
+ * @param entry - configured model entry.
+ * @returns the declared rates, or undefined when the entry sets none.
+ */
+function declaredCost(provider: string, entry: PiAiModelProfile): ModelCost | undefined {
+  const cost = entry.cost
+  if (cost === undefined || COST_FIELDS.every(field => cost[field] === undefined)) return undefined
+  const { input, output, cacheRead, cacheWrite } = cost
+  if (input === undefined || output === undefined || cacheRead === undefined || cacheWrite === undefined) {
+    const missing = COST_FIELDS.filter(field => cost[field] === undefined).join(', ')
+    invalid(provider, `model "${entry.id}" cost is missing ${missing}; set all four rates in dollars per million`
+      + ' tokens, or remove cost to keep the catalog rates')
+  }
+  return { input, output, cacheRead, cacheWrite }
+}
+
 function invalid(provider: string, detail: string): never {
   throw new PiAiCatalogError(`llm-pi-ai: provider "${provider}" ${detail}`)
 }
@@ -971,7 +998,7 @@ export function resolveRouteModels(
       provider,
       baseUrl,
       input: declaredInput(entry.input) ?? base?.input ?? [...request.defaultInput],
-      cost: base?.cost ?? originCost(entry.id) ?? NO_COST,
+      cost: declaredCost(provider, entry) ?? base?.cost ?? originCost(entry.id) ?? NO_COST,
       contextWindow,
       maxTokens,
       ...resolveModelReasoning(provider, entry, base),
