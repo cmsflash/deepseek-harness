@@ -311,7 +311,7 @@ describe('AppFrame normal width concessions', () => {
     expect(rightOwner().width).toBe(450)
   })
 
-  it('shrinks the right panel to 300px, drops its track, and only then squeezes center', () => {
+  it('shrinks the right panel to 280px, drops its track, and only then squeezes center', () => {
     const { frame, instance, rightOwner } = mountFrame()
     act(() => { instance.actions.setSidebar(420); instance.actions.openRightbar(true, false) })
     resize(1200)
@@ -319,11 +319,11 @@ describe('AppFrame normal width concessions', () => {
     // width) reports the resolved squeeze.
     expect(tracks(frame)).toEqual([420, 840])
     expect(rightOwner()).toEqual({ width: 380, viewportWidth: 1200, canShow: true })
-    resize(1120)
-    expect(tracks(frame)).toEqual([420, 784])
-    resize(1119)
+    resize(1100)
+    expect(tracks(frame)).toEqual([420, 770])
+    resize(1099)
     expect(tracks(frame)).toEqual([420, 0])
-    expect(rightOwner()).toEqual({ width: 0, viewportWidth: 1119, canShow: false })
+    expect(rightOwner()).toEqual({ width: 0, viewportWidth: 1099, canShow: false })
     expect(frame.querySelector('[data-side="rightbar"]')).toBeNull()
     expect(instance.getSnapshot().layoutInfo).toMatchObject({ rightbarShown: true, rightbar: 864 })
     act(() => { instance.actions.closeRightbar() })
@@ -346,7 +346,7 @@ describe('AppFrame normal width concessions', () => {
     expect(rightOwner().canShow).toBe(true)
   })
 
-  it.each([[756, 300, true], [755, 0, false]] as const)('reports eligibility at %ipx', (width, rightbar, canShow) => {
+  it.each([[736, 280, true], [735, 0, false]] as const)('reports eligibility at %ipx', (width, rightbar, canShow) => {
     frameWidth = width
     const { instance, rightOwner } = mountFrame()
     act(() => { instance.actions.toggleSidebar() })
@@ -573,7 +573,7 @@ describe('AppFrame pointer resizing', () => {
     expect(handle.style.left).toBe('690px')
   })
 
-  it('widens to the 70% limit and shrinks to 300px through pointer input', () => {
+  it('widens to the 70% limit and shrinks to 280px through pointer input', () => {
     frameWidth = 3000
     const { frame, instance, rightOwner } = mountFrame()
     act(() => { instance.actions.toggleSidebar(); instance.actions.openRightbar(true, false) })
@@ -581,8 +581,8 @@ describe('AppFrame pointer resizing', () => {
     expect(rightOwner().width).toBe(2100)
     expect(tracks(frame)[1]).toBe(2100)
     drag(handleFor(frame, 'rightbar'), 900, 3000)
-    expect(rightOwner().width).toBe(300)
-    expect(tracks(frame)[1]).toBe(300)
+    expect(rightOwner().width).toBe(280)
+    expect(tracks(frame)[1]).toBe(280)
   })
 
   it('commits the pointerup coordinate and cancels its pending animation frame', () => {

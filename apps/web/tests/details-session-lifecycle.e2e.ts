@@ -187,8 +187,8 @@ describe.skipIf(MODE === 'record')('web e2e: details panel follows the current S
     try {
       await blankColumn.locator('[data-sidebar-right-toggle]').click()
       await blankColumn.locator('[data-dockkit-pane]').first().waitFor({ state: 'hidden' })
-      await page.setViewportSize({ width: 767, height: blankViewport.height })
-      await expect.poll(() => columns(page)).toEqual([56, 711, 0])
+      await page.setViewportSize({ width: 735, height: blankViewport.height })
+      await expect.poll(() => columns(page)).toEqual([56, 679, 0])
       await page.locator('[data-sidebar-right-expand]').click()
       // The fullscreen shell keeps its box beside the sidebar while its docked content closes.
       await expect.poll(() => blankColumn.locator('[data-sidebar-right-open]').count()).toBe(1)
@@ -422,11 +422,11 @@ describe.skipIf(MODE === 'record')('web e2e: details panel follows the current S
 
       await page.locator('[data-sidebar-right-expand]').click()
       await expect.poll(() => columns(page)).toEqual([420, viewport.width - 420 - normalWidth, normalWidth])
-      await page.setViewportSize({ width: 767, height: viewport.height })
-      await expect.poll(() => columns(page)).toEqual([56, 711, 0])
-      await expect.poll(() => panel.boundingBox()).toEqual({ x: 56, y: 0, width: 711, height: viewport.height })
+      await page.setViewportSize({ width: 735, height: viewport.height })
+      await expect.poll(() => columns(page)).toEqual([56, 679, 0])
+      await expect.poll(() => panel.boundingBox()).toEqual({ x: 56, y: 0, width: 679, height: viewport.height })
       expect(await sidebarSnapshot(page)).toMatchObject({ mode: 'fullscreen', resizeHandleWidth: 0, coversBesideSidebar: true })
-      await checkpoint('A automatic fullscreen at 767px')
+      await checkpoint('A automatic fullscreen at 735px')
       await column.locator('[data-sidebar-right-mode="push"]').click()
       await expect.poll(() => column.locator('[data-sidebar-right-open]').count()).toBe(0)
       await page.setViewportSize(viewport)

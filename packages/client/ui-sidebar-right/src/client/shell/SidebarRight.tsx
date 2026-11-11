@@ -373,7 +373,7 @@ export function RightbarSeat({
   const shortcuts = useShortcuts(entries => entries)
   const surface = useStore(state => state.bySession[sessionId])
   const shown = active && surface !== undefined && surface.layout.expanded
-  const autoFullscreen = viewportWidth < 768
+  const autoFullscreen = viewportWidth < 736
   const fullscreen = autoFullscreen || surface?.layout.mode === 'fullscreen'
   const panelRef = useRef<HTMLDivElement | null>(null)
   // A reading never re-renders anything: the service applies it when it splits.

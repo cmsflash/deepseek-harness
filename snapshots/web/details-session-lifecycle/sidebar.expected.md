@@ -408,24 +408,24 @@
 }
 ```
 
-## A automatic fullscreen at 767px
+## A automatic fullscreen at 735px
 
 ```json
 {
   "viewport": [
-    767,
+    735,
     1000
   ],
   "columns": [
     56,
-    711,
+    679,
     0
   ],
   "columnTransition": "none",
   "expanded": true,
   "mode": "fullscreen",
-  "panelContentWidth": 711,
-  "panelOuterWidth": 711,
+  "panelContentWidth": 679,
+  "panelOuterWidth": 679,
   "coversBesideSidebar": true,
   "resizeHandleWidth": 0,
   "expandedDirectories": [],

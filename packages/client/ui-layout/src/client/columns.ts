@@ -47,7 +47,7 @@ export const DRAWER_PEEK = 56
 /** Drawer ceiling on larger phones, so it never grows into a second column. */
 export const DRAWER_MAX = 320
 /** Right column drag clamp floor. */
-export const RIGHTBAR_MIN = 300
+export const RIGHTBAR_MIN = 280
 /** Maximum normal right panel width as a fraction of the frame. */
 export const RIGHTBAR_MAX_RATIO = 0.7
 /** First-open right panel preference as a fraction of the frame. */

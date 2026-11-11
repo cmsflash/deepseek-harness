@@ -664,9 +664,9 @@ describe('web e2e: shipped right Sidebar', () => {
         await expandOf(page).click()
         await expect.poll(async () => await column.locator('[data-sidebar-right-open]').count()).toBe(1)
 
-        await page.setViewportSize({ width: 767, height: viewport.height })
+        await page.setViewportSize({ width: 735, height: viewport.height })
         await expect.poll(async () => await panel.getAttribute('data-sidebar-right-panel')).toBe('fullscreen')
-        await expect.poll(async () => await width(panel)).toBe(767 - await width(sidebar))
+        await expect.poll(async () => await width(panel)).toBe(735 - await width(sidebar))
         await expect.poll(() => frame.getAttribute('data-rightbar-fullscreen')).toBe('true')
         expect(await frame.locator('[data-side="rightbar"]').count()).toBe(0)
         await column.locator('[data-sidebar-right-mode="push"]').click()
@@ -727,7 +727,7 @@ describe('web e2e: shipped right Sidebar', () => {
         await page.mouse.up()
         // The panel holds its floor, still open, with its grip still rendered.
         await expect.poll(async () => await width(panel)).toBeLessThanOrEqual(302)
-        expect(await width(panel)).toBeGreaterThanOrEqual(300)
+        expect(await width(panel)).toBeGreaterThanOrEqual(280)
         expect(await column.locator('[data-sidebar-right-open]').count()).toBe(1)
         expect(await grip.count()).toBe(1)
         // Widen with overshoot to the far left: clamped by the frame's range.

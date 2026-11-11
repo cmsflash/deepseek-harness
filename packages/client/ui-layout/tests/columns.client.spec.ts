@@ -22,17 +22,17 @@ describe('computeColumns', () => {
 
   it('clamps sidebar preferences and limits the right panel to 70% of the frame', () => {
     expect(computeColumns(3000, 9999, 9999)).toEqual({ sidebar: 420, center: 480, rightbar: 2100, overlay: false })
-    expect(computeColumns(1920, 1, 1)).toEqual({ sidebar: 264, center: 1356, rightbar: 300, overlay: false })
+    expect(computeColumns(1920, 1, 1)).toEqual({ sidebar: 264, center: 1376, rightbar: 280, overlay: false })
   })
 
   it.each([
     [1300, 280, 620, 400],
     [1100, 280, 420, 400],
-    [1120, 420, 300, 400],
-    [1119, 420, 0, 699],
+    [1100, 420, 280, 400],
+    [1099, 420, 0, 679],
     [1024, 420, 0, 604],
-    [756, 0, 300, 400],
-    [755, 0, 0, 699],
+    [736, 0, 280, 400],
+    [735, 0, 0, 679],
     [641, 0, 0, 585],
   ])('solves frame %i and sidebar %i to right %i and center %i', (viewport, sidebar, rightbar, center) => {
     expect(computeColumns(viewport, sidebar, 864)).toEqual({ sidebar: sidebar || 56, center, rightbar, overlay: false })
