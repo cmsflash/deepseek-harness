@@ -141,7 +141,7 @@ export interface RightbarOwnerProps {
   /** Current frame width in px. */
   viewportWidth: number
   /**
-   * Whether a normal right panel can retain 300px beside a 400px center.
+   * Whether a normal right panel can retain 300px beside a 300px center.
    * Before a narrow opening, includes the space from collapsing the left sidebar.
    */
   canShow: boolean

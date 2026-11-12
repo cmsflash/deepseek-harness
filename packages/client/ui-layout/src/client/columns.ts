@@ -18,7 +18,7 @@
 export interface Columns { sidebar: number; center: number; rightbar: number; overlay: boolean }
 
 /** Center width protected while the normal right column is open. */
-export const CENTER_MIN = 400
+export const CENTER_MIN = 300
 /** Sidebar drag clamp floor. */
 export const SIDEBAR_MIN = 264
 /** Sidebar drag clamp ceiling. */
@@ -47,7 +47,7 @@ export const DRAWER_PEEK = 56
 /** Drawer ceiling on larger phones, so it never grows into a second column. */
 export const DRAWER_MAX = 320
 /** Right column drag clamp floor. */
-export const RIGHTBAR_MIN = 280
+export const RIGHTBAR_MIN = 300
 /** Maximum normal right panel width as a fraction of the frame. */
 export const RIGHTBAR_MAX_RATIO = 0.7
 /** First-open right panel preference as a fraction of the frame. */

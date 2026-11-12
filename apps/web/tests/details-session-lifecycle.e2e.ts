@@ -120,20 +120,6 @@ async function sidebarSnapshot(page: Page) {
   return { ...geometry, panes: await paneSnapshot(page) }
 }
 
-/** The native pointer gesture used for the left column's width preference. */
-async function dragSidebar(page: Page, target: number): Promise<void> {
-  const grip = await page.locator('[data-side="sidebar"]').boundingBox()
-  if (grip === null) throw new Error('Sidebar resize handle is not rendered')
-  await page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2)
-  await page.mouse.down()
-  try {
-    await page.mouse.move(target, grip.y + grip.height / 2, { steps: 6 })
-  } finally {
-    await page.mouse.up()
-  }
-  await expect.poll(() => sidebarTrack(page)).toBe(target)
-}
-
 describe.skipIf(MODE === 'record')('web e2e: details panel follows the current Session lifecycle', () => {
   let scaffold: WebScaffold
   let browser: Browser
@@ -187,8 +173,8 @@ describe.skipIf(MODE === 'record')('web e2e: details panel follows the current S
     try {
       await blankColumn.locator('[data-sidebar-right-toggle]').click()
       await blankColumn.locator('[data-dockkit-pane]').first().waitFor({ state: 'hidden' })
-      await page.setViewportSize({ width: 735, height: blankViewport.height })
-      await expect.poll(() => columns(page)).toEqual([56, 679, 0])
+      await page.setViewportSize({ width: 655, height: blankViewport.height })
+      await expect.poll(() => columns(page)).toEqual([56, 599, 0])
       await page.locator('[data-sidebar-right-expand]').click()
       // The fullscreen shell keeps its box beside the sidebar while its docked content closes.
       await expect.poll(() => blankColumn.locator('[data-sidebar-right-open]').count()).toBe(1)
@@ -407,30 +393,31 @@ describe.skipIf(MODE === 'record')('web e2e: details panel follows the current S
     await checkpoint('A restored: expanded normal panel')
 
     try {
-      await page.setViewportSize({ width: 1024, height: viewport.height })
+      await page.setViewportSize({ width: 860, height: viewport.height })
       // Frame measurement and the grid transition can finish after setViewportSize returns.
-      await expect.poll(() => columns(page), { timeout: 5_000 }).toEqual([280, 400, 344])
-      await dragSidebar(page, 420)
-      await expect.poll(() => columns(page)).toEqual([420, 604, 0])
+      await expect.poll(async () => (await columns(page))[0], { timeout: 5_000 }).toBe(56)
+      expect(await column.locator('[data-sidebar-right-open]').count()).toBe(1)
+      await page.getByRole('button', { name: 'Open sidebar', exact: true }).first().click()
+      await expect.poll(() => columns(page)).toEqual([280, 580, 0])
       expect(await column.locator('[data-sidebar-right-open]').count()).toBe(0)
       expect(await paneSnapshot(page)).toEqual(retainedA)
-      await checkpoint('A capacity-closed: wide left preference protected')
+      await checkpoint('A capacity-closed: expanded left sidebar protected')
       await page.setViewportSize(viewport)
-      await expect.poll(() => columns(page)).toEqual([420, viewport.width - 420, 0])
+      await expect.poll(() => columns(page)).toEqual([280, viewport.width - 280, 0])
       expect(await column.locator('[data-sidebar-right-open]').count()).toBe(0)
       await checkpoint('A widened: remains closed')
 
       await page.locator('[data-sidebar-right-expand]').click()
-      await expect.poll(() => columns(page)).toEqual([420, viewport.width - 420 - normalWidth, normalWidth])
-      await page.setViewportSize({ width: 735, height: viewport.height })
-      await expect.poll(() => columns(page)).toEqual([56, 679, 0])
-      await expect.poll(() => panel.boundingBox()).toEqual({ x: 56, y: 0, width: 679, height: viewport.height })
+      await expect.poll(() => columns(page)).toEqual([280, viewport.width - 280 - normalWidth, normalWidth])
+      await page.setViewportSize({ width: 655, height: viewport.height })
+      await expect.poll(() => columns(page)).toEqual([56, 599, 0])
+      await expect.poll(() => panel.boundingBox()).toEqual({ x: 56, y: 0, width: 599, height: viewport.height })
       expect(await sidebarSnapshot(page)).toMatchObject({ mode: 'fullscreen', resizeHandleWidth: 0, coversBesideSidebar: true })
-      await checkpoint('A automatic fullscreen at 735px')
+      await checkpoint('A automatic fullscreen at 655px')
       await column.locator('[data-sidebar-right-mode="push"]').click()
       await expect.poll(() => column.locator('[data-sidebar-right-open]').count()).toBe(0)
       await page.setViewportSize(viewport)
-      await expect.poll(() => columns(page)).toEqual([420, viewport.width - 420, 0])
+      await expect.poll(() => columns(page)).toEqual([280, viewport.width - 280, 0])
       expect(await paneSnapshot(page)).toEqual(retainedA)
       expect(await panel.getAttribute('data-sidebar-right-panel')).toBe('push')
       expect(await column.locator('[data-sidebar-right-open]').count()).toBe(0)

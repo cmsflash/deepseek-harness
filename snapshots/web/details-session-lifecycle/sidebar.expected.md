@@ -312,17 +312,17 @@
 }
 ```
 
-## A capacity-closed: wide left preference protected
+## A capacity-closed: expanded left sidebar protected
 
 ```json
 {
   "viewport": [
-    1024,
+    860,
     1000
   ],
   "columns": [
-    420,
-    604,
+    280,
+    580,
     0
   ],
   "columnTransition": "all",
@@ -369,8 +369,8 @@
     1000
   ],
   "columns": [
-    420,
-    1260,
+    280,
+    1400,
     0
   ],
   "columnTransition": "all",
@@ -408,24 +408,24 @@
 }
 ```
 
-## A automatic fullscreen at 735px
+## A automatic fullscreen at 655px
 
 ```json
 {
   "viewport": [
-    735,
+    655,
     1000
   ],
   "columns": [
     56,
-    679,
+    599,
     0
   ],
   "columnTransition": "none",
   "expanded": true,
   "mode": "fullscreen",
-  "panelContentWidth": 679,
-  "panelOuterWidth": 679,
+  "panelContentWidth": 599,
+  "panelOuterWidth": 599,
   "coversBesideSidebar": true,
   "resizeHandleWidth": 0,
   "expandedDirectories": [],
@@ -465,8 +465,8 @@
     1000
   ],
   "columns": [
-    420,
-    1260,
+    280,
+    1400,
     0
   ],
   "columnTransition": "all",

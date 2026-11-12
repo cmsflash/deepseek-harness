@@ -197,7 +197,7 @@ describe('right panel', () => {
     expect(store.getSnapshot().layoutInfo.rightbar).toBe(1100)
   })
 
-  it('clamps drag preferences to 280px and 70% of the current frame', () => {
+  it('clamps drag preferences to 300px and 70% of the current frame', () => {
     const { store, actions } = createLayoutStore().create()
     actions.setViewportWidth(1600)
     actions.setRightbar(9999)
@@ -206,14 +206,14 @@ describe('right panel', () => {
     actions.setRightbar(9999)
     expect(store.getSnapshot().layoutInfo.rightbar).toBe(700)
     actions.setRightbar(1)
-    expect(store.getSnapshot().layoutInfo.rightbar).toBe(280)
+    expect(store.getSnapshot().layoutInfo.rightbar).toBe(300)
   })
 
   it('retains a minimum normal preference when first opened fullscreen on a phone', () => {
     const { store, actions } = createLayoutStore().create()
     actions.setViewportWidth(320)
     actions.openRightbar(false, true)
-    expect(store.getSnapshot().layoutInfo.rightbar).toBe(280)
+    expect(store.getSnapshot().layoutInfo.rightbar).toBe(300)
   })
 
   it('collapses a manually expanded narrow sidebar on opening, not presentation reports', () => {

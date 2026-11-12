@@ -22,33 +22,32 @@ describe('computeColumns', () => {
 
   it('clamps sidebar preferences and limits the right panel to 70% of the frame', () => {
     expect(computeColumns(3000, 9999, 9999)).toEqual({ sidebar: 420, center: 480, rightbar: 2100, overlay: false })
-    expect(computeColumns(1920, 1, 1)).toEqual({ sidebar: 264, center: 1376, rightbar: 280, overlay: false })
+    expect(computeColumns(1920, 1, 1)).toEqual({ sidebar: 264, center: 1356, rightbar: 300, overlay: false })
   })
 
   it.each([
-    [1300, 280, 620, 400],
-    [1100, 280, 420, 400],
-    [1100, 420, 280, 400],
-    [1099, 420, 0, 679],
-    [1024, 420, 0, 604],
-    [736, 0, 280, 400],
-    [735, 0, 0, 679],
+    [1300, 280, 720, 300],
+    [1100, 280, 520, 300],
+    [1020, 420, 300, 300],
+    [1019, 420, 0, 599],
+    [656, 0, 300, 300],
+    [655, 0, 0, 599],
     [641, 0, 0, 585],
   ])('solves frame %i and sidebar %i to right %i and center %i', (viewport, sidebar, rightbar, center) => {
     expect(computeColumns(viewport, sidebar, 864)).toEqual({ sidebar: sidebar || 56, center, rightbar, overlay: false })
   })
 
   it('does not reduce the wide sidebar to keep a normal right panel open', () => {
-    expect(computeColumns(1024, 420, 500)).toEqual({ sidebar: 420, center: 604, rightbar: 0, overlay: false })
+    expect(computeColumns(1000, 420, 500)).toEqual({ sidebar: 420, center: 580, rightbar: 0, overlay: false })
   })
 
   it('restores a still-open preference when the frame widens', () => {
-    expect(computeColumns(1100, 280, 864).rightbar).toBe(420)
+    expect(computeColumns(1100, 280, 864).rightbar).toBe(520)
     expect(computeColumns(1920, 280, 864).rightbar).toBe(864)
   })
 
   it('leaves a closed right track closed when the frame widens', () => {
-    expect(computeColumns(755, 0, 0).rightbar).toBe(0)
+    expect(computeColumns(655, 0, 0).rightbar).toBe(0)
     expect(computeColumns(1920, 0, 0).rightbar).toBe(0)
   })
 })

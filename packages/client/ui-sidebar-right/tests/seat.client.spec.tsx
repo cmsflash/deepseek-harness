@@ -607,13 +607,13 @@ describe('RightbarSeat presentation', () => {
   })
 
   it('derives narrow fullscreen without recording mode and returns to normal when widened', async () => {
-    const h = await mountSeat(735, false)
+    const h = await mountSeat(655, false)
     h.open()
     expect(h.layout().mode).toBe('push')
     expect(h.frame.openRightbar).toHaveBeenLastCalledWith(false, true)
     const stored = h.instance.getSnapshot()
     const body = element(h.view.container, '[data-tab-body]')
-    h.view.update({ width: 420, viewportWidth: 736, canShow: true })
+    h.view.update({ width: 420, viewportWidth: 656, canShow: true })
     expect(h.instance.getSnapshot()).toBe(stored)
     expect(element(h.view.container, '[data-tab-body]')).toBe(body)
     expect(h.frame.openRightbar).toHaveBeenLastCalledWith(true, false)
@@ -712,7 +712,7 @@ describe('RightbarSeat fullscreen entry', () => {
   })
 
   it('reports when reduced motion cancels the entering transition', async () => {
-    const h = await mountSeat(735, false)
+    const h = await mountSeat(655, false)
     const slide = transition()
     vi.spyOn(element(h.view.container, '[data-sidebar-right-panel]'), 'getAnimations').mockReturnValue([slide.animation])
     h.open()
@@ -722,7 +722,7 @@ describe('RightbarSeat fullscreen entry', () => {
   })
 
   it('waits for a replacement transform after cancellation', async () => {
-    const h = await mountSeat(735, false)
+    const h = await mountSeat(655, false)
     const first = transition()
     const replacement = transition()
     const animations = vi.spyOn(element(h.view.container, '[data-sidebar-right-panel]'), 'getAnimations')
