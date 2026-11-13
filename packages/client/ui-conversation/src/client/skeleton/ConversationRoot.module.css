@@ -571,6 +571,60 @@
   left: 0;
 }
 
+/* A fullscreen right panel (the frame's data-rightbar-fullscreen, ui-layout)
+   covers this column. The seat leaves the column and docks along the bottom of
+   the area the panel covers, starting at the frame's --dsh-sidebar-width; the
+   panel ends above it (--dsh-main-composer-height, ui-sidebar-right). The seat
+   is the same element, so the draft, focus, docks, and takeovers carry over.
+   Fixed positioning relies on no ancestor containing fixed descendants, and
+   the layer sits between the panel's dock (40) and its floats (60). */
+:global([data-rightbar-fullscreen]) .root[data-phase='active'] .scrollBody > .composerSeat {
+  position: fixed;
+  right: 0;
+  bottom: 0;
+  left: var(--dsh-sidebar-width, 0px);
+  z-index: 45;
+  background: var(--dsw-alias-bg-base);
+  animation: composerDock var(--ds-transition-duration-slow) var(--ds-ease-in-out);
+}
+
+/* The panel ends at the seat's top edge, so the chat's input mask moves above
+   the seat: the panel's last 36px fade into the base ground, as the transcript
+   does under the sticky seat. The band takes no pointer events. */
+:global([data-rightbar-fullscreen]) .root[data-phase='active'] .scrollBody > .composerSeat::before {
+  content: '';
+  position: absolute;
+  right: 0;
+  bottom: 100%;
+  left: 0;
+  height: 36px;
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--dsw-alias-bg-base) 0%, transparent),
+    var(--dsw-alias-bg-base)
+  );
+  pointer-events: none;
+}
+
+/* Stands in for the docked seat so the transcript keeps its scroll height. */
+:global([data-rightbar-fullscreen]) .root[data-phase='active'] .scrollBody:not(:has([data-conversation-composer-overlay]))::after {
+  content: '';
+  flex: none;
+  height: var(--dsh-composer-height, 0px);
+}
+
+@keyframes composerDock {
+  from {
+    translate: 0 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :global([data-rightbar-fullscreen]) .root[data-phase='active'] .scrollBody > .composerSeat {
+    animation: none;
+  }
+}
+
 /* Hero phase: the composer stack (hero chrome + workspace row + card) is
    flex-centered in the column; composer phase docks it at the bottom. Flex,
    NOT absolute+transform: a transform would make this box the containing

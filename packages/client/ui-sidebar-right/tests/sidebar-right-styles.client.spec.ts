@@ -17,4 +17,10 @@ describe('SidebarRight.module.css', () => {
     expect(css).toMatch(new RegExp(String.raw`@media \(prefers-reduced-motion: reduce\)\s*\{[^{}]*`
       + String.raw`\.panel\[data-sidebar-right-open\] ${host}[^{}]*\{\s*transition: none;\s*}`))
   })
+
+  it('ends a reported fullscreen panel above the docked main composer', () => {
+    const fullscreen = String.raw`:global\(\[data-rightbar-fullscreen\]\) \.panel\[data-sidebar-right-panel='fullscreen'\]`
+    expect(css).toMatch(new RegExp(String.raw`${fullscreen}\s*\{\s*bottom: var\(--dsh-main-composer-height, 0px\);`))
+    expect(css).toMatch(new RegExp(String.raw`@media \(prefers-reduced-motion: reduce\)\s*\{\s*${fullscreen}\s*\{\s*animation: none;`))
+  })
 })

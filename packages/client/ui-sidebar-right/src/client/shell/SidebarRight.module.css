@@ -85,6 +85,27 @@
   --dsh-dockkit-dock-layer: 40;
 }
 
+/* Once the frame reports the fullscreen panel (data-rightbar-fullscreen,
+   ui-layout), the main conversation docks its composer along the bottom of the
+   covered area and publishes its height on the document root (ui-conversation).
+   The panel ends above it, rising with the same curve the composer enters on. */
+:global([data-rightbar-fullscreen]) .panel[data-sidebar-right-panel='fullscreen'] {
+  bottom: var(--dsh-main-composer-height, 0px);
+  animation: composerClearance var(--ds-transition-duration-slow) var(--ds-ease-in-out);
+}
+
+@keyframes composerClearance {
+  from {
+    bottom: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :global([data-rightbar-fullscreen]) .panel[data-sidebar-right-panel='fullscreen'] {
+    animation: none;
+  }
+}
+
 /* No whole-box subtraction here: Electron drag regions are window geometry,
    not stacking, so a strip row inside this fullscreen content that marks itself
    `data-window-drag` (ui-dockkit) still owns the drag over its own box, and

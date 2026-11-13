@@ -550,6 +550,21 @@ describe('ConversationRoot resident composer', () => {
     expect(b.slotCalls).toContain('conversation.session.header.corner')
   })
 
+  it('publishes the docked composer height on the document root only while the main conversation is active', () => {
+    const root = document.documentElement.style
+    const b = mount(sessionSnapshotOf())
+    const seat = b.view.container.querySelector('[data-composer-seat]')!
+    vi.spyOn(seat, 'getBoundingClientRect').mockReturnValue({ height: 140.5 } as DOMRect)
+    act(() => { fireResize(seat) })
+    expect(root.getPropertyValue('--dsh-main-composer-height')).toBe('140.5px')
+    b.view.unmount()
+    expect(root.getPropertyValue('--dsh-main-composer-height')).toBe('')
+
+    const hero = mount(sessionSnapshotOf({ blank: true }))
+    act(() => { fireResize(hero.view.container.querySelector('[data-composer-seat]')!) })
+    expect(root.getPropertyValue('--dsh-main-composer-height')).toBe('')
+  })
+
   it('sticky composer seat wraps the whole overlay chain, not only the fallback stack', () => {
     const b = mount(sessionSnapshotOf(), undefined, undefined, { overlayTakeover: true })
     const seat = b.view.container.querySelector('[data-composer-seat]')

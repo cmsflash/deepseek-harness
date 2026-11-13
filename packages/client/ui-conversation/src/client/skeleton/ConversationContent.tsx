@@ -48,15 +48,23 @@ export function ConversationContent(props: ConversationContentProps) {
   // --dsh-conversation-viewport-height, so a control can sit in the band the
   // seat leaves visible. Callback ref, not an effect; stable identity prevents
   // observer churn while the first blank session fills the resident body
-  // outlet.
+  // outlet. The main occurrence's docked seat also publishes its height on the
+  // document root as --dsh-main-composer-height: a fullscreen right panel is
+  // outside this subtree and ends above the seat that docks beneath it.
+  const docked = props.variant !== 'embedded' && phase === 'active'
   const seatObserver = useRef<ResizeObserver | null>(null)
   const seatResizeRef = useCallback((seat: HTMLDivElement | null): void => {
     seatObserver.current?.disconnect()
     seatObserver.current = null
+    if (docked) document.documentElement.style.removeProperty('--dsh-main-composer-height')
     const scroller = seat?.parentElement ?? null
     if (seat === null || scroller === null) return
     seatObserver.current = new ResizeObserver(() => {
       scroller.style.setProperty('--dsh-composer-height', `${seat.offsetHeight}px`)
+      if (docked) {
+        // Unrounded: the panel's edge meets the seat's hairline rule.
+        document.documentElement.style.setProperty('--dsh-main-composer-height', `${seat.getBoundingClientRect().height}px`)
+      }
       scroller.style.setProperty(
         '--dsh-conversation-viewport-height',
         `${scroller.clientHeight}px`,
@@ -64,7 +72,7 @@ export function ConversationContent(props: ConversationContentProps) {
     })
     seatObserver.current.observe(seat)
     seatObserver.current.observe(scroller)
-  }, [])
+  }, [docked])
 
   const sessionWorkspace = sessionId === undefined
     ? undefined
