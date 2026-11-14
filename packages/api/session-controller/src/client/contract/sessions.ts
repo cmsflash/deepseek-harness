@@ -13,6 +13,7 @@ import type { SessionStepDetail } from '../../types.ts'
 import type { AgentContext } from '../scope.ts'
 import type { SessionSearchResultItem } from '../sessions/manager.ts'
 import type { SessionBinding, SessionListState } from '../sessions/service.ts'
+import type { SessionHistorySource, SessionHistorySourceOptions } from './history-source.ts'
 import type { SessionFace } from './session.ts'
 import type { ObservableSnapshot } from '@deepseek-ai/dsh-client-store'
 import type { SessionReferenceSource } from '../index.ts'
@@ -115,6 +116,13 @@ export interface ISessions {
    * @returns completion of required recoveries; each Session reports its own failure.
    */
   setStepDetail(detail: SessionStepDetail): Promise<void>
+  /**
+   * Install the local copy that Sessions created afterwards read history from first.
+   * @param source - the browser's local-copy history source.
+   * @param options - device budgets the installed source's Sessions honor.
+   * @returns the disposer that removes it; a second registration before then throws.
+   */
+  registerHistorySource(source: SessionHistorySource, options: SessionHistorySourceOptions): () => void
   /**
    * Refresh the Host-authoritative Session list.
    * @returns completion of the current or newly started Session-list refresh.

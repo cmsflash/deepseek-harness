@@ -5,12 +5,14 @@ import {
   createScope, MutableSessionEventSource, scopeOf, SESSION_SEARCH_RESULT_LIMIT,
 } from '@deepseek-ai/dsh-api-session-controller/client'
 import type {
-  AgentContext, ISessions, ProjectionsFace, SessionBinding, SessionFace, SessionListState,
+  AgentContext, ISessions, ProjectionsFace, SessionBinding, SessionFace, SessionHistorySource,
+  SessionHistorySourceOptions, SessionListState,
   SessionEventLikeEntry, SessionLiveEventEntry, SessionSearchResultItem,
   SessionReference, SessionReferenceSource, SessionRetainInfo, SessionRetainOptions,
   SessionSnapshot, SessionSummary, SessionTarget, SubmissionHandle,
 } from '@deepseek-ai/dsh-api-session-controller/client'
 import { scopeIdentityOf } from '@deepseek-ai/dsh-api-session-controller/src/client/scope.ts'
+import { SessionHistorySourceSlot } from '@deepseek-ai/dsh-api-session-controller/src/client/sessions/history-source-slot.ts'
 import type { SessionRequestId, SessionStepDetail } from '@deepseek-ai/dsh-api-session-controller/types'
 import type { SubagentAddress } from '@deepseek-ai/dsh-subagent/client'
 import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
@@ -177,6 +179,9 @@ export class FixtureSession implements SessionFace {
   setStepDetail(): Promise<void> {
     return Promise.resolve()
   }
+
+  /** Fixtures report nothing viewed; no fixture keeps a memory budget. */
+  markViewed(): void {}
 
   /** @inheritdoc */
   requireFullHistory(): Promise<void> {
@@ -682,6 +687,19 @@ export class TestSessions implements ISessions {
   setStepDetail(detail: SessionStepDetail): Promise<void> {
     this.calls.push({ method: 'setStepDetail', args: [detail] })
     return Promise.resolve()
+  }
+
+  /** The installed local-copy history source; production and this double share the slot's lifecycle. */
+  private readonly historySources = new SessionHistorySourceSlot()
+
+  /**
+   * Mirror the production registration through the shared slot.
+   * @param source - the local-copy history source.
+   * @param options - device budgets the source's Sessions honor.
+   * @returns the disposer that removes it.
+   */
+  registerHistorySource(source: SessionHistorySource, options: SessionHistorySourceOptions): () => void {
+    return this.historySources.register(source, options)
   }
 
   /**

@@ -18,7 +18,7 @@ import type { SessionEvent, SessionEventMap } from '@deepseek-ai/dsh-session'
 import { SessionSeq } from '@deepseek-ai/dsh-session/types'
 import type {} from '@deepseek-ai/dsh-tools'
 import type { JsonValue } from '@deepseek-ai/dsh-util-values'
-import { collapseSteps, elidedEventsOfTurn } from '../src/step-collapse.ts'
+import { collapseSteps, elidedEventsOfTurn } from '../src/history-shared/step-collapse.ts'
 
 declare module '@deepseek-ai/dsh-llm' {
   interface MessageSourceMap {

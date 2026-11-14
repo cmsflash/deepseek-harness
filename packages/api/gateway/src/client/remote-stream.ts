@@ -95,6 +95,7 @@ export class RemoteStream<Item> implements AsyncIterable<RemoteStreamItem<Item>>
   private async * read(): AsyncGenerator<RemoteStreamItem<Item>> {
     let attempt = 0
     let generation = 0
+    let attemptGeneration: number | undefined
     let observedRevision = this.revision
     try {
       while (!isAborted(this.lifetime.signal)) {
@@ -132,6 +133,14 @@ export class RemoteStream<Item> implements AsyncIterable<RemoteStreamItem<Item>>
           if (!(error instanceof RemoteStreamCarrierError)) throw terminalStreamFailure(error)
           this.options.carrierFailed?.(error)
           if (revision !== this.revision) continue
+          // A connected generation this stream has not yet tried is a new
+          // carrier: the retry budget restarts, so an opening that failed on the
+          // way back cannot end the stream for the rest of the page's life.
+          const connected = this.connection.generation.getSnapshot()?.id
+          if (connected !== undefined && connected !== attemptGeneration) {
+            attemptGeneration = connected
+            attempt = 0
+          }
           attempt++
           try {
             await waitForRemoteStreamRetry(this.connection, error, attempt, signal)

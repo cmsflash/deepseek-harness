@@ -15,14 +15,14 @@
   en: 1fdf707322fb6996
   zh: 0204f7e9d4aa3cce
 /session-controller/use-this-package:
-  en: defb323f074e8673
-  zh: 40adf765da1b167c
+  en: a84416e03d01bdf2
+  zh: 6360ccbdc10b05b0
 /session-controller/client-references:
-  en: 41bdda1ac32df558
-  zh: aa5d0e325924066b
+  en: 8bfaa1cb1f1e6fa2
+  zh: d33c9e25cfc1dec4
 /session-controller/session-media-references:
-  en: 954923654eebe2dc
-  zh: 6bd9a7d2ea965aed
+  en: 189a6952bb7a8695
+  zh: 4c62e71ecadb0ab9
 /session-controller/configuration:
   en: 257ed2de5ca83551
   zh: a976d7cae6dc2fe4
@@ -33,8 +33,8 @@
   en: 22fc0c9dbedd3bb6
   zh: fad040ca55fd0e0a
 /session-controller/known-limitations-and-deferred-work:
-  en: 337784087d7ccfff
-  zh: c33cd9f859edac05
+  en: 8231ed09e4e1bfb7
+  zh: 6e26c2fce2443fb2
 /session-controller/known-limitations-and-deferred-work/dev-note:
   en: e67f633dc6fe7773
   zh: e88aeb617ffb74ea

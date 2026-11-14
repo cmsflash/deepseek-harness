@@ -8,22 +8,31 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import AgentRegistry from '@deepseek-ai/dsh-agent'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
-import SessionStore, { interruptedTurnClosers, SessionSeq } from '@deepseek-ai/dsh-session'
+import SessionStore, { interruptedTurnClosers, SessionLogOffset, SessionSeq } from '@deepseek-ai/dsh-session'
 import { createUserMessage, createMessage, createToolResultMessage, ToolCallId } from '@deepseek-ai/dsh-llm'
-import type { Session, SessionId } from '@deepseek-ai/dsh-session'
-import type { SessionHandle, SessionLogChain } from '@deepseek-ai/dsh-session-persistence'
-import { SessionLogLink } from '@deepseek-ai/dsh-session-persistence'
-import { generationLogPath } from '@deepseek-ai/dsh-session-persistence-jsonl/src/format.ts'
+import type { Session, SessionEvent, SessionHeader, SessionId } from '@deepseek-ai/dsh-session'
+import {
+  SESSION_LOG_CHAIN_TAG,
+  SessionLogLink,
+  SessionPersistenceRevision,
+  type SessionHandle,
+  type SessionLogChain,
+  type SessionPersistenceSnapshot,
+} from '@deepseek-ai/dsh-session-persistence'
+import { encodeHeaderLine, encodeEventLine, generationLogPath } from '@deepseek-ai/dsh-session-persistence-jsonl/src/format.ts'
 import * as JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
 import type {
   SessionChainLink,
   SessionFollowFrame,
   SessionFollowResume,
   SessionHistoryRecord,
+  SessionLineEntry,
 } from '../src/types.ts'
+import { decodeStoredLine } from '../src/history-shared/wire-event.ts'
 import { HistoryController } from '../src/history/controller.ts'
+import { EventListener } from '../src/history/listener.ts'
 import { WebController } from '../src/web/controller.ts'
-import { installSessionReadTestServices } from './test-remote.ts'
+import { installSessionReadTestServices, testSessionPersistence, testStoredChain } from './test-remote.ts'
 
 type Opening = Extract<SessionFollowFrame, { readonly type: 'snapshot' | 'resumed' }>
 type EventFrame = Extract<SessionFollowFrame, { readonly type: 'event' }>
@@ -144,16 +153,22 @@ async function opening(web: WebController, sessionId: SessionId, resume?: Sessio
   }
 }
 
+/** Event records of an opening; these tests never request stored lines. */
+function eventRecords(frame: Opening): SessionHistoryRecord[] {
+  const records: readonly (SessionHistoryRecord | SessionLineEntry)[] = frame.records
+  return records.filter((record): record is SessionHistoryRecord => record.type !== 'line')
+}
+
 /** The resume point of a caller whose window ends with the opening's newest record. */
 function resumeAfter(frame: Opening): SessionFollowResume {
-  const newest = frame.records.at(-1)
+  const newest = eventRecords(frame).at(-1)
   const link = newest?.link
   if (newest === undefined || link === undefined) throw new Error('the opening held no linked record')
   return { afterSeq: newest.covers?.to ?? newest.event.seq, link }
 }
 
 function seqs(frame: Opening): number[] {
-  return frame.records.map(record => record.event.seq)
+  return eventRecords(frame).map(record => record.event.seq)
 }
 
 /** One complete turn with three tool steps so collapsed detail withholds two interiors. */
@@ -543,10 +558,11 @@ describe('follow resume against a real JSONL log', () => {
     const cold = await reloaded(root)
     const storedLinks = oracleLinks((await storedLog(root)).lines)
     const first = await opening(cold.web, session.id)
-    for (const record of first.records.slice(0, storedLinks.length)) {
+    const held = eventRecords(first)
+    for (const record of held.slice(0, storedLinks.length)) {
       expect(record.link).toBe(storedLinks[record.event.seq])
     }
-    const closers = first.records.slice(storedLinks.length)
+    const closers = held.slice(storedLinks.length)
     expect(closers.length).toBeGreaterThan(0)
     expect(closers.filter(record => record.link === undefined)).toHaveLength(0)
     const resume = resumeAfter(first)
@@ -712,7 +728,7 @@ describe('follow resume against a real JSONL log', () => {
     expect(oracleLinks((await storedLog(root)).lines)[4]).not.toBe(held.link)
   })
 
-  it('migration: a v3 log serves no links and resumes by snapshot; links after reload equal the v4 bytes', async () => {
+  it('migration: a v3 log links the prepared migration and resumes from it; links equal the published v4 bytes', async () => {
     const { root } = await jsonlFixture()
     const id = 'migrated' as SessionId
     const path = generationLogPath(root, '/workspace', id, 3, 'none')
@@ -732,19 +748,340 @@ describe('follow resume against a real JSONL log', () => {
     const host = await mountContext(root)
     const web = webOf(host)
     const prepared = await opening(web, id)
-    expect(prepared.records.every(record => record.link === undefined)).toBe(true)
-    expect((await opening(web, id, { afterSeq: 2, link: anyLink('0'.repeat(64)) })).type).toBe('snapshot')
+    const paused = { afterSeq: 2, link: anyLink('0'.repeat(64)) }
+    expect((await opening(web, id, paused)).type).toBe('snapshot')
+    expect((await opening(web, id, resumeAfter(prepared))).type).toBe('resumed')
 
     const writer = await host.sessionPersistence.open(id, 'write')
     const published = await opening(web, id)
-    expect(published.records.every(record => record.link === undefined)).toBe(true)
     await writer.close()
     const afterClose = await opening(web, id)
-    expect(afterClose.records.every(record => record.link === undefined)).toBe(true)
 
     const afterReload = await opening((await reloaded(root)).web, id)
     const stored = oracleLinks((await readFile(generationLogPath(root, '/workspace', id, 4, 'none'), 'utf8'))
       .split('\n').slice(0, -1))
+    expect(prepared.records.map(record => record.link)).toEqual(stored)
+    expect(published.records.map(record => record.link)).toEqual(stored)
+    expect(afterClose.records.map(record => record.link)).toEqual(stored)
     expect(afterReload.records.map(record => record.link)).toEqual(stored)
+  })
+})
+
+/** Every stored JSONL log under a mount root, order undefined. */
+async function jsonlLogFiles(root: string): Promise<string[]> {
+  return readdir(root, { recursive: true, withFileTypes: true }).then(entries => entries
+    .filter(entry => entry.isFile() && entry.name.endsWith('.jsonl'))
+    .map(entry => join(entry.parentPath, entry.name)))
+}
+
+describe('follow stored lines', () => {
+  /** Rebuild the events of stored lines, as a current-format reader rebuilds them. */
+  function linesToEvents(lines: readonly string[]): SessionEvent[] {
+    return lines.map((line, index) => decodeStoredLine(line, index) as never)
+  }
+
+  /** Fold one raw digest over an entry's own line bytes: the linkage the wire claims. */
+  function foldLink(previousHex: string, line: string): string {
+    return createHash('sha256').update(Buffer.from(previousHex, 'hex')).update(line, 'utf8').digest('hex')
+  }
+
+  /**
+   * Chain double over a live session's current events, with links as the write
+   * path computes them and `storedLine` answering the event's JSONL encoding
+   * when it hashes to the link, as the chain contract requires.
+   */
+  function liveLinesChain(session: Session): SessionLogChain {
+    const headerLine = encodeHeaderLine(session.header)
+    const linkAt = (seq: number): Buffer | undefined => {
+      if (seq < 0 || seq >= session.seq) return undefined
+      const lines = session.snapshotEvents(SessionLogOffset(0), SessionLogOffset(session.seq)).map(encodeEventLine)
+      let previous = createHash('sha256').update(SESSION_LOG_CHAIN_TAG, 'utf8').update(headerLine).digest()
+      for (const line of lines.slice(0, seq + 1)) {
+        previous = createHash('sha256').update(previous).update(line).digest()
+      }
+      return previous
+    }
+    return {
+      get length() { return session.seq },
+      linkAt: (seq: number) => {
+        const raw = linkAt(seq)
+        return raw === undefined ? undefined : SessionLogLink(raw.toString('hex'))
+      },
+      storedLine: (event) => {
+        const linked = linkAt(event.seq)
+        if (linked === undefined) return undefined
+        const line = encodeEventLine(event)
+        const previous = event.seq === 0
+          ? createHash('sha256').update(SESSION_LOG_CHAIN_TAG, 'utf8').update(headerLine).digest()
+          : linkAt(event.seq - 1)
+        const digest = createHash('sha256')
+          .update(previous as Buffer).update(line).digest()
+        return digest.toString('hex') === linked.toString('hex') ? line : undefined
+      },
+    }
+  }
+
+  /** The line entries of an opening. */
+  function lineEntries(frame: Opening): SessionLineEntry[] {
+    const records: readonly (SessionHistoryRecord | SessionLineEntry)[] = frame.records
+    return records.filter((record): record is SessionLineEntry => record.type === 'line')
+  }
+
+  /** The seq one history or line record stands for. */
+  function recordSeq(record: SessionHistoryRecord | SessionLineEntry): number {
+    return record.type === 'event' ? record.event.seq : record.seq
+  }
+
+  /** Opening helper that sets `lines: true`. */
+  async function linesOpening(
+    web: WebController, sessionId: SessionId, resume?: SessionFollowResume,
+  ): Promise<Opening> {
+    const abort = new AbortController()
+    const iterator = web.follow({
+      address: { kind: 'session', sessionId },
+      ...(resume === undefined ? {} : { resume }),
+      lines: true,
+    }, abort.signal)[Symbol.asyncIterator]()
+    try {
+      const first = await iterator.next()
+      if (first.done === true || (first.value.type !== 'snapshot' && first.value.type !== 'resumed')) {
+        throw new Error('follow did not start with an opening')
+      }
+      return first.value
+    } finally {
+      abort.abort()
+      await iterator.return?.()
+    }
+  }
+
+  it('sends live frames as stored lines that fold to their links from the bytes on the frame', async () => {
+    const ctx = new Context()
+    contexts.push(ctx)
+    await ctx.plugin(SessionStore)
+    await ctx.plugin(SessionProjectionRegistry)
+    await ctx.plugin(AgentRegistry)
+    installSessionReadTestServices(ctx)
+    const web = webOf(ctx)
+    const session = ctx.sessions.create(undefined, { meta: { cwd: '/workspace' } })
+    ctx.provide('sessionPersistence', {
+      liveChain: (id: SessionId) => (id === session.id ? liveLinesChain(session) : undefined),
+    } as never)
+    appendTurn(session, 1, 1)
+    const abort = new AbortController()
+    const iterator = web.follow({
+      address: { kind: 'session', sessionId: session.id }, lines: true,
+    }, abort.signal)[Symbol.asyncIterator]()
+    const quiet = new AbortController()
+    const plain = web.follow({ address: { kind: 'session', sessionId: session.id } }, quiet.signal)[Symbol.asyncIterator]()
+    try {
+      const snapshot = await iterator.next()
+      if (snapshot.done === true || snapshot.value.type !== 'snapshot') throw new Error('no opening')
+      expect(lineEntries(snapshot.value)).toHaveLength(0)
+      const newest = snapshot.value.records.at(-1)
+      const newestSeq = newest?.covers?.to ?? newest?.event.seq
+      const previousLink = newest?.link
+      if (newestSeq === undefined || previousLink === undefined) throw new Error('the snapshot held no linked record')
+      expect((await plain.next()).value).toMatchObject({ type: 'snapshot' })
+
+      prompt(session, 'next')
+      appendTurn(session, 2, 1)
+      const lastSeq = session.seq - 1
+      const live: SessionLineEntry[] = []
+      for (;;) {
+        const next = await iterator.next()
+        if (next.done === true) break
+        if (next.value.type === 'snapshot' || next.value.type === 'resumed' || next.value.type === 'assistant-stream') {
+          throw new Error(`live frame was a ${next.value.type} frame`)
+        }
+        if (next.value.type !== 'line') throw new Error('live frame was an event record')
+        live.push(next.value)
+        if (next.value.seq >= lastSeq) break
+      }
+      let previous: string = previousLink
+      const firstSeq = newestSeq + 1
+      for (const [index, entry] of live.entries()) {
+        expect(entry.seq).toBe(firstSeq + index)
+        const digest = foldLink(previous, entry.line)
+        expect(entry.link).toBe(digest)
+        previous = digest
+      }
+      const end = live.at(-1)
+      if (end === undefined) throw new Error('the live stream held no line entries')
+      const source = session.snapshotEvents(SessionLogOffset(end.seq), SessionLogOffset(end.seq + 1))[0]
+      if (source === undefined) throw new Error('the session lacks the final live event')
+      expect(decodeStoredLine(end.line, end.seq)).toEqual(source)
+      expect(end.turnUsage).toBeDefined()
+
+      let plainUsage: unknown
+      for (;;) {
+        const next = await plain.next()
+        if (next.done === true) break
+        if (next.value.type === 'event' && next.value.event.seq === lastSeq) {
+          plainUsage = next.value.turnUsage
+          break
+        }
+      }
+      expect(plainUsage).toEqual(end.turnUsage)
+    } finally {
+      abort.abort()
+      await iterator.return?.()
+      quiet.abort()
+      await plain.return?.()
+    }
+  })
+
+  /**
+   * Write one real stored log of two three-step turns through the JSONL backend
+   * and return the file's header line, event lines, and session identity.
+   */
+  async function realStoredLog(
+    options: { readonly tamper?: (lines: readonly string[]) => string[] } = {},
+  ): Promise<{ readonly id: SessionId; readonly meta: SessionHeader; readonly headerLine: string; readonly eventLines: string[] }> {
+    const root = await mkdtemp(join(tmpdir(), 'dsh-follow-lines-'))
+    scratchRoots.push(root)
+    const ctx = new Context()
+    await ctx.plugin(SessionStore)
+    await ctx.plugin(AgentRegistry)
+    await ctx.plugin(JsonlSessionPersistence, { root: join(root, 'logs'), compression: 'none' })
+    const session = ctx.sessions.create(undefined, { meta: { cwd: '/workspace' } })
+    await ctx.sessionPersistence.create(session.header)
+    appendTurn(session, 1, 1)
+    appendTurn(session, 2, 1)
+    await ctx.sessions.flush(session)
+    const id = session.id
+    const meta = structuredClone(session.header)
+    await ctx.fiber.dispose()
+    const logs = await jsonlLogFiles(join(root, 'logs'))
+    if (logs.length !== 1) throw new Error(`found ${logs.length} stored logs`)
+    const fileLines = (await readFile(logs[0] as string, 'utf8')).split('\n').slice(0, -1)
+    const headerLine = fileLines[0]
+    if (headerLine === undefined) throw new Error('the stored log lacks its header line')
+    return { id, meta, headerLine, eventLines: options.tamper?.(fileLines.slice(1)) ?? fileLines.slice(1) }
+  }
+
+  /**
+   * A cold fixture over one real stored log: the double serves a first-turn
+   * prefix until `reveal`, then the full log under a new revision. The chain is
+   * always the oracle over the log's entire stored bytes.
+   */
+  async function resumedLinesFixture(
+    options: { readonly tamper?: (lines: readonly string[]) => string[] } = {},
+  ): Promise<{
+    readonly web: WebController
+    readonly id: SessionId
+    readonly headerLine: string
+    readonly eventLines: readonly string[]
+    readonly links: readonly string[]
+    readonly reveal: () => void
+  }> {
+    const source = await realStoredLog(options)
+    const chain = testStoredChain(
+      Buffer.from(source.headerLine, 'utf8'), source.eventLines.map(line => Buffer.from(line, 'utf8')),
+    )
+    const fullEvents = linesToEvents(source.eventLines)
+    const prefix = 8
+    const host = new Context()
+    contexts.push(host)
+    await host.plugin(SessionStore)
+    await host.plugin(SessionProjectionRegistry)
+    await host.plugin(AgentRegistry)
+    installSessionReadTestServices(host)
+    let revealed = false
+    host.provide('sessionPersistence', testSessionPersistence(host, {
+      list: () => Promise.resolve([source.meta]),
+      stat: async (): Promise<SessionPersistenceSnapshot> => ({
+        header: source.meta,
+        revision: SessionPersistenceRevision(`test:${source.id}:${revealed ? 'full' : 'prefix'}`),
+      }),
+      inspect: () => Promise.resolve({
+        meta: source.meta,
+        events: revealed ? fullEvents : fullEvents.slice(0, prefix),
+        chain,
+      }),
+    }) as never)
+    return {
+      web: webOf(host),
+      id: source.id,
+      headerLine: source.headerLine,
+      eventLines: source.eventLines,
+      links: oracleLinks([source.headerLine, ...source.eventLines]),
+      reveal: () => { revealed = true },
+    }
+  }
+
+  it('sends a resumed opening as stored lines equal to the file bytes with oracle links', async () => {
+    const fixture = await resumedLinesFixture()
+    const first = await opening(fixture.web, fixture.id)
+    expect(first.type).toBe('snapshot')
+    expect(lineEntries(first)).toHaveLength(0)
+    const resume = resumeAfter(first)
+    expect(resume.afterSeq).toBe(7)
+
+    fixture.reveal()
+    const resumed = await linesOpening(fixture.web, fixture.id, resume)
+    expect(resumed.type).toBe('resumed')
+    const lines = lineEntries(resumed)
+    expect(lines.map(entry => entry.seq)).toEqual([8, 9, 10, 11, 12, 13, 14, 15])
+    for (const entry of lines) {
+      expect(entry.line).toBe(fixture.eventLines[entry.seq])
+      expect(entry.link).toBe(fixture.links[entry.seq])
+    }
+    const end = lines.at(-1)
+    if (end === undefined) throw new Error('the resumed opening held no final line entry')
+    expect(end.turnUsage).toBeDefined()
+    const plain = await opening(fixture.web, fixture.id, resume)
+    expect(plain.type).toBe('resumed')
+    const plainEnd = eventRecords(plain).at(-1)
+    expect(plainEnd?.turnUsage).toEqual(end.turnUsage)
+  })
+
+  it('keeps a non-canonical stored line in the resumed range as an event record', async () => {
+    const tamperAt = 9
+    const fixture = await resumedLinesFixture({
+      tamper: lines => lines.map((line, index) => index === tamperAt ? spacedJson(JSON.parse(line)) : line),
+    })
+    const first = await opening(fixture.web, fixture.id)
+    const resume = resumeAfter(first)
+    fixture.reveal()
+    const resumed = await linesOpening(fixture.web, fixture.id, resume)
+    expect(resumed.type).toBe('resumed')
+    const records: readonly (SessionHistoryRecord | SessionLineEntry)[] = resumed.records
+    const tampered = records.find(record => recordSeq(record) === tamperAt)
+    if (tampered === undefined || tampered.type !== 'event') {
+      throw new Error('the tampered seq did not remain an event record')
+    }
+    expect(tampered.link).toBe(fixture.links[tamperAt])
+    expect(lineEntries(resumed).map(entry => entry.seq))
+      .toEqual([8, 10, 11, 12, 13, 14, 15])
+  })
+
+  it('fails a pure subscription that received a stored line frame', async () => {
+    const ctx = new Context()
+    contexts.push(ctx)
+    await ctx.plugin(SessionStore)
+    installSessionReadTestServices(ctx)
+    const session = ctx.sessions.create(undefined, { meta: { cwd: '/workspace' } })
+    const listener = new EventListener(ctx, session.id, new AbortController().signal)
+    listener.setCursor(0, () => ({
+      type: 'line', seq: 0, line: '{}', link: anyLink(testLink(0)),
+    }))
+    ctx.emit('session/event', session, {
+      type: 'user/message', seq: SessionSeq(1), time: 1, data: {}, surfaceOp: 'append',
+    } as never)
+
+    await expect((async () => {
+      for await (const frame of listener.events()) void frame
+    })()).rejects.toThrow('stored line frame')
+  })
+
+  it('serves decoded records for a snapshot opening of a real log with lines requested', async () => {
+    const fixture = await resumedLinesFixture()
+    const opened = await linesOpening(fixture.web, fixture.id)
+    expect(opened.type).toBe('snapshot')
+    expect(lineEntries(opened)).toHaveLength(0)
+    const links = oracleLinks([fixture.headerLine, ...fixture.eventLines])
+    for (const record of eventRecords(opened)) {
+      expect(record.link).toBe(links[record.covers?.to ?? record.event.seq])
+    }
   })
 })

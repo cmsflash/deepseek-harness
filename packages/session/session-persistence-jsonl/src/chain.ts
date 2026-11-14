@@ -42,8 +42,11 @@ export class SessionLogChainBuilder implements SessionLogChain {
   private head: Buffer
   private links: Buffer
   private count: number
+  /** Stored header line the chain starts from; {@link SessionLogChainBuilder.start} keeps the copy. */
+  readonly headerLine: Uint8Array
 
-  private constructor(head: Buffer) {
+  private constructor(headerLine: Uint8Array, head: Buffer) {
+    this.headerLine = headerLine
     this.head = head
     this.links = Buffer.alloc(INITIAL_CAPACITY * LINK_BYTES)
     this.count = 0
@@ -56,6 +59,7 @@ export class SessionLogChainBuilder implements SessionLogChain {
    */
   static start(headerLine: Uint8Array): SessionLogChainBuilder {
     return new SessionLogChainBuilder(
+      Uint8Array.from(headerLine),
       createHash('sha256').update(SESSION_LOG_CHAIN_TAG, 'utf8').update(headerLine).digest(),
     )
   }
@@ -73,6 +77,32 @@ export class SessionLogChainBuilder implements SessionLogChain {
   linkAt(seq: number): SessionLogLink | undefined {
     if (seq < 0 || seq >= this.count) return undefined
     return SessionLogLink(this.links.toString('hex', seq * LINK_BYTES, (seq + 1) * LINK_BYTES))
+  }
+
+  /**
+   * Return the event's stored line when this backend's encoding of it hashes
+   * to the chain's link at its seq.
+   * @param event - an event whose seq this chain covers.
+   * @returns the encoded line without the newline, or `undefined` when the seq is
+   *   not covered or the encoding differs from the stored bytes.
+   */
+  storedLine(event: SessionEvent): Uint8Array | undefined {
+    const seq = event.seq
+    if (seq < 0 || seq >= this.count) return undefined
+    let line: Buffer
+    try {
+      line = encodeEventLine(event)
+    } catch (_error: unknown) {
+      // An event the backend cannot encode cannot equal a stored line, so no link can prove it.
+      return undefined
+    }
+    const previous = seq === 0
+      ? this.head
+      : this.links.subarray((seq - 1) * LINK_BYTES, seq * LINK_BYTES)
+    const digest = createHash('sha256').update(previous).update(line).digest()
+    return Buffer.compare(digest, this.links.subarray(seq * LINK_BYTES, (seq + 1) * LINK_BYTES)) === 0
+      ? line
+      : undefined
   }
 
   /**
@@ -116,7 +146,7 @@ export class SessionLogChainBuilder implements SessionLogChain {
    * @returns a builder holding the same links with room to grow.
    */
   copy(): SessionLogChainBuilder {
-    const clone = new SessionLogChainBuilder(this.head)
+    const clone = new SessionLogChainBuilder(this.headerLine, this.head)
     clone.links = Buffer.alloc((this.count + INITIAL_CAPACITY) * LINK_BYTES)
     this.links.copy(clone.links, 0, 0, this.count * LINK_BYTES)
     clone.count = this.count
@@ -155,10 +185,25 @@ export class SessionLogChainBuilder implements SessionLogChain {
     }
     return {
       length: base + lines.length,
+      headerLine: this.headerLine,
       linkAt: (seq: number): SessionLogLink | undefined => {
         if (seq < base) return this.linkAt(seq)
         if (seq >= base + lines.length) return undefined
         return SessionLogLink(appended.toString('hex', (seq - base) * LINK_BYTES, (seq - base + 1) * LINK_BYTES))
+      },
+      storedLine: (event: SessionEvent): Uint8Array | undefined => {
+        const seq = event.seq
+        if (seq < base) return this.storedLine(event)
+        const index = seq - base
+        if (index >= lines.length) return undefined
+        const line = lines[index] as Buffer
+        let encoded: Buffer
+        try {
+          encoded = encodeEventLine(event)
+        } catch (_error: unknown) {
+          return undefined
+        }
+        return Buffer.compare(encoded, line) === 0 ? line : undefined
       },
     }
   }

@@ -25,10 +25,17 @@
     "src/web/resume.ts",
     "src/list.ts",
     "src/media-references.ts",
+    "src/lines-route.ts",
     "src/archived-session-gate.ts",
     "src/skill-catalog.ts",
-    "src/step-collapse.ts",
-    "src/turn-usage.ts"
+    "src/history-shared/index.ts",
+    "src/history-shared/paging.ts",
+    "src/history-shared/step-collapse.ts",
+    "src/history-shared/turn-usage.ts",
+    "src/history-shared/wire-event.ts",
+    "src/client/sessions/schedule.ts",
+    "src/client/sessions/warm-pool.ts",
+    "src/client/sessions/window-budget.ts"
   ],
   "references": [
     {

@@ -80,13 +80,13 @@ describe('Session Controller Client apply', () => {
     expect(connected).toHaveBeenCalledTimes(2)
   })
 
-  it('keeps immediate control projections when the ready notification follows their baseline', async ({ mock, start }) => {
+  it('keeps the control projections a baseline delivered before the ready notification', async ({ mock, start }) => {
     const connected = vi.spyOn(ClientSessions.prototype, 'handleConnected')
     const sessionId = sid('immediate-baseline')
     mock.remote.session.list.mockResolvedValue(ok({ items: [{
       sessionId, updatedAt: 1, running: false, blank: false, agentAvailable: true,
     }] }))
-    let projection = { asOfSeq: 20, values: { title: 'Before restart' } }
+    const projection = { asOfSeq: 20, values: { title: 'Before restart' } }
     mock.stream(CONTROL, (_args, stream) => {
       stream.push({ type: 'baseline', value: { projections: { [sessionId]: projection } } })
     })
@@ -97,18 +97,43 @@ describe('Session Controller Client apply', () => {
     client.ctx.emit('connection/reset')
     await client.flush()
     expect(sessions.list.getSnapshot().byId[sessionId]?.title).toBe('Before restart')
-
-    projection = { asOfSeq: 1, values: { title: 'After restart' } }
-    client.connection.reconnect()
-    await vi.waitFor(() => {
-      expect(sessions.list.getSnapshot().byId[sessionId]?.title).toBe('After restart')
-    })
+    // The generation's own reopen delivers the next baseline; publishing the
+    // generation must not add a second stream.
+    expect(mock.log.streams(CONTROL)).toHaveLength(1)
 
     await client.unload(SELF)
     client.connection.reconnect()
-    await mock.streams.opened(EVENTS, 3)
-    await vi.waitFor(() => { expect(client.connection.generation.getSnapshot()?.id).toBe(3) })
-    expect(connected).toHaveBeenCalledTimes(2)
+    await mock.streams.opened(EVENTS, 2)
+    await vi.waitFor(() => { expect(client.connection.generation.getSnapshot()?.id).toBe(2) })
+    expect(connected).toHaveBeenCalledTimes(1)
+  })
+
+  it('opens the control stream once per generation and reports the checkpoints it holds', async ({ mock, start }) => {
+    const sessionId = sid('held-baseline')
+    const link = 'a'.repeat(64)
+    mock.remote.session.list.mockResolvedValue(ok({ items: [{
+      sessionId, updatedAt: 1, running: false, blank: false, agentAvailable: true,
+    }] }))
+    mock.stream(CONTROL, (_args, stream) => {
+      stream.push({
+        type: 'baseline',
+        value: { projections: { [sessionId]: { asOfSeq: 3, values: { title: 'Held' }, link } } },
+      })
+    })
+    const { client, sessions } = await bench(start)
+    await vi.waitFor(() => { expect(sessions.list.getSnapshot().byId[sessionId]?.title).toBe('Held') })
+    expect(mock.log.streams(CONTROL)).toHaveLength(1)
+
+    // A lost carrier is the only thing that reopens the stream: the new
+    // generation's opening names the cut this Client already holds.
+    mock.streams.fail(CONTROL, new RemoteStreamCarrierError('socket lost'))
+    client.connection.reconnect()
+    await mock.streams.opened(CONTROL, 2)
+    expect(mock.log.requests(CONTROL)).toEqual([
+      { known: [] },
+      { known: [{ sessionId, asOfSeq: 3, link }] },
+    ])
+    expect(mock.log.streams(CONTROL)).toHaveLength(2)
   })
 
   it('accepts the control baseline, retries a carrier loss once, and reports a second opening snapshot as a protocol failure', async ({ mock, start }) => {

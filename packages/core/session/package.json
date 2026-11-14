@@ -32,6 +32,10 @@
       "types": "./lib/types/surface.d.ts",
       "default": "./lib/types/surface.js"
     },
+    "./seq-ranges": {
+      "types": "./lib/types/seq-ranges.d.ts",
+      "default": "./lib/types/seq-ranges.js"
+    },
     "./locale/*.json": "./locale/*.json"
   },
   "files": [

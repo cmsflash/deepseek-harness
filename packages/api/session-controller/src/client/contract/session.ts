@@ -183,6 +183,12 @@ export interface ISession {
    */
   expandTurn(turn: number): Promise<void>
   /**
+   * Report the seq range the reader currently sees, so memory eviction keeps it.
+   * @param fromSeq - first seq of the visible range.
+   * @param toSeq - last seq of the visible range.
+   */
+  markViewed(fromSeq: SessionSeq, toSeq: SessionSeq): void
+  /**
    * Execute one slash-command line against this session's agent — pure
    * admission semantics (the host executor durably logs the lifecycle).
    * @param line - the full command line, leading slash included.

@@ -44,6 +44,7 @@ function sessionFakeFor() {
     loadOlder: vi.fn<ISession['loadOlder']>(() => Promise.resolve()),
     loadThrough: vi.fn<ISession['loadThrough']>(() => Promise.resolve()),
     expandTurn: vi.fn<ISession['expandTurn']>(() => Promise.resolve()),
+    markViewed: vi.fn<ISession['markViewed']>(() => {}),
     readAttachment: vi.fn<ISession['readAttachment']>(() => Promise.resolve({
       ok: true,
       value: { attachment: ATTACHMENT, data: Uint8Array.of(1) },
@@ -158,6 +159,7 @@ describe('Chat inject API', () => {
           request.open()
         },
       })
+      expect(first.hooks.offline).toBe(b.runtime.ctx.remote.$offline)
       expect(first.hooks.interactionIds.getSnapshot()).toEqual(['selection-menu'])
       expect(second.hooks.interactionIds.getSnapshot()).toEqual(['selection-menu'])
       const nativeMenu = vi.fn()
@@ -548,6 +550,10 @@ describe('Chat inject API', () => {
     expect(injected.chatScroll.read()).toEqual(position)
     injected.chatScroll.save(null)
     expect(injected.chatScroll.read()).toBeNull()
+    expect(injected.markViewed).toBeDefined()
+
+    injected.markViewed?.(SessionSeq(4), SessionSeq(9))
+    expect(b.session.markViewed).toHaveBeenLastCalledWith(SessionSeq(4), SessionSeq(9))
 
     const loaded = await injected.loadImage(ATTACHMENT)
     expect(loaded).toEqual(expect.any(String))

@@ -1,5 +1,6 @@
 /** Test-owned Remote face: `$on` subscriptions with an explicit test event driver. */
 import type { Context } from '@deepseek-ai/cordis'
+import type { RemoteOfflineSnapshot } from '@deepseek-ai/dsh-api-gateway/client'
 
 // Value re-export for spec-side failure construction: the api-remotes facade
 // cannot carry it — its src top-level imports owner /remote lib artifacts, so a
@@ -31,6 +32,12 @@ export class TestRemote {
    * mutable field: a spec assigns it to script a non-loopback or homed Host.
    */
   $host: { home: string | undefined; isLoopback: boolean } = { home: undefined, isLoopback: true }
+
+  /** Whether calls are answered from the offline record, mirrored as always false. */
+  readonly $offline: RemoteOfflineSnapshot = {
+    getSnapshot: (): boolean => false,
+    subscribe: (): (() => void) => () => {},
+  }
 
   /**
    * Register the double as `ctx.remote`, plus one service per scripted

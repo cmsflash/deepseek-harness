@@ -1,5 +1,6 @@
-/** Event-local acceptance for raw Session journal responses; payloads remain owner-defined JSON. */
+/** Event-local acceptance and current-format line decoding for raw Session journal events; payloads remain owner-defined JSON. */
 
+import { decodeSeqRanges } from '@deepseek-ai/dsh-session/seq-ranges'
 import { validateSessionEventData, validateSurfaceMetadata } from '@deepseek-ai/dsh-session/surface'
 import type { SessionEvent } from '@deepseek-ai/dsh-session/types'
 import type { SessionWireEvent } from '../types.ts'
@@ -43,4 +44,29 @@ export function assertSessionWireEvent(value: unknown): asserts value is Session
   const current = event as SessionEvent
   validateSurfaceMetadata(current)
   validateSessionEventData(current, subject)
+}
+
+/**
+ * Decode one stored current-format line into the event the Host serves for it.
+ * @param line - the stored JSONL line without its newline.
+ * @param seq - the seq the line was sent for.
+ * @returns the validated wire event.
+ * @throws when the line is not a JSON object, names another seq, or fails {@link assertSessionWireEvent}.
+ */
+export function decodeStoredLine(line: string, seq: number): SessionWireEvent {
+  const parsed: unknown = JSON.parse(line)
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    throw new Error(`stored line for seq ${String(seq)} is not a JSON object`)
+  }
+  const record = parsed as Record<string, unknown>
+  if (record['seq'] !== seq) {
+    throw new Error(`stored line names seq ${String(record['seq'])} where ${String(seq)} was sent`)
+  }
+  // The spread keeps sourceEventSeqs at its stored key position while the
+  // range encoding returns to the dense array the wire serves.
+  const decoded = 'sourceEventSeqs' in record
+    ? { ...record, sourceEventSeqs: decodeSeqRanges(record['sourceEventSeqs'], seq) }
+    : record
+  assertSessionWireEvent(decoded)
+  return decoded
 }

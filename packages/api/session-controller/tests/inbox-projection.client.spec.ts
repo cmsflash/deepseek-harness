@@ -119,7 +119,9 @@ describe('Inbox projection intake', () => {
       try {
         manager.handleConnected()
         refreshed = manager.refreshList()
-        expect(face.getSnapshot()).toBeUndefined()
+        // The connection reports its own baseline: until it lands, the values
+        // the previous generation pushed are all this Client has.
+        expect(face.getSnapshot()).toEqual({ ...empty, 'next-turn': [ghost] })
         if (order === 'control-first') manager.handleControlFrame(baseline)
         list.resolve(result)
         await refreshed

@@ -1,0 +1,19 @@
+# Bilingual-pair consistency record for 2026-11-07-browser-local-session-copy.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/architecture/2026-11-07-browser-local-session-copy.md
+/agent-note-browser-local-session-copy:
+  en: 8f91c121ad8bbe80
+  zh: 91b02c5e19ea0279
+/agent-note-browser-local-session-copy/problem:
+  en: 47d1e7f2f48d43ce
+  zh: 17757c872023416c
+/agent-note-browser-local-session-copy/decision:
+  en: 0ed8c1ae0de83ea7
+  zh: 4c2140552d6f8c11
+/agent-note-browser-local-session-copy/alternatives-considered:
+  en: 83fd599d906b05cb
+  zh: 1f74128e35f6c91b
+/agent-note-browser-local-session-copy/consequences:
+  en: 3e58f8f0c523db0a
+  zh: d76080ff45fdc5ab

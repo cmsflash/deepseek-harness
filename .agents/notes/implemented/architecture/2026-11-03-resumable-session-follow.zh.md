@@ -16,9 +16,9 @@ Host 为它持有的每份日志维护一条会话日志链：覆盖该日志各
 
 `follow`、`page` 与 `events` 提供的每条记录以及每个 live 事件帧，在日志有链时都携带 `link`；代表被省略事件的记录携带最后一个事件的链接值。重连的 follow 发送 `resume: { afterSeq, link }`，即其最新持有记录代表的最后 seq 与该记录的链接值。若 Host 在 `afterSeq` 处的链接值等于 `link`，且其后最多有 `followResumeEvents` 个事件（Session Controller 配置，默认 1,000；0 表示禁用续接），它以 `resumed` 开场应答，携带 `afterSeq` 之后的每个事件（完整细节），以及当前 header、projection baseline 与 Assistant baseline。其他所有情况都以完整快照开场，与不带续接点时完全一致；格式错误的续接点以 `gateway/bad-request` 失败。跨过晋升（promotion）仍保持打开的 follow 会在其第一个 live 事件处核对一次：live 日志在开场 cursor 处的链接值是否仍与开场时相同；若不同就结束该 generation，让 Client 重连并获得快照。
 
-`RemoteJournalStream` 为设置了 `resumeEntries` 的领域负责 Client 侧：它保存最新持有的 entry，提交给每个重连的 generation，只接受接在该 generation 所获 cursor 之后的 `resumed` 开场，并以新 entry 发布 `resume` 变更。任何快照开场都会替换窗口，包括 cursor 落后于所持窗口的快照，因为崩溃之后以 Host 日志为准。`SessionEventStream` 只保留一个 entry 并提交它的链接值；最新记录没有 `link` 时以快照开场，而结束在所提交 seq、且携带所提交链接值的快照开场会续接所持窗口而不是替换它，因此回放其记录开场的离线阅读仍会保留读者已加载的页面。续接的重连保留 Session 的更早页面、step digest 和已展开的 turn，从新的 baseline 重建 live Assistant 行，并补入断线期间结束的 attempt 所暂存的 settlement。
+`RemoteJournalStream` 为设置了 `resumeEntries` 的领域负责 Client 侧：它保存最新持有的 entry，提交给每个重连的 generation，只接受接在该 generation 所获 cursor 之后的 `resumed` 开场，并以新 entry 发布 `resume` 变更。任何快照开场都会替换窗口，包括 cursor 落后于所持窗口的快照，因为崩溃之后以 Host 日志为准。`SessionEventStream` 只保留一个 entry 并提交它的链接值；最新记录没有 `link` 时以快照开场，而结束在所提交 seq、且携带所提交链接值的快照开场会续接所持窗口而不是替换它。续接的重连保留 Session 的更早页面、step digest 和已展开的 turn，从新的 baseline 重建 live Assistant 行，并补入断线期间结束的 attempt 所暂存的 settlement。
 
-离线回放给 `session/follow` 记录建键时不含请求的续接点，并把接续该记录的 `resumed` 开场折叠为一份快照，因此该记录仍从第一项开始回放。
+离线回放不记录 `session/follow`：已持有的会话记录来自[浏览器本地 Session 副本](2026-11-07-browser-local-session-copy.zh.md)，它存储这些带链接值的行，并以自己的最新记录作为重新打开 follow 的恢复点。
 
 ## 考虑过的替代方案
 
@@ -26,7 +26,7 @@ Host 为它持有的每份日志维护一条会话日志链：覆盖该日志各
 
 **只在写入后才为事件计算链接值。** live 事件在写入之前最多 200 ms 就已到达 follower，因此 live 帧不会携带链接值，live 事件之后的短时间内重连也无法续接。
 
-**对重新编码的事件求哈希。** 重新编码一个已解码的事件未必能重现另一个构建或格式迁移写下的那些行的存储字节，而计划中的浏览器端日志副本（尚未实现）会对收到的存储文本求哈希；对存储字节求哈希让两者共用同一定义。
+**对重新编码的事件求哈希。** 重新编码一个已解码的事件未必能重现另一个构建或格式迁移写下的那些行的存储字节，而[浏览器本地 Session 副本](2026-11-07-browser-local-session-copy.zh.md)会对收到的存储文本求哈希；对存储字节求哈希让两者共用同一定义。
 
 **压缩每次开场。** permessage-deflate 能把快照缩小到约四分之一，对远程客户端仍然有用；但它仍会重发浏览器已持有的内容，并在浏览器与 Host 位于同一台机器时为每次开场每 MB 增加约 8 ms（2026 年 11 月 3 日的回环对比），一个 3.8 MB 的 Session 需要 29 ms。
 
@@ -40,6 +40,6 @@ Host 为它持有的每份日志维护一条会话日志链：覆盖该日志各
 
 ## 后果
 
-重连只传输断线期间写入的事件以及 projection 和 Assistant baseline，并保留读者已加载的页面；Host 重启后，只要所持事件已写入，它仍会续接。每条记录因链接值增加约 74 字节，约占大型快照的 2%；冷读要为每一行求哈希，约每个 3.3 KB 事件 1.6 µs。Client 不校验链接值，它原样返回 Host 给出的链接值，该计划中的浏览器端副本会从收到的存储文本算出同一条链。没有链接值的记录无法作为续接起点：被格式迁移准备或发布的日志，要等到再次读取其当前 generation；以及由不保留链的持久化后端提供的日志。projection baseline 仍是完整的，因为 Client 在每次新连接时都会清除 projection 值；其中的 turn outline 每轮约增加 200 字节。`resumed` 开场不携带更早历史的边界或 step digest，因此不会改变 `hasMore`。只有当回放的开场结束在所持窗口时，窗口才能挺过离线阅读；在其开场之后还记录了 live 事件的离线副本回放的是更短的开场，它会替换窗口。若 Host 的日志丢失或改写了所持事件，它以快照应答，窗口可能因此后退；以前的 Client 会把这种重连当作协议违规而失败。
+重连只传输断线期间写入的事件以及 projection 和 Assistant baseline，并保留读者已加载的页面；Host 重启后，只要所持事件已写入，它仍会续接。每条记录因链接值增加约 74 字节，约占大型快照的 2%；冷读要为每一行求哈希，约每个 3.3 KB 事件 1.6 µs。Client 自身不校验链接值，它原样返回 Host 给出的链接值，而[浏览器本地 Session 副本](2026-11-07-browser-local-session-copy.zh.md)会从收到的存储文本算出同一条链。没有链接值的记录无法作为续接起点：只剩由不保留链的持久化后端提供的日志，因为读迁移的日志现在自带预置链。projection baseline 仍是完整的；其中的 turn outline 每轮约增加 200 字节。`resumed` 开场不携带更早历史的边界或 step digest，因此不会改变 `hasMore`。若 Host 的日志丢失或改写了所持事件，它以快照应答，窗口可能因此后退；以前的 Client 会把这种重连当作协议违规而失败。
 
-只有当 Client 仍持有窗口时，再次打开 Session 才会续接；导航释放的 Session 对象以快照开场。本决策部分取代 [Session 历史与事件传输](2026-08-18-session-history-and-event-transport.zh.md)和 [Session observation](2026-08-25-session-observations-and-projection-owned-client-state.zh.md) 两篇 Note 中的重连规则，它们的其他决策保持不变。
+只要浏览器持有某 Session 的事件，再次打开它就会续接：本地副本的 warm 池会保留被释放的 Session 及其窗口和 follow，持有已核验本地副本的线程则从副本打开，并以副本最新的一行作为恢复点，因此 Host 只发送其后的事件。两者都没有，或恢复点已不在 Host 的链上、或落后超过 `followResumeEvents` 个事件的 Session，以快照开场。本决策部分取代 [Session 历史与事件传输](2026-08-18-session-history-and-event-transport.zh.md)和 [Session observation](2026-08-25-session-observations-and-projection-owned-client-state.zh.md) 两篇 Note 中的重连规则，它们的其他决策保持不变。

@@ -93,6 +93,8 @@ function sessionSnapshot(openState: SessionSnapshot['openState']): SessionSnapsh
     subagent: null,
     removed: false,
     openState,
+    unconfirmed: false,
+    incompleteCopy: false,
     openError: null,
     hasMore: false,
     loadingOlder: false,

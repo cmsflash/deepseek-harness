@@ -626,6 +626,9 @@ describe('Client Remote transport readiness', () => {
     const beforeReady = remote.$host
     expect(beforeReady).toEqual({ home: undefined, isLoopback: true })
     expect(remote.$host).toBe(beforeReady)
+    expect(remote.$offline).toBe(remote.$offline)
+    expect(remote.$offline.getSnapshot()).toBe(false)
+    expect(remote.$offline.subscribe(() => {})).toBeTypeOf('function')
 
     live.snapshot = { id: 1, host: { home: '/hosts/primary' } }
     const afterReady = remote.$host

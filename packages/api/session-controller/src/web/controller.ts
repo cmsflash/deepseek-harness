@@ -4,10 +4,15 @@ import type { Context } from '@deepseek-ai/cordis'
 import { remoteErrorOf } from '@deepseek-ai/dsh-typert-protocol'
 import type { SessionObservation } from '@deepseek-ai/dsh-session-query'
 import type { HistoryController } from '../history/controller.ts'
-import { addressId, chainLink, entryFor, rejectNotFound } from '../history.ts'
+import { addressId, chainLink, lineEntry, rejectNotFound } from '../history.ts'
+import { entryFor } from '../history-shared/paging.ts'
 import { EventListener, ListenerBuffer } from '../history/listener.ts'
 import { history, projections, resolveHistoryRequest, validateObservationAddress } from '../history/controller.ts'
+import type { HistoryTurnUsage } from '../history-shared/turn-usage.ts'
 import type { SessionFollowFrame, SessionFollowRequest } from '../types.ts'
+
+/** The snapshot or resumed opening a follow yields before its queued frames. */
+type Opening = Extract<SessionFollowFrame, { readonly type: 'snapshot' | 'resumed' }>
 import { continuesLog, validateFollowResume } from './resume.ts'
 
 /** The live log no longer carries the opening's link at the opening cursor. */
@@ -37,11 +42,16 @@ export class WebController {
    * Opening records and live event frames carry the Session log chain link of
    * their event, or of the last event a covering record stands for, when the
    * Host keeps a chain for the log; the links resume the window on reconnect.
+   * With `request.lines`, records of a `resumed` opening and live event frames
+   * are stored lines wherever the Host checks the event's stored line against
+   * its Session log chain; a record it cannot check stays a decoded event, and
+   * snapshot openings stay decoded events.
    * A follow that stays open across a promotion ends its generation when the
    * live log no longer has the opening's link at the opening cursor, so the
    * Client reconnects with its stale link and gets a snapshot.
    * Each `turn/end`, in the opening and after it, carries its complete turn's accounting.
-   * @param request - Session identity, page budget, step detail, assistant output, optional resume point and activation (default false).
+   * @param request - Session identity, page budget, step detail, assistant output, optional stored
+   *   lines, optional resume point and activation (default false).
    * @param signal - cancellation for opening and streaming.
    * @returns an opening followed by uncovered queued increments.
    */
@@ -49,6 +59,7 @@ export class WebController {
     const sessionId = addressId(request.address)
     const spec = resolveHistoryRequest(request)
     if (request.resume !== undefined) validateFollowResume(request.resume)
+    const lines = request.lines === true
     using queue = new ListenerBuffer<SessionFollowFrame>(this.ctx, signal)
     using listener = new EventListener(this.ctx, sessionId, signal, queue)
     const streams = this.historyController.streamsListener
@@ -65,30 +76,47 @@ export class WebController {
       && continuesLog(observation, request.resume, this.resumeEventLimit)
       ? request.resume
       : undefined
-    const { page, turnUsage } = resume === undefined
-      ? history(observation, spec)
-      : history(observation, { fromSeq: resume.afterSeq + 1, maxMessages: spec.maxMessages })
-    let opening: SessionFollowFrame = resume === undefined
-      ? { type: 'snapshot', header: { ...observation.header }, projections: projections(observation), ...page }
-      : {
+    let perCut: { readonly cursor: number; readonly turnUsage: HistoryTurnUsage }
+    let opening: Opening
+    if (resume === undefined) {
+      const computed = history(observation, spec)
+      perCut = { cursor: computed.page.cursor, turnUsage: computed.turnUsage }
+      opening = {
+        type: 'snapshot',
+        header: { ...observation.header },
+        projections: projections(observation),
+        ...computed.page,
+      }
+    } else {
+      const computed = history(
+        observation, { fromSeq: resume.afterSeq + 1, maxMessages: spec.maxMessages }, { lines },
+      )
+      perCut = { cursor: computed.page.cursor, turnUsage: computed.turnUsage }
+      opening = {
         type: 'resumed',
         header: { ...observation.header },
         after: resume.afterSeq,
-        cursor: page.cursor,
-        records: page.records,
+        cursor: computed.page.cursor,
+        records: computed.page.records,
         projections: projections(observation),
       }
+    }
+    const turnUsage = perCut.turnUsage
     // The opening's link at its cursor is the strongest fact the window claims;
     // one failed comparison at the first live event retires the whole generation.
-    const openedLink = observation.chain?.linkAt(page.cursor)
+    const openedLink = observation.chain?.linkAt(perCut.cursor)
     let verified = false
-    listener.setCursor(page.cursor, (event) => {
+    listener.setCursor(perCut.cursor, (event) => {
       const chain = this.ctx.get('sessionPersistence')?.liveChain?.(sessionId)
       if (!verified) {
         verified = true
-        if (chain?.linkAt(page.cursor) !== openedLink) throw new FollowLogChanged()
+        if (chain?.linkAt(perCut.cursor) !== openedLink) throw new FollowLogChanged()
       }
-      return entryFor(event, turnUsage.append(event), chainLink(chain, event.seq))
+      const usage = turnUsage.append(event)
+      const link = chainLink(chain, event.seq)
+      const bytes = lines ? chain?.storedLine?.(event) : undefined
+      if (bytes === undefined || link === undefined) return entryFor(event, usage, link)
+      return lineEntry(event, bytes, link, usage)
     })
     if (assistantListener !== undefined) {
       const { baseline: assistantStream, ordinal } = assistantListener.snapshot()

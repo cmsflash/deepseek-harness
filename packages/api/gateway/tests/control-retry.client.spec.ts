@@ -181,6 +181,53 @@ describe('RemoteStream', () => {
     await stream.dispose()
   })
 
+  it('retries an opening that failed after the connection came back, so a replayed generation cannot end the stream', async () => {
+    // The Host and its `$events` socket are down. The control stream's own
+    // socket died with them, and the first generation back serves the opening
+    // from the offline record, whose end is a carrier failure like any other.
+    let current: typeof GENERATION | undefined
+    const listeners = new Set<() => void>()
+    const subscribed = Promise.withResolvers<undefined>()
+    const publish = (id: number | undefined): void => {
+      current = id === undefined ? undefined : { ...GENERATION, id }
+      for (const listener of [...listeners]) listener()
+    }
+    const connection = {
+      generation: {
+        getSnapshot: () => current,
+        subscribe: (listener: () => void) => {
+          listeners.add(listener)
+          subscribed.resolve(undefined)
+          return () => { listeners.delete(listener) }
+        },
+      },
+    }
+    let opened = 0
+    const stream = new RemoteStream<string>(connection, {
+      name: 'fixture control stream',
+      open: scripted([
+        { terminal: new RemoteStreamCarrierError('api gateway: Remote stream WebSocket closed') },
+        { terminal: new RemoteStreamCarrierError('the Host is reachable again') },
+        { values: ['baseline'], hold: true },
+      ], () => { opened++ }),
+      ended: accepted => accepted
+        ? new RemoteStreamCarrierError('accepted generation ended')
+        : new Error('generation ended before acceptance'),
+    })
+    const pending = stream[Symbol.asyncIterator]().next()
+    await vi.waitFor(() => { expect(opened).toBe(1) })
+    // The generation is gone while the socket is, so the stream waits for the
+    // next one rather than spending its immediate retry.
+    await subscribed.promise
+    publish(2)
+    // That opening is the offline record's: its end is a carrier failure too.
+    // A generation this stream has not tried is a new carrier, so it tries
+    // again instead of dying for the rest of the page's life.
+    await vi.waitFor(() => { expect(opened).toBe(3) })
+    await expect(pending).resolves.toMatchObject({ done: false, value: { value: 'baseline' } })
+    await stream.dispose()
+  })
+
   it('stops a pending retry when the logical stream is disposed', async () => {
     const source = hostSource(false)
     let opened = 0
@@ -200,12 +247,13 @@ describe('RemoteStream', () => {
   })
 
   it('contains a Host publication during subscription setup', async () => {
-    let reads = 0
+    let available = false
     let disposed = 0
     const connection = {
       generation: {
-        getSnapshot: () => reads++ === 0 ? undefined : GENERATION,
+        getSnapshot: () => available ? GENERATION : undefined,
         subscribe: (listener: () => void) => {
+          available = true
           listener()
           return () => { disposed++ }
         },

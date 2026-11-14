@@ -12,12 +12,16 @@ import {
 } from '@deepseek-ai/dsh-client-store'
 import type { RemoteFailure, RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
 import type { SessionEventSource } from '../contract/events.ts'
+import type { SessionHistorySource, SessionHistorySourceOptions } from '../contract/history-source.ts'
+import { SessionHistorySourceSlot } from './history-source-slot.ts'
 import type { SessionFace } from '../contract/session.ts'
 import type {
   AgentContext, ISessions, SessionReference, SessionRetainInfo, SessionRetainOptions, SessionTarget,
 } from '../contract/sessions.ts'
 import type { SessionReferenceSource } from '../index.ts'
 import { createScope, scopeIdentityOf, scopeOf as scopeTagOf } from '../scope.ts'
+import { WarmSessionPool } from './warm-pool.ts'
+import { WindowMemoryBudget, type BudgetedSession } from './window-budget.ts'
 import { SessionManager } from './manager.ts'
 import type { SessionRemotes } from './remotes.ts'
 import type { SessionListPhase, SessionSearchResultItem, SessionProjectionSnapshot } from './manager.ts'
@@ -56,6 +60,8 @@ export interface SessionSummary {
    * its control/follow baseline; those are outside the list contract.
    */
   projectionValues?: Readonly<Partial<SessionProjectionSummaryValues>>
+  /** Watermark seq of the Host row's projection values, which the Session log has reached; absent when the row carried none. */
+  projectionsAsOfSeq?: number
 }
 
 /** Catalog metadata and local source counts; catalog membership owns no Client generation. */
@@ -163,6 +169,18 @@ interface ScopeRecord {
   session: Session
   retention: SessionRetainInfo
   live: boolean
+  /** Detach the record's window-change feed from the memory budget. */
+  stopWindowWatch: () => void
+}
+
+/**
+ * A released generation's Session kept warm without its scope: the window and
+ * follow stay; everything bound to the scope was disposed.
+ */
+interface WarmSession {
+  readonly session: Session
+  /** Detach the Session's window-change feed from the memory budget. */
+  readonly stopWindowWatch: () => void
 }
 
 interface RetentionObserver {
@@ -253,6 +271,10 @@ export class ClientSessions implements ISessions {
   private readonly retainObservers = new Map<SessionId, RetentionObserver>()
   private readonly scopeDrops = new Set<Promise<void>>()
   private closed = false
+  /** Released Sessions kept warm while the local copy stays registered. */
+  private warm: WarmSessionPool<WarmSession> | undefined
+  /** Device-wide cap over every live Session's held event text, when the copy carries one. */
+  private budget: WindowMemoryBudget | undefined
 
   /**
    * @param ctx - client root context (scope fibers mount under it).
@@ -275,10 +297,15 @@ export class ClientSessions implements ISessions {
       for (const [, record] of scopes) {
         record.live = false
         record.session.unbindScope()
+        record.stopWindowWatch()
       }
       const managerDisposal = this.manager.dispose()
       for (const [id, record] of scopes) {
         this.startScopeDrop(id, record)
+        this.publishRetention(id)
+      }
+      for (const { sessionId: id, record } of this.warm?.drain() ?? []) {
+        record.stopWindowWatch()
         this.publishRetention(id)
       }
       await this.drainScopeDrops()
@@ -359,6 +386,37 @@ export class ClientSessions implements ISessions {
     return this.manager.setStepDetail(detail)
   }
 
+  /** The one installed local-copy history source, until its disposer runs. */
+  private readonly historySources = new SessionHistorySourceSlot()
+
+  /** @inheritdoc */
+  registerHistorySource(source: SessionHistorySource, options: SessionHistorySourceOptions): () => void {
+    const retire = this.historySources.register(source, options)
+    this.manager.setHistorySource(source)
+    const warm = new WarmSessionPool<WarmSession>({
+      graceMs: options.warmFollowGraceMs,
+      suspend: (record) => { void record.session.suspendFollow() },
+      revive: (record) => { record.session.reviveFollow() },
+    })
+    this.warm = warm
+    const budget = new WindowMemoryBudget({
+      memoryBudgetBytes: options.memoryBudgetBytes,
+      readerLoadGraceMs: options.readerLoadGraceMs,
+      sessions: () => this.budgetSessions(warm),
+      disposeWarm: (sessionId) => { this.dropWarm(sessionId, warm.evict(sessionId)) },
+    })
+    this.budget = budget
+    budget.recheck()
+    return () => {
+      if (!retire()) return
+      this.manager.setHistorySource(undefined)
+      budget.dispose()
+      this.budget = undefined
+      this.warm = undefined
+      for (const { sessionId: id, record } of warm.drain()) this.dropWarm(id, record)
+    }
+  }
+
   /**
    * Refresh the real Session baseline, reusing an in-flight pull.
    * @returns completion of the current or newly started baseline pull.
@@ -387,6 +445,14 @@ export class ClientSessions implements ISessions {
    */
   handleControlFrame(frame: Parameters<SessionManager['handleControlFrame']>[0]): void {
     this.manager.handleControlFrame(frame)
+  }
+
+  /**
+   * Sessions whose control-baseline projections this Client holds at a linked cut.
+   * @returns one checkpoint per Session, for the next control opening.
+   */
+  controlKnown(): ReturnType<SessionManager['controlKnown']> {
+    return this.manager.controlKnown()
   }
 
   /**
@@ -551,7 +617,11 @@ export class ClientSessions implements ISessions {
   }
 
   private retainScope(id: SessionId, source: SessionReferenceSource): ClientSessionReference {
-    const record = this.scopes.get(id) ?? this.materializeScope(id)
+    let record = this.scopes.get(id)
+    if (record === undefined) {
+      this.warm?.take(id)?.stopWindowWatch()
+      record = this.materializeScope(id)
+    }
     const previous = record.retention
     record.retention = Object.freeze({
       referenceCount: previous.referenceCount + 1,
@@ -595,13 +665,79 @@ export class ClientSessions implements ISessions {
 
   private retireScope(id: SessionId, record: ScopeRecord, disposeFiber = true): void {
     if (!record.live) return
+    const warm = disposeFiber ? this.warm : undefined
+    if (warm !== undefined && this.warms(record)) {
+      // Only the Session enters the pool; its scope and every binding-owned
+      // state go as on any release, and a retain binds a fresh scope to it.
+      record.live = false
+      this.scopes.delete(id)
+      record.session.unbindScope()
+      warm.add(id, { session: record.session, stopWindowWatch: record.stopWindowWatch })
+      this.projectList()
+      this.publishRetention(id)
+      this.startScopeDrop(id, record, true, Promise.resolve())
+      // A warm Session's pages become evictable without any window change.
+      this.budget?.recheck()
+      return
+    }
     record.live = false
+    record.stopWindowWatch()
     if (this.scopes.get(id) === record) this.scopes.delete(id)
     record.session.unbindScope()
     const sessionDisposal = this.manager.drop(id, record.session)
     this.projectList()
     this.publishRetention(id)
     this.startScopeDrop(id, record, disposeFiber, sessionDisposal)
+  }
+
+  /**
+   * Whether a fully released generation's Session stays warm instead of being
+   * disposed: an ordinary, opened Session while a local copy history source is
+   * registered. Subagent children and unopened generations dispose as before.
+   * @param record - the generation whose last reference was released.
+   * @returns whether the pool applies.
+   */
+  private warms(record: ScopeRecord): boolean {
+    const snapshot = record.session.getSnapshot()
+    return snapshot.subagent === null
+      && snapshot.openState === 'open'
+      && !snapshot.removed
+  }
+
+  /**
+   * Retire one Session taken out of the warm pool: withdraw and dispose it, and resurface the list.
+   * @param id - the Session identity.
+   * @param held - the warm Session, or undefined when a retain already took it back.
+   */
+  private dropWarm(id: SessionId, held: WarmSession | undefined): void {
+    if (held === undefined) return
+    held.stopWindowWatch()
+    this.trackDrop(this.manager.drop(id, held.session))
+    this.projectList()
+    this.publishRetention(id)
+  }
+
+  /**
+   * Every live Session the memory budget accounts: referenced ones first, then warm ones.
+   * @param warm - the pool registered with the budget.
+   * @returns one budget view per Session.
+   */
+  private budgetSessions(warm: WarmSessionPool<WarmSession>): readonly BudgetedSession[] {
+    return [
+      ...[...this.scopes.values()].map(record => this.budgetView(record.session, false)),
+      ...warm.records().map(({ record }) => this.budgetView(record.session, true)),
+    ]
+  }
+
+  private budgetView(session: Session, warm: boolean): BudgetedSession {
+    return {
+      sessionId: session.sessionId,
+      warm,
+      bytes: () => session.bytes(),
+      pages: () => session.pages(),
+      viewport: () => session.viewedRange(),
+      trimHead: pageCount => session.trimHead(pageCount),
+    }
   }
 
   /** Materialize one scope after its caller establishes that the id may be addressed. */
@@ -612,6 +748,9 @@ export class ClientSessions implements ISessions {
     // mint and bind are one step so a live scope record implies a bound actx.
     session.bindScope(ctx)
     const binding: SessionBinding = { sessionId: id, session, eventSource: session.eventSource, ctx }
+    // Every window publication can push the device total over the budget
+    // while a history source is registered; with none the listener is inert.
+    const stopWindowWatch = session.eventSource.subscribe(() => { this.budget?.recheck() })
     const record: ScopeRecord = {
       fiber,
       ctx,
@@ -619,6 +758,7 @@ export class ClientSessions implements ISessions {
       session,
       retention: EMPTY_RETAIN_INFO,
       live: true,
+      stopWindowWatch,
     }
     this.scopes.set(id, record)
     ctx.effect(() => () => { this.retireScope(id, record, false) }, 'session-controller: exact generation')
@@ -646,6 +786,7 @@ export class ClientSessions implements ISessions {
         ...(entry.projectionValues === undefined
           ? {}
           : { projectionValues: entry.projectionValues }),
+        ...(entry.projections === undefined ? {} : { projectionsAsOfSeq: entry.projections.asOfSeq }),
         ...(entry.title !== undefined ? { title: entry.title } : {}),
         ...(entry.cwd !== undefined ? { cwd: entry.cwd } : {}),
         ...(entry.parentSessionId !== undefined ? { parentId: entry.parentSessionId } : {}),
@@ -707,7 +848,11 @@ export class ClientSessions implements ISessions {
     disposeFiber = true,
     sessionDisposal = this.manager.drop(id, record.session),
   ): void {
-    const drop = this.dropScope(record, disposeFiber, sessionDisposal)
+    this.trackDrop(this.dropScope(record, disposeFiber, sessionDisposal))
+  }
+
+  /** Keep one teardown in the set that controller disposal drains. */
+  private trackDrop(drop: Promise<void>): void {
     this.scopeDrops.add(drop)
     void drop.then(
       () => { this.scopeDrops.delete(drop) },

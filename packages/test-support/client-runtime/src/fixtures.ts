@@ -72,6 +72,8 @@ export function sessionSnapshot(sessionId: SessionId): SessionSnapshot {
     subagent: null,
     removed: false,
     openState: 'open',
+    unconfirmed: false,
+    incompleteCopy: false,
     openError: null,
     hasMore: false,
     loadingOlder: false,

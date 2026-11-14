@@ -2,6 +2,8 @@
 
 import type {} from '@deepseek-ai/dsh-api-session-controller/remote'
 import { RemoteError } from '@deepseek-ai/dsh-typert-protocol'
+import type { JsonValue } from '@deepseek-ai/dsh-util-values'
+import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import {
   RemoteJournalStream,
   RemoteSnapshotStream,
@@ -15,9 +17,12 @@ import type {
   SessionAddress,
   SessionAssistantStreamBaseline,
   SessionAssistantStreamFrame,
+  SessionChainLink,
   SessionControlFrame,
+  SessionControlKnown,
   SessionFollowResume,
   SessionHistoryRecord,
+  SessionLineEntry,
   SessionPage,
   SessionPageRequest,
   SessionProjectionBaseline,
@@ -27,10 +32,14 @@ import {
   historyEntries,
   historyRecordFirstSeq,
   historyRecordLastSeq,
+  shareLocalHeaders,
 } from './sessions/history-records.ts'
+import type {
+  LocalHistoryPage, SessionHistorySource,
+} from './contract/history-source.ts'
 import type { SessionEventLikeEntry, SessionLiveEventEntry } from './contract/events.ts'
 import type { SessionRemotes } from './sessions/remotes.ts'
-import { assertSessionWireEvent } from './session-wire-event.ts'
+import { assertSessionWireEvent, decodeStoredLine } from '../history-shared/wire-event.ts'
 
 export {
   SESSION_SEARCH_RESULT_LIMIT,
@@ -56,6 +65,8 @@ export type SessionJournalChange =
     readonly page: SessionJournalPage
     readonly entries: readonly SessionEventLikeEntry[]
     readonly hasMore: boolean
+    /** The page came from the local copy; no remote opening has confirmed it yet. */
+    readonly local?: true
   }
   | {
     /** A reconnect continued the held window: `entries` are every full-detail event after it. */
@@ -122,6 +133,56 @@ function continuation(
   return historyRecordLastSeq(newest) === resume.afterSeq && newest.link === resume.link ? resume : undefined
 }
 
+/**
+ * Decode one stored-line entry into the event record the journal holds.
+ * @param entry - a line entry the Host sent for one followed event.
+ * @returns the decoded event record with the Host's link and whole-turn accounting.
+ */
+function lineEntryRecord(entry: SessionLineEntry): SessionHistoryRecord {
+  return {
+    type: 'event',
+    event: decodeStoredLine(entry.line, entry.seq),
+    link: entry.link,
+    ...(entry.turnUsage === undefined ? {} : { turnUsage: entry.turnUsage }),
+  }
+}
+
+/** @returns the failure for a full-detail interval that is not complete and uncollapsed. */
+function incompleteFullInterval(fromSeq: number, throughSeq: number): RemoteError<'gateway/internal'> {
+  return new RemoteError('gateway/internal', 'session full-detail interval is incomplete', { fromSeq, throughSeq })
+}
+
+/**
+ * Assert a full-detail interval is complete: one uncropped record per seq.
+ * @param records - the records an interval read returned.
+ * @param fromSeq - inclusive head of the requested interval.
+ * @param throughSeq - inclusive tail of the requested interval.
+ * @throws when records are missing, duplicated, out of order, or cover elided events.
+ */
+function assertFullInterval(records: readonly SessionHistoryRecord[], fromSeq: number, throughSeq: number): void {
+  if (records.length !== throughSeq - fromSeq + 1
+    || records.some((record, index) => record.event.seq !== fromSeq + index || record.covers !== undefined)) {
+    throw incompleteFullInterval(fromSeq, throughSeq)
+  }
+}
+
+/**
+ * Convert one local page into the journal page a prepend consumes.
+ * @param page - the page the local copy served.
+ * @param shared - header-sharing map of the owning Session.
+ * @returns the page with shared headers, its digests when it carries any.
+ */
+function localPage(
+  page: LocalHistoryPage,
+  shared: Map<string, JsonValue>,
+): SessionJournalPage {
+  return {
+    records: shareLocalHeaders(page.records, shared),
+    hasMore: page.hasMore,
+    ...(page.digests === undefined ? {} : { digests: page.digests }),
+  }
+}
+
 type SessionControlBaselineFrame = Extract<SessionControlFrame, { type: 'baseline' }>
 type SessionControlDeltaFrame = Exclude<SessionControlFrame, SessionControlBaselineFrame>
 
@@ -135,6 +196,8 @@ export type SessionControlStream = RemoteSnapshotStream<
 export interface SessionControlStreamOptions {
   /** Apply a complete baseline or one later update. */
   readonly accept: (frame: SessionControlFrame) => void
+  /** Read the Sessions whose projections this Client holds, once per physical generation. */
+  readonly known: () => readonly SessionControlKnown[]
   /** Observe a retryable carrier loss before reconnection. */
   readonly carrierFailed?: (error: RemoteStreamCarrierError) => void
   /** Publish a terminal business or protocol failure. */
@@ -145,6 +208,18 @@ export interface SessionControlStreamOptions {
 export interface SessionEventStreamOptions {
   /** Resolve the current consumer requirement for every physical follow and page read. */
   readonly stepDetail?: () => SessionStepDetail
+  /** Local copy consulted before the Host for every page, expansion, and interval read. */
+  readonly source?: SessionHistorySource
+  /** Session the copy is keyed by. */
+  readonly sessionId: SessionId
+  /** Whether full history is currently required, passed to local reads as their `full` flag. */
+  readonly full: () => boolean
+  /**
+   * Map sharing identical local request headers inside one Session; omitted, the
+   * stream keeps a private one, so the reads it serves do not share headers
+   * with any other stream's window.
+   */
+  readonly sharedHeaders?: Map<string, JsonValue>
   /** Apply one complete event-window change. */
   readonly publish: (change: SessionJournalChange) => void
   /** Observe a retryable carrier loss before reconnection. */
@@ -156,7 +231,7 @@ export interface SessionEventStreamOptions {
 /**
  * Create the Host-wide Session control snapshot stream.
  * @param remote - generated Session namespace and Gateway stream factory.
- * @param options - Session state destinations.
+ * @param options - Session state destinations, including the checkpoints every opening reports.
  * @returns an unstarted stream owned by the Client Session runtime.
  */
 export function createSessionControlStream(
@@ -165,7 +240,7 @@ export function createSessionControlStream(
 ): SessionControlStream {
   const stream = remote.$stream<SessionControlFrame>({
     name: 'session control stream',
-    open: signal => remote.session.control(signal),
+    open: signal => remote.session.control({ known: options.known() }, signal),
     ended: accepted => accepted
       ? new RemoteStreamCarrierError('session control stream ended without a terminal result')
       : new Error('session control stream ended before its opening snapshot'),
@@ -189,11 +264,16 @@ export class SessionEventStream extends RemoteJournalStream<
   SessionAssistantStreamFrame
 > {
   private readonly stepDetail: (() => SessionStepDetail) | undefined
+  private readonly source: SessionHistorySource | undefined
+  private readonly sessionId: SessionId
+  private readonly full: () => boolean
+  private headers: Map<string, JsonValue> | undefined
+  private localFailureLogged = false
 
   /**
    * @param remote - generated Session namespace and Gateway stream factory.
    * @param address - durable ordinary-Session or direct-subagent address.
-   * @param options - Session event-window destinations.
+   * @param options - Session event-window destinations and the local copy to consult first.
    */
   constructor(
     private readonly remote: SessionRemotes,
@@ -217,6 +297,71 @@ export class SessionEventStream extends RemoteJournalStream<
       failed: options.failed,
     })
     this.stepDetail = options.stepDetail
+    this.source = options.source
+    this.sessionId = options.sessionId
+    this.full = options.full
+    this.headers = options.sharedHeaders
+  }
+
+  /** The per-Session header map, created on first local read when the caller passed none. */
+  private sharedHeaders(): Map<string, JsonValue> {
+    this.headers ??= new Map()
+    return this.headers
+  }
+
+  /**
+   * Ask the local copy, answering `undefined` (read from the Host) when the read
+   * rejects; the first rejection of this stream is logged.
+   * @param read - one local copy read.
+   * @returns the copy's answer, or `undefined` when it failed.
+   */
+  private async localRead<T>(read: () => Promise<T | undefined>): Promise<T | undefined> {
+    try {
+      return await read()
+    } catch (error) {
+      if (!this.localFailureLogged) {
+        this.localFailureLogged = true
+        console.warn('[session-controller] local copy read failed; reading from the Host instead:', error)
+      }
+      return undefined
+    }
+  }
+
+  /**
+   * Durable journal cursor the published window currently reaches, including
+   * entries an assistant settlement still holds back.
+   * @returns the cursor after a successful open.
+   */
+  override cursor(): number {
+    return super.cursor()
+  }
+
+  /**
+   * Open from a local page published before any remote frame, or from the
+   * opening snapshot carried by the first follow frame.
+   * @param request - opening-window request.
+   * @param local - page read from the local copy and its cursor.
+   * @returns after the window is published.
+   */
+  override open(
+    request: ClientSessionPageRequest,
+    local?: { readonly page: SessionJournalPage; readonly cursor: number },
+  ): Promise<void> {
+    return super.open(request, local)
+  }
+
+  /**
+   * Take over an already-published window without republishing it; the first
+   * remote opening resumes after it or replaces it.
+   * @param request - opening-window request.
+   * @param window - the held window's bounds and newest entry.
+   */
+  override adopt(request: ClientSessionPageRequest, window: {
+    readonly first: number
+    readonly last: number
+    readonly newest: SessionHistoryRecord
+  }): void {
+    super.adopt(request, window)
   }
 
   /**
@@ -226,6 +371,15 @@ export class SessionEventStream extends RemoteJournalStream<
    */
   async readFullRange(fromSeq: number): Promise<readonly SessionHistoryRecord[]> {
     const throughSeq = this.cursor()
+    const source = this.source
+    if (source !== undefined) {
+      const records = await this.localRead(() => source.interval(this.sessionId, { fromSeq, throughSeq, full: this.full() }))
+      if (records !== undefined) {
+        const local = shareLocalHeaders(records, this.sharedHeaders())
+        assertFullInterval(local, fromSeq, throughSeq)
+        return local
+      }
+    }
     const result = await this.remote.session.page(
       { address: this.address, fromSeq, throughSeq, stepDetail: 'full' },
       this.signal,
@@ -233,11 +387,8 @@ export class SessionEventStream extends RemoteJournalStream<
     if (!result.ok) throw result.error
     const { records, digests } = result.value
     for (const record of records) assertSessionWireEvent(record.event)
-    if (records.length !== throughSeq - fromSeq + 1
-      || records.some((record, index) => record.event.seq !== fromSeq + index || record.covers !== undefined)
-      || (digests !== undefined && digests.length > 0)) {
-      throw new RemoteError('gateway/internal', 'session full-detail interval is incomplete', { fromSeq, throughSeq })
-    }
+    assertFullInterval(records, fromSeq, throughSeq)
+    if (digests !== undefined && digests.length > 0) throw incompleteFullInterval(fromSeq, throughSeq)
     return records
   }
 
@@ -254,6 +405,16 @@ export class SessionEventStream extends RemoteJournalStream<
    * @returns the withheld records, ascending by seq.
    */
   async expandSteps(turn: number, fromSeq: number, signal?: AbortSignal): Promise<readonly SessionHistoryRecord[]> {
+    const source = this.source
+    if (source !== undefined) {
+      const records = await this.localRead(() => source.elided(this.sessionId, {
+        turn,
+        fromSeq,
+        throughSeq: this.cursor(),
+        full: this.full(),
+      }))
+      if (records !== undefined) return shareLocalHeaders(records, this.sharedHeaders())
+    }
     const result = await this.remote.session.expandSteps(
       { address: this.address, throughSeq: this.cursor(), turn, fromSeq },
       signal ?? this.signal,
@@ -278,11 +439,27 @@ export class SessionEventStream extends RemoteJournalStream<
       address: this.address,
       activate: true,
       assistantStream: true,
+      ...(this.source === undefined ? {} : { lines: true }),
       ...this.repairRequest(resolved),
       ...(resume === undefined ? {} : { resume }),
     }, signal)) {
+      if (frame.type === 'line') {
+        yield { type: 'entry', entry: lineEntryRecord(frame) }
+        this.source?.append(this.sessionId, [{ seq: frame.seq, line: frame.line, link: frame.link }])
+        continue
+      }
       if (frame.type === 'snapshot' || frame.type === 'resumed') {
-        for (const record of frame.records) assertSessionWireEvent(record.event)
+        // The lines a resumed opening carries are offered to the copy as one
+        // batch, after the opening itself is published.
+        const lines: { readonly seq: number; readonly line: string; readonly link: SessionChainLink }[] = []
+        const records: readonly SessionHistoryRecord[] = frame.type === 'resumed'
+          ? frame.records.map((record: SessionHistoryRecord | SessionLineEntry): SessionHistoryRecord => {
+            if (record.type !== 'line') return record
+            lines.push({ seq: record.seq, line: record.line, link: record.link })
+            return lineEntryRecord(record)
+          })
+          : frame.records
+        for (const record of records) assertSessionWireEvent(record.event)
         if (frame.assistantStream === undefined) {
           throw new RemoteError(
             'gateway/internal',
@@ -300,16 +477,17 @@ export class SessionEventStream extends RemoteJournalStream<
             after: frame.after,
             cursor: frame.cursor,
             page: {
-              records: frame.records,
+              records,
               // A resumed page continues the held window; it carries no older-history bound.
               hasMore: false,
               projections: frame.projections,
               assistantStream: frame.assistantStream,
             },
           }
+          if (lines.length > 0) this.source?.append(this.sessionId, lines)
           continue
         }
-        const continues = continuation(frame.records, frame.cursor, resume)
+        const continues = continuation(records, frame.cursor, resume)
         if (continues !== undefined) {
           yield {
             type: 'resumed',
@@ -329,7 +507,7 @@ export class SessionEventStream extends RemoteJournalStream<
           type: 'opened',
           cursor: frame.cursor,
           page: {
-            records: frame.records,
+            records,
             hasMore: frame.hasMore,
             ...(frame.digests === undefined ? {} : { digests: frame.digests }),
             projections: frame.projections,
@@ -360,6 +538,15 @@ export class SessionEventStream extends RemoteJournalStream<
     throughSeq: number,
     signal: AbortSignal,
   ): Promise<SessionJournalPage> {
+    const source = this.source
+    if (source !== undefined) {
+      const page = await this.localRead(() => source.page(this.sessionId, {
+        ...this.resolveRequest(request),
+        throughSeq,
+        full: this.full(),
+      }))
+      if (page !== undefined) return localPage(page, this.sharedHeaders())
+    }
     const result = await this.remote.session.page(
       { address: this.address, throughSeq, ...this.resolveRequest(request) },
       signal,

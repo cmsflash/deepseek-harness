@@ -5,18 +5,26 @@
  * proxies and is answered by endpoint name.
  */
 
-import { describe, expect, onTestFinished, vi } from 'vitest'
+import { describe, expect, onTestFinished, vi, type Mock } from 'vitest'
 import { SessionSeq, type SessionEvent } from '@deepseek-ai/dsh-session/types'
 import { AttachmentId } from '@deepseek-ai/dsh-attachment'
 import { LlmAttemptId } from '@deepseek-ai/dsh-llm'
 import type { SessionId } from '@deepseek-ai/dsh-api-remotes/client'
 import { RemoteStreamCarrierError } from '@deepseek-ai/dsh-api-gateway/client'
+import { brandString } from '@deepseek-ai/dsh-brand'
 import { RemoteError, type RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
 import { ok, type RemoteMock } from '@deepseek-ai/dsh-remote-mock'
 import { createClientTest, type TestClient, webApp } from '@deepseek-ai/dsh-client-test-runtime/src/assembly/index.ts'
 import { Session } from '../src/client/sessions/session.ts'
+import { historyRecordLastSeq } from '../src/client/sessions/history-records.ts'
 import { SessionEventStream } from '../src/client/transport.ts'
-import type { SessionExpandStepsValue, SessionFollowRequest, SessionEventsPage, SessionPageRequest } from '../src/types.ts'
+import type {
+  LocalHistoryPage, LocalHistoryRecord, SessionHistorySource,
+} from '../src/client/contract/history-source.ts'
+import type {
+  SessionChainLink, SessionExpandStepsValue, SessionFollowRequest, SessionEventsPage, SessionHistoryRecord,
+  SessionPageRequest, StepDigest,
+} from '../src/types.ts'
 import { collapsedRecords, entries, ev, historyValue, plainTurn } from './event-script.client.ts'
 import { sessionBench } from './remote/bench.client.ts'
 import {
@@ -40,6 +48,27 @@ function windowEntries(session: Session) {
 
 function eventSeqs(session: Session): number[] {
   return windowEntries(session).map(entry => entry.event.seq)
+}
+
+/**
+ * A two-step turn at `startSeq`: step 1 is a tool round, step 2 carries the
+ * closing text.
+ */
+function twoStepTurn(startSeq: number, turn: number): SessionEvent[] {
+  const s = (offset: number) => SessionSeq(startSeq + offset)
+  return [
+    ev.turnStart(s(0), turn),
+    ev.user(s(1), '问'),
+    ev.stepStart(s(2), turn, 1),
+    ev.toolCall(s(3), turn, `c${String(turn)}`, 'read', '{}', 1),
+    ev.toolResult(s(4), turn, `c${String(turn)}`, 'ok', 1),
+    ev.assistant(s(5), turn, '', 1),
+    ev.stepEnd(s(6), turn, 1),
+    ev.stepStart(s(7), turn, 2),
+    ev.assistant(s(8), turn, '答', 2),
+    ev.stepEnd(s(9), turn, 2),
+    ev.turnEnd(s(10), turn),
+  ]
 }
 
 describe('Session open', () => {
@@ -1136,24 +1165,6 @@ describe('snapshot ownership', () => {
 })
 
 describe('collapsed step detail', () => {
-  /** A two-step turn at `startSeq`: step 1 is a tool round, step 2 carries the closing text. */
-  function twoStepTurn(startSeq: number, turn: number): SessionEvent[] {
-    const s = (offset: number) => SessionSeq(startSeq + offset)
-    return [
-      ev.turnStart(s(0), turn),
-      ev.user(s(1), '问'),
-      ev.stepStart(s(2), turn, 1),
-      ev.toolCall(s(3), turn, `c${String(turn)}`, 'read', '{}', 1),
-      ev.toolResult(s(4), turn, `c${String(turn)}`, 'ok', 1),
-      ev.assistant(s(5), turn, '', 1),
-      ev.stepEnd(s(6), turn, 1),
-      ev.stepStart(s(7), turn, 2),
-      ev.assistant(s(8), turn, '答', 2),
-      ev.stepEnd(s(9), turn, 2),
-      ev.turnEnd(s(10), turn),
-    ]
-  }
-
   /** The collapsed form of {@link twoStepTurn}: step 1's interior withheld behind one digest. */
   function collapsed(events: SessionEvent[], turn: number) {
     const interior = new Set([3, 4, 5].map(offset => (events[0] as SessionEvent).seq + offset))
@@ -1540,5 +1551,540 @@ describe('collapsed step detail', () => {
     expect(eventSeqs(session)).toEqual([...historical, ...live, ev.stepEnd(SessionSeq(15), 2, 1)].map(event => event.seq))
     expect(windowEntries(session).some(entry => entry.type === 'transient')).toBe(false)
     expect(mock.log.requests(FOLLOW)).toHaveLength(1)
+  })
+
+  it('blocks trimming while a step expansion runs, so it never splices records below the head', async ({ mock, start }) => {
+    const turn = twoStepTurn(0, 1)
+    const { page, withheld, digest } = collapsed(turn, 1)
+    const session = await sessionBench(mock, start, SID, { stepDetail: 'collapsed' })
+    mock.stream(FOLLOW, followScript(ok({ ...page(false), digests: [digest] })))
+    const pending = Promise.withResolvers<RemoteResult<SessionExpandStepsValue>>()
+    mock.remote.session.expandSteps.mockReturnValue(pending.promise)
+    await session.open()
+
+    const expanding = session.expandTurn(1)
+    expect(session.trimHead(1)).toBe(false)
+    pending.resolve(ok({ records: entries(withheld) }))
+    await expanding
+    expect(eventSeqs(session)).toEqual(turn.map(event => event.seq))
+    expect(session.trimHead(1)).toBe(true)
+  })
+
+  it('blocks trimming while a full-history reload runs', async ({ mock, start }) => {
+    const turn = twoStepTurn(0, 1)
+    const { page, digest } = collapsed(turn, 1)
+    const session = await sessionBench(mock, start, SID, { stepDetail: 'collapsed' })
+    mock.stream(FOLLOW, followScript(ok({ ...page(false), digests: [digest] })))
+    const pending = Promise.withResolvers<RemoteResult<SessionEventsPage>>()
+    mock.remote.session.page.mockImplementation(pageRule(() => pending.promise))
+    await session.open()
+
+    const filling = session.requireFullHistory()
+    expect(session.trimHead(1)).toBe(false)
+    pending.resolve(history(turn, false))
+    await filling
+    expect(eventSeqs(session)).toEqual(turn.map(event => event.seq))
+    expect(session.trimHead(1)).toBe(true)
+  })
+})
+
+describe('local copy opening', () => {
+  /** One request/header event recording a given tool, as the durable log stores it. */
+  const headerEvent = (seq: SessionSeq, tool: string, reason: 'initial' | 'change'): SessionEvent => ({
+    seq,
+    time: 1_700_000_000_000 + seq,
+    type: 'request/header',
+    data: {
+      header: {
+        config: { provider: 'fake', model: 'fk-1' },
+        tools: [{ name: tool, description: `${tool} tool`, parameters: { type: 'object' } }],
+      },
+      reason,
+    },
+  })
+
+  /** The fake copy's own chain links, deliberately not the Host's scripted `linkFor` values. */
+  const localLink = (seq: number): SessionChainLink => brandString<SessionChainLink>(`local-${String(seq)}`.padStart(64, '0'))
+
+  interface FakeSource extends SessionHistorySource {
+    readonly opening: Mock<SessionHistorySource['opening']>
+    readonly page: Mock<SessionHistorySource['page']>
+    readonly interval: Mock<SessionHistorySource['interval']>
+    readonly elided: Mock<SessionHistorySource['elided']>
+    readonly append: Mock<SessionHistorySource['append']>
+    readonly opened: Mock<SessionHistorySource['opened']>
+    readonly diverged: Mock<SessionHistorySource['diverged']>
+  }
+
+  /** A fake local copy answering nothing until a case programs one of its reads. */
+  function fakeSource(): FakeSource {
+    return {
+      opening: vi.fn<SessionHistorySource['opening']>(),
+      page: vi.fn<SessionHistorySource['page']>(),
+      interval: vi.fn<SessionHistorySource['interval']>(),
+      elided: vi.fn<SessionHistorySource['elided']>(),
+      append: vi.fn<SessionHistorySource['append']>(),
+      opened: vi.fn<SessionHistorySource['opened']>(),
+      diverged: vi.fn<SessionHistorySource['diverged']>(),
+    }
+  }
+
+  /** Records the fake copy serves: linked, sized, and optionally stripped or header-keyed. */
+  function localRecords(
+    records: readonly SessionHistoryRecord[],
+    options: { readonly stripped?: ReadonlySet<number>; readonly headerKeys?: ReadonlyMap<number, string> } = {},
+  ): LocalHistoryRecord[] {
+    return records.map((record) => {
+      const headerKey = options.headerKeys?.get(record.event.seq)
+      return {
+        ...record,
+        link: localLink(record.event.seq),
+        bytes: 20,
+        ...(options.stripped?.has(record.event.seq) ? { stripped: true as const } : {}),
+        ...(headerKey === undefined ? {} : { headerKey }),
+      }
+    })
+  }
+
+  /** A local read shaped like a Host page, covering exactly its records. */
+  function localPage(
+    records: readonly LocalHistoryRecord[],
+    hasMore = false,
+    digests?: readonly StepDigest[],
+  ): LocalHistoryPage {
+    return {
+      records,
+      hasMore,
+      ...(digests === undefined ? {} : { digests }),
+      cursor: records.length === 0 ? -1 : historyRecordLastSeq(records.at(-1)!),
+    }
+  }
+
+  it('opens from the copy before the follow opening lands and reports the window unconfirmed', async ({ mock, start }) => {
+    const turn = plainTurn(SessionSeq(0), 0, '问', '答')
+    const source = fakeSource()
+    source.opening.mockResolvedValue(localPage(localRecords(entries(turn))))
+    const session = await sessionBench(mock, start, SID, { historySource: source })
+    const held = Promise.withResolvers<RemoteResult<SessionEventsPage>>()
+    mock.stream(FOLLOW, followScript(() => held.promise))
+
+    await session.open()
+
+    expect(session.getSnapshot()).toMatchObject({ openState: 'open', unconfirmed: true, incompleteCopy: false })
+    expect(eventSeqs(session)).toEqual(turn.map(event => event.seq))
+    expect(source.opened).toHaveBeenCalledWith(SID)
+    expect(source.opening).toHaveBeenCalledWith(SID, {
+      beforeSeq: undefined,
+      maxMessages: 500,
+      turnWindow: { minMessages: 50, minTurns: 2 },
+      stepDetail: 'full',
+      full: false,
+    })
+    expect(mock.log.requests(FOLLOW)).toHaveLength(1)
+    expect(mock.log.requests(PAGE)).toEqual([])
+  })
+
+  it('clears unconfirmed and appends when the follow opening resumes the copy', async ({ mock, start }) => {
+    const turn = plainTurn(SessionSeq(0), 0, '问', '答')
+    const missed = plainTurn(SessionSeq(6), 1, '新问', '新答')
+    const source = fakeSource()
+    source.opening.mockResolvedValue(localPage(localRecords(entries(turn))))
+    const session = await sessionBench(mock, start, SID, { historySource: source })
+    mock.stream(FOLLOW, async ([request], stream) => {
+      stream.push(followResumed(request as SessionFollowRequest, entries(missed)))
+    })
+
+    await session.open()
+
+    await vi.waitFor(() => { expect(session.getSnapshot().unconfirmed).toBe(false) })
+    expect(session.getSnapshot()).toMatchObject({ openState: 'open', unconfirmed: false })
+    expect(eventSeqs(session)).toEqual([...turn, ...missed].map(event => event.seq))
+    expect(session.eventSource.getSnapshot().change).toMatchObject({ kind: 'append' })
+    expect(source.diverged).not.toHaveBeenCalled()
+    expect(mock.log.requests(FOLLOW)).toMatchObject([{ resume: { afterSeq: 5, link: localLink(5) } }])
+    expect(mock.log.requests(PAGE)).toEqual([])
+  })
+
+  it('reports an incomplete copy while a partial opening is unconfirmed and clears it when the follow resumes', async ({ mock, start }) => {
+    const turn = plainTurn(SessionSeq(0), 0, '问', '答')
+    const missed = plainTurn(SessionSeq(6), 1, '新问', '新答')
+    const source = fakeSource()
+    source.opening.mockResolvedValue({ ...localPage(localRecords(entries(turn))), partial: true })
+    const session = await sessionBench(mock, start, SID, { historySource: source })
+    const held = Promise.withResolvers<undefined>()
+    mock.stream(FOLLOW, async ([request], stream) => {
+      await held.promise
+      stream.push(followResumed(request as SessionFollowRequest, entries(missed)))
+    })
+
+    await session.open()
+
+    expect(session.getSnapshot()).toMatchObject({ openState: 'open', unconfirmed: true, incompleteCopy: true })
+    held.resolve(undefined)
+    await vi.waitFor(() => { expect(session.getSnapshot().unconfirmed).toBe(false) })
+    expect(session.getSnapshot().incompleteCopy).toBe(false)
+    expect(eventSeqs(session)).toEqual([...turn, ...missed].map(event => event.seq))
+  })
+
+  it('marks the copy divergent when the follow opening replaces the local window', async ({ mock, start }) => {
+    const turn = plainTurn(SessionSeq(0), 0, '问', '答')
+    const rewritten = plainTurn(SessionSeq(0), 0, '改问', '改答')
+    const source = fakeSource()
+    source.opening.mockResolvedValue({ ...localPage(localRecords(entries(turn))), partial: true })
+    const session = await sessionBench(mock, start, SID, { historySource: source })
+    mock.stream(FOLLOW, followScript(history(rewritten)))
+
+    await session.open()
+
+    await vi.waitFor(() => { expect(source.diverged).toHaveBeenCalledWith(SID) })
+    expect(session.getSnapshot()).toMatchObject({ openState: 'open', unconfirmed: false, incompleteCopy: false })
+    expect(eventSeqs(session)).toEqual(rewritten.map(event => event.seq))
+    expect(session.eventSource.getSnapshot().change).toMatchObject({ kind: 'replace' })
+  })
+
+  it('falls back to the Host opening when the copy answers nothing', async ({ mock, start }) => {
+    const turn = plainTurn(SessionSeq(0), 0, '问', '答')
+    const source = fakeSource()
+    const session = await sessionBench(mock, start, SID, { historySource: source })
+    mock.stream(FOLLOW, followScript(history(turn)))
+
+    await session.open()
+
+    expect(session.getSnapshot()).toMatchObject({ openState: 'open', unconfirmed: false })
+    expect(source.opened).toHaveBeenCalledWith(SID)
+    expect(source.opening).toHaveBeenCalledExactlyOnceWith(SID, expect.anything())
+    expect(eventSeqs(session)).toEqual(turn.map(event => event.seq))
+    expect(mock.log.requests(FOLLOW)).toHaveLength(1)
+  })
+
+  it('serves loadOlder and loadThrough from the copy without Host history calls', async ({ mock, start }) => {
+    const older = plainTurn(SessionSeq(0), 0, '旧问', '旧答')
+    const newer = plainTurn(SessionSeq(6), 1, '问', '答')
+    const source = fakeSource()
+    source.opening.mockResolvedValue(localPage(localRecords(entries(newer)), true))
+    source.page.mockResolvedValue(localPage(localRecords(entries(older))))
+    const session = await sessionBench(mock, start, SID, { historySource: source })
+    const held = Promise.withResolvers<RemoteResult<SessionEventsPage>>()
+    mock.stream(FOLLOW, followScript(() => held.promise))
+
+    await session.open()
+    await session.loadOlder()
+
+    expect(source.page).toHaveBeenCalledWith(SID, {
+      beforeSeq: 6,
+      maxMessages: 500,
+      turnWindow: { minMessages: 50, minTurns: 2 },
+      stepDetail: 'full',
+      throughSeq: 11,
+      full: false,
+    })
+    expect(eventSeqs(session)).toEqual([...older, ...newer].map(event => event.seq))
+    expect(mock.log.requests(PAGE)).toEqual([])
+
+    // A jump the copy covers pages backwards through it, still without a Host call.
+    await session.loadThrough(SessionSeq(2))
+    expect(eventSeqs(session)).toEqual([...older, ...newer].map(event => event.seq))
+    expect(mock.log.requests(PAGE)).toEqual([])
+    expect(source.page).toHaveBeenCalledTimes(1)
+  })
+
+  it('serves a collapsed page\'s expansion from the copy without a Host call', async ({ mock, start }) => {
+    const turn = twoStepTurn(20, 1)
+    const interior = new Set([3, 4, 5].map(offset => 20 + offset))
+    const served = turn.filter(event => !interior.has(event.seq))
+    const withheld = turn.filter(event => interior.has(event.seq))
+    const digest = {
+      turn: 1, step: 1, startSeq: 22, endSeq: 26, elided: 3, steps: 1, calls: 1,
+      filePaths: [], added: 0, removed: 0, elapsedMs: 0, inputTokens: 0, outputTokens: 0,
+    }
+    const source = fakeSource()
+    source.opening.mockResolvedValue(localPage(localRecords(collapsedRecords(turn, served)), false, [digest]))
+    source.elided.mockResolvedValue(localRecords(entries(withheld)))
+    const session = await sessionBench(mock, start, SID, { historySource: source, stepDetail: 'collapsed' })
+    const held = Promise.withResolvers<RemoteResult<SessionEventsPage>>()
+    mock.stream(FOLLOW, followScript(() => held.promise))
+
+    await session.open()
+    expect(session.getSnapshot().stepDigests.get(1)).toEqual([digest])
+
+    await session.expandTurn(1)
+
+    expect(source.elided).toHaveBeenCalledWith(SID, { turn: 1, fromSeq: 20, throughSeq: 30, full: false })
+    expect(mock.log.requests('session/expandSteps')).toEqual([])
+    expect(eventSeqs(session)).toEqual(turn.map(event => event.seq))
+    expect(session.getSnapshot().stepDigests.has(1)).toBe(false)
+  })
+
+  it('reloads a window of stripped records from the copy when full history is required', async ({ mock, start }) => {
+    const turn = plainTurn(SessionSeq(0), 0, '问', '答')
+    const source = fakeSource()
+    source.opening.mockResolvedValue(localPage(localRecords(entries(turn), {
+      stripped: new Set([(turn[3] as SessionEvent).seq]),
+    })))
+    source.interval.mockResolvedValue(localRecords(entries(turn)))
+    const session = await sessionBench(mock, start, SID, { historySource: source })
+    const held = Promise.withResolvers<RemoteResult<SessionEventsPage>>()
+    mock.stream(FOLLOW, followScript(() => held.promise))
+
+    await session.open()
+    expect(windowEntries(session).some(entry => entry.type === 'event' && entry.stripped === true)).toBe(true)
+
+    await session.requireFullHistory()
+
+    expect(source.interval).toHaveBeenCalledWith(SID, { fromSeq: 0, throughSeq: 5, full: true })
+    expect(mock.log.requests(PAGE)).toEqual([])
+    expect(windowEntries(session).some(entry => entry.type === 'event' && entry.stripped === true)).toBe(false)
+    expect(eventSeqs(session)).toEqual(turn.map(event => event.seq))
+    expect(session.eventSource.getSnapshot().change).toMatchObject({ kind: 'replace' })
+  })
+
+  it('shares one header object among identical local request headers across reads', async ({ mock, start }) => {
+    const olderEvents = [
+      ev.turnStart(SessionSeq(0), 0),
+      headerEvent(SessionSeq(1), 'a', 'initial'),
+      ev.user(SessionSeq(2), '问'),
+      ev.turnEnd(SessionSeq(3), 0),
+    ]
+    const newerEvents = [
+      ev.turnStart(SessionSeq(4), 1),
+      headerEvent(SessionSeq(5), 'a', 'change'),
+      ev.user(SessionSeq(6), '再问'),
+      headerEvent(SessionSeq(7), 'b', 'change'),
+      ev.turnEnd(SessionSeq(8), 1),
+    ]
+    const keys = new Map([[1, 'ka'], [5, 'ka'], [7, 'kb']])
+    const source = fakeSource()
+    source.opening.mockResolvedValue(localPage(localRecords(entries(newerEvents), { headerKeys: keys }), true))
+    source.page.mockResolvedValue(localPage(localRecords(entries(olderEvents), { headerKeys: keys })))
+    const session = await sessionBench(mock, start, SID, { historySource: source })
+    const held = Promise.withResolvers<RemoteResult<SessionEventsPage>>()
+    mock.stream(FOLLOW, followScript(() => held.promise))
+
+    await session.open()
+    await session.loadOlder()
+
+    const headerOf = (seq: number): unknown => {
+      const event = windowEntries(session).find(entry => entry.event.seq === seq)?.event
+      return event !== undefined && event.type === 'request/header' ? event.data.header : undefined
+    }
+    expect(headerOf(1)).toBe(headerOf(5))
+    expect(headerOf(1)).not.toBe(headerOf(7))
+  })
+})
+
+/** Narrow a history result to its success branch (history returns the result union). */
+function okPage(result: RemoteResult<SessionEventsPage>): SessionEventsPage {
+  if (!result.ok) throw new Error(`fixture history failed: ${result.error.code}`)
+  return result.value
+}
+
+describe('window pages and warm suspension', () => {
+  it('tracks one opening page whose byte cache measures at idle time', async ({ mock, start }) => {
+    const turn = plainTurn(SessionSeq(10), 3, '问', '答')
+    const session = await sessionBench(mock, start, SID)
+    mock.stream(FOLLOW, followScript(history(turn)))
+    await session.open()
+
+    expect(session.pages()).toEqual([expect.objectContaining({ from: 10, to: 15, viewedAt: null })])
+    const expected = windowEntries(session)
+      .map(entry => JSON.stringify(entry.event).length)
+      .reduce((sum, size) => sum + size, 0)
+    await vi.waitFor(() => { expect(session.bytes()).toBe(expected) })
+    expect(session.pages()[0]).toMatchObject({ bytes: expected })
+  })
+
+  it('stamps pages the reader reports as viewed and keeps the viewport', async ({ mock, start }) => {
+    const turn = plainTurn(SessionSeq(10), 3, '问', '答')
+    const session = await sessionBench(mock, start, SID)
+    mock.stream(FOLLOW, followScript(history(turn)))
+    await session.open()
+
+    expect(session.viewedRange()).toBeUndefined()
+    session.markViewed(SessionSeq(12), SessionSeq(15))
+    const stamped = session.pages()[0]
+    expect(stamped).toMatchObject({ from: 10, to: 15 })
+    expect(typeof stamped?.viewedAt).toBe('number')
+    expect(session.viewedRange()).toEqual({ from: 12, to: 15 })
+  })
+
+  it('prepends an older page and trims it from the head without the evicted events', async ({ mock, start }) => {
+    const older = plainTurn(SessionSeq(0), 0, '旧问', '旧答')
+    const newer = plainTurn(SessionSeq(6), 1, '新问', '新答')
+    const session = await sessionBench(mock, start, SID)
+    mock.stream(FOLLOW, followScript(history(newer, true)))
+    mock.remote.session.page.mockImplementation(pageRule(history(older)))
+    await session.open()
+    await session.loadOlder()
+    expect(session.pages()).toHaveLength(2)
+
+    session.markViewed(SessionSeq(0), SessionSeq(5))
+    expect(session.trimHead(1)).toBe(true)
+    expect(session.getSnapshot()).toMatchObject({ hasMore: true })
+    expect(eventSeqs(session)).toEqual(newer.map(event => event.seq))
+    expect(session.pages()).toEqual([expect.objectContaining({ from: 6, to: 11, viewedAt: null })])
+  })
+
+  it('pages back from the new head after a trim and stamps the pages the reader loaded', async ({ mock, start }) => {
+    const oldest = plainTurn(SessionSeq(0), 0, '最早问', '最早答')
+    const older = plainTurn(SessionSeq(6), 1, '旧问', '旧答')
+    const newer = plainTurn(SessionSeq(12), 2, '新问', '新答')
+    const session = await sessionBench(mock, start, SID)
+    mock.stream(FOLLOW, followScript(history(newer, true)))
+    mock.remote.session.page.mockImplementation(pageRule(request =>
+      request.beforeSeq === 12 ? history(older, true) : history(oldest)))
+    await session.open()
+    expect(session.pages()).toEqual([expect.objectContaining({ from: 12, loadedAt: null })])
+    await session.loadOlder()
+    expect(session.pages()[0]).toMatchObject({ from: 6, to: 11 })
+    expect(typeof session.pages()[0]?.loadedAt).toBe('number')
+
+    expect(session.trimHead(1)).toBe(true)
+    expect(eventSeqs(session)).toEqual(newer.map(event => event.seq))
+    await session.loadOlder()
+    expect(eventSeqs(session)).toEqual([...older, ...newer].map(event => event.seq))
+    await session.loadOlder()
+    expect(eventSeqs(session)).toEqual([...oldest, ...older, ...newer].map(event => event.seq))
+    expect(session.getSnapshot()).toMatchObject({ hasMore: false })
+  })
+
+  it('blocks trimming while an older page is loading', async ({ mock, start }) => {
+    const older = plainTurn(SessionSeq(0), 0, '旧问', '旧答')
+    const newer = plainTurn(SessionSeq(6), 1, '新问', '新答')
+    const session = await sessionBench(mock, start, SID)
+    mock.stream(FOLLOW, followScript(history(newer, true)))
+    await session.open()
+
+    const gate = Promise.withResolvers<RemoteResult<SessionEventsPage>>()
+    mock.remote.session.page.mockReturnValueOnce(gate.promise)
+    const loading = session.loadOlder()
+    expect(session.trimHead(1)).toBe(false)
+    gate.resolve(history(older))
+    await loading
+    expect(eventSeqs(session)).toEqual([...older, ...newer].map(event => event.seq))
+  })
+
+  it('drops the digests of turns fully below a trim and keeps the rest', async ({ mock, start }) => {
+    const older = plainTurn(SessionSeq(0), 0, '旧问', '旧答')
+    const newer = plainTurn(SessionSeq(6), 1, '新问', '新答')
+    const olderDigest: StepDigest = {
+      turn: 0, step: 1, startSeq: 2, endSeq: 5, elided: 3, steps: 1, calls: 0,
+      filePaths: [], added: 0, removed: 0, elapsedMs: 0, inputTokens: 0, outputTokens: 0,
+    }
+    const keepDigest: StepDigest = {
+      turn: 1, step: 1, startSeq: 8, endSeq: 10, elided: 1, steps: 1, calls: 0,
+      filePaths: [], added: 0, removed: 0, elapsedMs: 0, inputTokens: 0, outputTokens: 0,
+    }
+    const session = await sessionBench(mock, start, SID, { stepDetail: 'collapsed' })
+    mock.stream(FOLLOW, followScript({ ok: true, value: { ...okPage(history(newer, true)), digests: [keepDigest] } }))
+    mock.remote.session.page.mockImplementation(pageRule({ ok: true, value: { ...okPage(history(older)), digests: [olderDigest] } }))
+    await session.open()
+    await session.loadOlder()
+    expect(session.getSnapshot().stepDigests.has(0)).toBe(true)
+
+    expect(session.trimHead(1)).toBe(true)
+    expect(session.getSnapshot().stepDigests.has(0)).toBe(false)
+    expect(session.getSnapshot().stepDigests.get(1)).toEqual([keepDigest])
+    expect(session.getSnapshot().stepAccounts.get(1)).toEqual([keepDigest])
+  })
+
+  it('blocks trimming while a jump loop pages backwards', async ({ mock, start }) => {
+    const older = plainTurn(SessionSeq(0), 0, '旧问', '旧答')
+    const newer = plainTurn(SessionSeq(6), 1, '新问', '新答')
+    const session = await sessionBench(mock, start, SID)
+    mock.stream(FOLLOW, followScript(history(newer, true)))
+    mock.remote.session.page.mockImplementation(pageRule(history(older)))
+    await session.open()
+
+    const gate = Promise.withResolvers<RemoteResult<SessionEventsPage>>()
+    mock.remote.session.page.mockReturnValueOnce(gate.promise)
+    const jump = session.loadThrough(SessionSeq(0))
+    expect(session.trimHead(1)).toBe(false)
+    gate.resolve(history(older))
+    await jump
+    expect(session.trimHead(0)).toBe(false)
+  })
+
+  it('suspends the follow with the window intact and revives it as one resumed opening', async ({ mock, start }) => {
+    const turn = plainTurn(SessionSeq(10), 3, '问', '答')
+    const session = await sessionBench(mock, start, SID)
+    mock.stream(FOLLOW, followScript(history(turn)))
+    await session.open()
+    const held = windowEntries(session)
+    const revision = session.eventSource.getSnapshot().revision
+
+    await session.suspendFollow()
+    // The held window is untouched, and a repeated suspension is idempotent.
+    await session.suspendFollow()
+    expect(windowEntries(session)).toEqual(held)
+    expect(session.getSnapshot()).toMatchObject({ openState: 'open' })
+
+    mock.stream(FOLLOW, async () => { /* A generation kept waiting publishes nothing yet. */ })
+    session.reviveFollow()
+    expect(mock.log.requests(FOLLOW)).toHaveLength(2)
+    const [first, second] = mock.log.requests(FOLLOW)
+    expect(first).not.toHaveProperty('resume')
+    expect(second).toMatchObject({
+      address: ADDRESS,
+      resume: { afterSeq: 15, link: linkFor(15) },
+    })
+    expect(session.eventSource.getSnapshot().revision).toBe(revision)
+    expect(windowEntries(session)).toEqual(held)
+  })
+
+  it('revives a window trimmed while suspended and pages back from its new head', async ({ mock, start }) => {
+    const older = plainTurn(SessionSeq(0), 0, '旧问', '旧答')
+    const newer = plainTurn(SessionSeq(6), 1, '新问', '新答')
+    const session = await sessionBench(mock, start, SID)
+    mock.stream(FOLLOW, followScript(history(newer, true)))
+    mock.remote.session.page.mockImplementation(pageRule(history(older)))
+    await session.open()
+    await session.loadOlder()
+
+    await session.suspendFollow()
+    expect(session.trimHead(1)).toBe(true)
+    mock.stream(FOLLOW, async () => { /* A generation kept waiting publishes nothing yet. */ })
+    session.reviveFollow()
+    await session.loadOlder()
+    expect(eventSeqs(session)).toEqual([...older, ...newer].map(event => event.seq))
+  })
+
+  it('reviveFollow is a no-op while the follow is live', async ({ mock, start }) => {
+    const turn = plainTurn(SessionSeq(10), 3, '问', '答')
+    const session = await sessionBench(mock, start, SID)
+    mock.stream(FOLLOW, followScript(history(turn)))
+    await session.open()
+
+    const revision = session.eventSource.getSnapshot().revision
+    session.reviveFollow()
+    expect(mock.log.requests(FOLLOW)).toHaveLength(1)
+    expect(session.eventSource.getSnapshot().revision).toBe(revision)
+  })
+
+  it('offers no resume without a linked held record, so revival takes a snapshot', async ({ mock, start }) => {
+    const turn = plainTurn(SessionSeq(10), 3, '问', '答')
+    const unlinked = (result: RemoteResult<SessionEventsPage>): RemoteResult<SessionEventsPage> =>
+      !result.ok ? result : {
+        ok: true,
+        value: {
+          ...result.value,
+          records: result.value.records.map(({ type, event, turnUsage }) =>
+            ({ type, event, ...(turnUsage === undefined ? {} : { turnUsage }) })),
+        },
+      }
+    const session = await sessionBench(mock, start, SID)
+    mock.stream(FOLLOW, followScript(unlinked(history(turn))))
+    await session.open()
+
+    mock.stream(FOLLOW, async ([request], stream) => {
+      const follow = request as SessionFollowRequest
+      expect(follow.resume).toBeUndefined()
+      stream.push(followSnapshot(okPage(history(turn)), follow))
+    })
+    await session.suspendFollow()
+    session.reviveFollow()
+    await vi.waitFor(() => {
+      expect(mock.log.requests(FOLLOW)).toHaveLength(2)
+    })
+    expect(session.eventSource.getSnapshot().entries).toHaveLength(turn.length)
   })
 })

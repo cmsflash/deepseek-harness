@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi, type Mock } from 'vitest'
 import {
   RemoteStream,
   RemoteStreamCarrierError,
@@ -21,19 +21,26 @@ import type {
   SessionAssistantStreamBaseline,
   SessionAssistantStreamFrame,
   SessionControlFrame,
+  SessionExpandStepsRequest,
+  SessionExpandStepsValue,
+  SessionControlKnown,
+  SessionControlRequest,
   SessionFollowFrame,
   SessionFollowRequest,
   SessionHistoryRecord,
+  SessionLineEntry,
   SessionEventsPage,
   SessionPageRequest,
   SessionProjectionBaseline,
   SessionWireEvent,
 } from '../src/types.ts'
+import type { LocalHistoryRecord, SessionHistorySource } from '../src/client/contract/history-source.ts'
 import { linkFor } from './remote/history.client.ts'
 
-type SessionTransportRemote = Pick<SessionRemote, 'control' | 'follow' | 'page'>
+type SessionTransportRemote = Pick<SessionRemote, 'control' | 'follow' | 'page' | 'expandSteps'>
 
 const ADDRESS: SessionAddress = { kind: 'session', sessionId: 'session-1' as never }
+const SID = 'session-1' as never
 const AVAILABLE_CONNECTION = {
   generation: {
     getSnapshot: () => ({ id: 1, host: { home: '/home/fixture' } }),
@@ -54,7 +61,7 @@ function unlinked(seq: number): SessionHistoryRecord {
 function resumed(
   after: number,
   cursor: number,
-  records: readonly SessionHistoryRecord[],
+  records: readonly (SessionHistoryRecord | SessionLineEntry)[],
   assistantStream: SessionAssistantStreamBaseline = { revision: 0 },
 ): SessionFollowFrame {
   return {
@@ -70,6 +77,46 @@ function resumed(
     records,
     projections: { asOfSeq: cursor, values: {} },
     assistantStream,
+  }
+}
+
+/** One journal record framed as the stored line the Host sends for it. */
+function lineEntry(record: SessionHistoryRecord, turnUsage?: null): SessionLineEntry {
+  return {
+    type: 'line',
+    seq: record.event.seq,
+    line: JSON.stringify(record.event),
+    link: record.link!,
+    ...(turnUsage === undefined ? {} : { turnUsage }),
+  }
+}
+
+/** One journal record as the local copy reports it: linked, and measured. */
+function localEntry(seq: number): LocalHistoryRecord {
+  return { ...entry(seq), bytes: 16 }
+}
+
+/** A local-copy source whose every read answers nothing until a test programs it. */
+interface LocalSource extends SessionHistorySource {
+  readonly opening: Mock<SessionHistorySource['opening']>
+  readonly page: Mock<SessionHistorySource['page']>
+  readonly interval: Mock<SessionHistorySource['interval']>
+  readonly elided: Mock<SessionHistorySource['elided']>
+  readonly append: Mock<SessionHistorySource['append']>
+  readonly opened: Mock<SessionHistorySource['opened']>
+  readonly diverged: Mock<SessionHistorySource['diverged']>
+}
+
+/** The local-copy stand-in: unprogrammed reads answer undefined, so every call falls back to the Host. */
+function localSource(): LocalSource {
+  return {
+    opening: vi.fn<SessionHistorySource['opening']>(),
+    page: vi.fn<SessionHistorySource['page']>(),
+    interval: vi.fn<SessionHistorySource['interval']>(),
+    elided: vi.fn<SessionHistorySource['elided']>(),
+    append: vi.fn<SessionHistorySource['append']>(),
+    opened: vi.fn<SessionHistorySource['opened']>(),
+    diverged: vi.fn<SessionHistorySource['diverged']>(),
   }
 }
 
@@ -128,6 +175,8 @@ interface FollowGeneration {
 class ScriptedSessionRemote implements SessionTransportRemote {
   readonly followRequests: SessionFollowRequest[] = []
   readonly pageRequests: SessionPageRequest[] = []
+  readonly expandRequests: SessionExpandStepsRequest[] = []
+  readonly controlRequests: SessionControlRequest[] = []
   readonly signals: AbortSignal[] = []
 
   constructor(
@@ -135,6 +184,7 @@ class ScriptedSessionRemote implements SessionTransportRemote {
     private readonly pages: RemoteResult<SessionEventsPage>[],
     private readonly controlFrames: readonly SessionControlFrame[] = [],
     private readonly holdControl = true,
+    private readonly expands: RemoteResult<SessionExpandStepsValue>[] = [],
   ) {}
 
   follow(request: SessionFollowRequest, signal = new AbortController().signal): RemoteStreamHandle<SessionFollowFrame, never> {
@@ -163,7 +213,18 @@ class ScriptedSessionRemote implements SessionTransportRemote {
     return Promise.resolve(result)
   }
 
-  control(signal = new AbortController().signal): RemoteStreamHandle<SessionControlFrame, never> {
+  expandSteps(
+    request: SessionExpandStepsRequest,
+    _signal?: AbortSignal,
+  ): Promise<RemoteResult<SessionExpandStepsValue>> {
+    this.expandRequests.push(request)
+    const result = this.expands.shift()
+    if (result === undefined) throw new Error('no scripted Session expansion')
+    return Promise.resolve(result)
+  }
+
+  control(request = {}, signal = new AbortController().signal): RemoteStreamHandle<SessionControlFrame, never> {
+    this.controlRequests.push(request)
     return streamHandle(this.controlSequence(signal))
   }
 
@@ -252,7 +313,10 @@ describe.each(['snapshot', 'live', 'page'] as const)('Session %s wire acceptance
     const publish = vi.fn()
     const failed = vi.fn()
     const carrierFailed = vi.fn()
-    const stream = new SessionEventStream(sessionClient(remote), ADDRESS, { publish, failed, carrierFailed })
+    const stream = new SessionEventStream(sessionClient(remote), ADDRESS, {
+      sessionId: SID,
+      full: () => false, publish, failed, carrierFailed,
+    })
     try {
       if (path === 'snapshot') {
         await expect(stream.open({})).rejects.toThrow()
@@ -311,6 +375,8 @@ describe('Session Client stream adapters', () => {
       let appended!: () => void
       const ready = new Promise<void>((resolve) => { appended = resolve })
       const stream = new SessionEventStream(sessionClient(remote), ADDRESS, {
+        sessionId: SID,
+        full: () => false,
         publish: (change) => { changes.push(change); if (change.type === 'append') appended() },
         failed: vi.fn(),
       })
@@ -343,6 +409,8 @@ describe('Session Client stream adapters', () => {
     let appended!: () => void
     const ready = new Promise<void>((resolve) => { appended = resolve })
     const stream = new SessionEventStream(sessionClient(remote), ADDRESS, {
+      sessionId: SID,
+      full: () => false,
       publish: (change) => {
         changes.push(change)
         if (change.type === 'append') appended()
@@ -386,6 +454,8 @@ describe('Session Client stream adapters', () => {
     )
     const changes: SessionJournalChange[] = []
     const stream = new SessionEventStream(sessionClient(remote), ADDRESS, {
+      sessionId: SID,
+      full: () => false,
       publish: (change) => { changes.push(change) },
       failed: vi.fn(),
     })
@@ -418,6 +488,8 @@ describe('Session Client stream adapters', () => {
       }],
     }], [])
     const stream = new SessionEventStream(sessionClient(remote), ADDRESS, {
+      sessionId: SID,
+      full: () => false,
       publish: vi.fn(),
       failed: vi.fn(),
     })
@@ -440,6 +512,8 @@ describe('Session Client stream adapters', () => {
       })],
     }], [])
     const stream = new SessionEventStream(sessionClient(remote), ADDRESS, {
+      sessionId: SID,
+      full: () => false,
       publish: vi.fn(),
       failed: vi.fn(),
     })
@@ -485,6 +559,8 @@ describe('Session Client stream adapters', () => {
     const changes: SessionJournalChange[] = []
     const carrierFailed = vi.fn()
     const stream = new SessionEventStream(sessionClient(remote), ADDRESS, {
+      sessionId: SID,
+      full: () => false,
       publish: (change) => { changes.push(change) },
       carrierFailed,
       failed: vi.fn(),
@@ -543,6 +619,8 @@ describe('Session Client stream adapters', () => {
     const changes: SessionJournalChange[] = []
     const carrierFailed = vi.fn()
     const stream = new SessionEventStream(sessionClient(remote), ADDRESS, {
+      sessionId: SID,
+      full: () => false,
       publish: (change) => { changes.push(change) },
       carrierFailed,
       failed: vi.fn(),
@@ -570,6 +648,8 @@ describe('Session Client stream adapters', () => {
     )
     const changes: SessionJournalChange[] = []
     const stream = new SessionEventStream(sessionClient(remote), ADDRESS, {
+      sessionId: SID,
+      full: () => false,
       publish: (change) => { changes.push(change) },
       failed: vi.fn(),
     })
@@ -605,6 +685,8 @@ describe('Session Client stream adapters', () => {
     )
     const changes: SessionJournalChange[] = []
     const stream = new SessionEventStream(sessionClient(remote), ADDRESS, {
+      sessionId: SID,
+      full: () => false,
       publish: (change) => { changes.push(change) },
       failed: vi.fn(),
     })
@@ -643,6 +725,8 @@ describe('Session Client stream adapters', () => {
     const changes: SessionJournalChange[] = []
     const carrierFailed = vi.fn()
     const stream = new SessionEventStream(sessionClient(remote), ADDRESS, {
+      sessionId: SID,
+      full: () => false,
       publish: (change) => { changes.push(change) },
       carrierFailed,
       failed: vi.fn(),
@@ -677,6 +761,8 @@ describe('Session Client stream adapters', () => {
     )
     const changes: SessionJournalChange[] = []
     const stream = new SessionEventStream(sessionClient(remote), ADDRESS, {
+      sessionId: SID,
+      full: () => false,
       publish: (change) => { changes.push(change) },
       failed: vi.fn(),
     })
@@ -702,6 +788,375 @@ describe('Session Client stream adapters', () => {
     await stream.dispose()
   })
 
+  it('asks the Host for stored lines only while a local copy is registered', async () => {
+    const remote = new ScriptedSessionRemote(
+      [
+        { frames: [snapshot(1, [entry(0), entry(1)])], hold: true },
+        { frames: [snapshot(1, [entry(0), entry(1)])], hold: true },
+      ],
+      [],
+    )
+    const bare = new SessionEventStream(sessionClient(remote), ADDRESS, {
+      sessionId: SID,
+      full: () => false,
+      publish: vi.fn(),
+      failed: vi.fn(),
+    })
+    await bare.open({})
+    expect(remote.followRequests[0]?.lines).toBeUndefined()
+    await bare.dispose()
+
+    const sourced = new SessionEventStream(sessionClient(remote), ADDRESS, {
+      sessionId: SID,
+      full: () => false,
+      source: localSource(),
+      publish: vi.fn(),
+      failed: vi.fn(),
+    })
+    await sourced.open({})
+    expect(remote.followRequests[1]?.lines).toBe(true)
+    await sourced.dispose()
+  })
+
+  it('decodes a resumed opening of stored lines and offers the batch to the copy after publication', async () => {
+    const source = localSource()
+    const remote = new ScriptedSessionRemote(
+      [
+        { frames: [snapshot(1, [entry(0), entry(1)])], terminal: new RemoteStreamCarrierError('lost') },
+        { frames: [resumed(1, 3, [lineEntry(entry(2)), lineEntry(entry(3))])], hold: true },
+      ],
+      [],
+    )
+    const changes: SessionJournalChange[] = []
+    const publish = vi.fn((change: SessionJournalChange) => { changes.push(change) })
+    const stream = new SessionEventStream(sessionClient(remote), ADDRESS, {
+      sessionId: SID,
+      full: () => false,
+      source,
+      publish,
+      failed: vi.fn(),
+    })
+
+    await stream.open({})
+    await vi.waitFor(() => { expect(changes).toHaveLength(2) })
+
+    expect(remote.followRequests[1]).toMatchObject({
+      lines: true,
+      resume: { afterSeq: 1, link: linkFor(1) },
+    })
+    expect(changes[1]).toEqual({
+      type: 'resume',
+      page: {
+        records: [entry(2), entry(3)],
+        hasMore: false,
+        projections: { asOfSeq: 3, values: {} },
+        assistantStream: { revision: 0 },
+      },
+      entries: [entry(2), entry(3)],
+    })
+    expect(source.append).toHaveBeenCalledExactlyOnceWith(SID, [
+      { seq: 2, line: JSON.stringify(entry(2).event), link: linkFor(2) },
+      { seq: 3, line: JSON.stringify(entry(3).event), link: linkFor(3) },
+    ])
+    expect(source.append.mock.invocationCallOrder[0]).toBeGreaterThan(publish.mock.invocationCallOrder.at(-1)!)
+    await stream.dispose()
+  })
+
+  it('decodes each live stored-line frame and offers it to the copy after publication', async () => {
+    const source = localSource()
+    const remote = new ScriptedSessionRemote(
+      [{ frames: [snapshot(1, [entry(0), entry(1)]), lineEntry(entry(2)), lineEntry(entry(3), null)], hold: true }],
+      [],
+    )
+    const changes: SessionJournalChange[] = []
+    const publish = vi.fn((change: SessionJournalChange) => { changes.push(change) })
+    const stream = new SessionEventStream(sessionClient(remote), ADDRESS, {
+      sessionId: SID,
+      full: () => false,
+      source,
+      publish,
+      failed: vi.fn(),
+    })
+
+    await stream.open({})
+    await vi.waitFor(() => { expect(changes).toHaveLength(3) })
+
+    expect(changes.slice(1)).toEqual([
+      { type: 'append', entry: entry(2) },
+      { type: 'append', entry: { ...entry(3), turnUsage: null } },
+    ])
+    expect(source.append).toHaveBeenCalledTimes(2)
+    expect(source.append).toHaveBeenNthCalledWith(1, SID, [
+      { seq: 2, line: JSON.stringify(entry(2).event), link: linkFor(2) },
+    ])
+    expect(source.append).toHaveBeenNthCalledWith(2, SID, [
+      { seq: 3, line: JSON.stringify(entry(3).event), link: linkFor(3) },
+    ])
+    expect(source.append.mock.invocationCallOrder[0]).toBeGreaterThan(publish.mock.invocationCallOrder[1]!)
+    await stream.dispose()
+  })
+
+  it('prepends a local page with digests and serves its records to the journal', async () => {
+    const digest = {
+      turn: 0, step: 1, startSeq: 0, endSeq: 1, elided: 2, steps: 1, calls: 0,
+      filePaths: [], added: 0, removed: 0, elapsedMs: 0, inputTokens: 0, outputTokens: 0,
+    }
+    const source = localSource()
+    source.page.mockResolvedValue({ records: [localEntry(0), localEntry(1)], hasMore: false, digests: [digest], cursor: 1 })
+    const remote = new ScriptedSessionRemote([{ frames: [snapshot(3, [entry(2), entry(3)], true)], hold: true }], [])
+    const changes: SessionJournalChange[] = []
+    const stream = new SessionEventStream(sessionClient(remote), ADDRESS, {
+      sessionId: SID,
+      full: () => false,
+      source,
+      publish: (change) => { changes.push(change) },
+      failed: vi.fn(),
+    })
+
+    await stream.open({})
+    await stream.prepend({ beforeSeq: 2 })
+
+    expect(source.page).toHaveBeenCalledWith(SID, {
+      beforeSeq: 2,
+      stepDetail: undefined,
+      throughSeq: 3,
+      full: false,
+    })
+    expect(changes[1]).toEqual({
+      type: 'prepend',
+      page: { records: [localEntry(0), localEntry(1)], hasMore: false, digests: [digest] },
+      entries: [localEntry(0), localEntry(1)],
+      hasMore: false,
+    })
+    expect(remote.pageRequests).toEqual([])
+    await stream.dispose()
+  })
+
+  it('falls back to the Host when the copy serves no page, expansion, or full interval', async () => {
+    const remote = new ScriptedSessionRemote(
+      [{ frames: [snapshot(3, [entry(2), entry(3)], true)], hold: true }],
+      [{ ok: true, value: page([entry(0), entry(1)]) }, { ok: true, value: page([entry(0), entry(1), entry(2), entry(3)]) }],
+      [],
+      true,
+      [{ ok: true, value: { records: [entry(2)] } }],
+    )
+    const stream = new SessionEventStream(sessionClient(remote), ADDRESS, {
+      sessionId: SID,
+      full: () => true,
+      source: localSource(),
+      publish: vi.fn(),
+      failed: vi.fn(),
+    })
+
+    await stream.open({})
+    await stream.prepend({ beforeSeq: 2 })
+    expect(remote.pageRequests).toEqual([{ address: ADDRESS, throughSeq: 3, beforeSeq: 2 }])
+
+    const expanded = await stream.expandSteps(0, 2)
+    expect(remote.expandRequests).toEqual([{ address: ADDRESS, throughSeq: 3, turn: 0, fromSeq: 2 }])
+    expect(expanded).toEqual([entry(2)])
+
+    const range = await stream.readFullRange(0)
+    expect(range).toEqual([entry(0), entry(1), entry(2), entry(3)])
+    expect(remote.pageRequests).toEqual([
+      { address: ADDRESS, throughSeq: 3, beforeSeq: 2 },
+      { address: ADDRESS, fromSeq: 0, throughSeq: 3, stepDetail: 'full' },
+    ])
+    await stream.dispose()
+  })
+
+  it('falls back to the Host when a copy read rejects, logging the first failure only', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const failure = new Error('local copy: the worker was terminated')
+    const source = localSource()
+    source.page.mockRejectedValue(failure)
+    source.elided.mockRejectedValue(failure)
+    source.interval.mockRejectedValue(failure)
+    const remote = new ScriptedSessionRemote(
+      [{ frames: [snapshot(3, [entry(2), entry(3)], true)], hold: true }],
+      [{ ok: true, value: page([entry(0), entry(1)]) }, { ok: true, value: page([entry(0), entry(1), entry(2), entry(3)]) }],
+      [],
+      true,
+      [{ ok: true, value: { records: [entry(2)] } }],
+    )
+    const stream = new SessionEventStream(sessionClient(remote), ADDRESS, {
+      sessionId: SID,
+      full: () => true,
+      source,
+      publish: vi.fn(),
+      failed: vi.fn(),
+    })
+
+    try {
+      await stream.open({})
+      await stream.prepend({ beforeSeq: 2 })
+      expect(await stream.expandSteps(0, 2)).toEqual([entry(2)])
+      expect(await stream.readFullRange(0)).toEqual([entry(0), entry(1), entry(2), entry(3)])
+      expect(remote.pageRequests).toEqual([
+        { address: ADDRESS, throughSeq: 3, beforeSeq: 2 },
+        { address: ADDRESS, fromSeq: 0, throughSeq: 3, stepDetail: 'full' },
+      ])
+      expect(remote.expandRequests).toEqual([{ address: ADDRESS, throughSeq: 3, turn: 0, fromSeq: 2 }])
+      expect(warn).toHaveBeenCalledExactlyOnceWith(
+        '[session-controller] local copy read failed; reading from the Host instead:',
+        failure,
+      )
+    } finally {
+      warn.mockRestore()
+      await stream.dispose()
+    }
+  })
+
+  it('repairs a live gap from the Host when the copy read rejects, and keeps following', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const source = localSource()
+    source.page.mockRejectedValue(new Error('local copy: the worker request failed'))
+    const remote = new ScriptedSessionRemote(
+      [{ frames: [snapshot(0, [entry(0)]), entry(2), entry(3)], hold: true }],
+      [{ ok: true, value: page([entry(0), entry(1), entry(2)]) }],
+    )
+    const changes: SessionJournalChange[] = []
+    const failed = vi.fn()
+    const stream = new SessionEventStream(sessionClient(remote), ADDRESS, {
+      sessionId: SID,
+      full: () => false,
+      source,
+      publish: (change) => { changes.push(change) },
+      failed,
+    })
+
+    try {
+      await stream.open({})
+      await vi.waitFor(() => { expect(changes).toHaveLength(3) })
+      expect(source.page).toHaveBeenCalledOnce()
+      expect(remote.pageRequests).toEqual([{ address: ADDRESS, throughSeq: 2 }])
+      expect(changes[2]).toEqual({ type: 'append', entry: entry(3) })
+      expect(failed).not.toHaveBeenCalled()
+      expect(warn).toHaveBeenCalledOnce()
+    } finally {
+      warn.mockRestore()
+      await stream.dispose()
+    }
+  })
+
+  it('reads a full interval the copy covers without a Host page call', async () => {
+    const source = localSource()
+    source.interval.mockResolvedValue([localEntry(0), localEntry(1), localEntry(2), localEntry(3)])
+    const remote = new ScriptedSessionRemote([{ frames: [snapshot(3, [entry(2), entry(3)], true)], hold: true }], [])
+    const stream = new SessionEventStream(sessionClient(remote), ADDRESS, {
+      sessionId: SID,
+      full: () => true,
+      source,
+      publish: vi.fn(),
+      failed: vi.fn(),
+    })
+
+    await stream.open({})
+    const range = await stream.readFullRange(0)
+
+    expect(range).toEqual([localEntry(0), localEntry(1), localEntry(2), localEntry(3)])
+    expect(remote.pageRequests).toEqual([])
+    await stream.dispose()
+  })
+
+  it('rejects a local full interval that does not cover the requested range', async () => {
+    const source = localSource()
+    source.interval.mockResolvedValue([localEntry(0), localEntry(2)])
+    const remote = new ScriptedSessionRemote([{ frames: [snapshot(2, [entry(1), entry(2)])], hold: true }], [])
+    const stream = new SessionEventStream(sessionClient(remote), ADDRESS, {
+      sessionId: SID,
+      full: () => true,
+      source,
+      publish: vi.fn(),
+      failed: vi.fn(),
+    })
+
+    await stream.open({})
+    await expect(stream.readFullRange(0)).rejects.toThrow('session full-detail interval is incomplete')
+    await stream.dispose()
+  })
+
+  it('opens from a local page without awaiting a follow frame', async () => {
+    const remote = new ScriptedSessionRemote([{ frames: [snapshot(9, [entry(9)])], hold: true }], [])
+    const changes: SessionJournalChange[] = []
+    const stream = new SessionEventStream(sessionClient(remote), ADDRESS, {
+      sessionId: SID,
+      full: () => false,
+      source: localSource(),
+      publish: (change) => { changes.push(change) },
+      failed: vi.fn(),
+    })
+    const local = page([entry(2), entry(3)], true)
+
+    await stream.open({}, { page: { records: local.records, hasMore: local.hasMore }, cursor: 3 })
+
+    expect(changes).toEqual([{
+      type: 'replace',
+      page: { records: [entry(2), entry(3)], hasMore: true },
+      entries: [entry(2), entry(3)],
+      hasMore: true,
+      local: true,
+    }])
+    expect(remote.followRequests).toHaveLength(1)
+    await stream.dispose()
+  })
+
+  it('adopts an already-held window and resumes from its newest entry', async () => {
+    const remote = new ScriptedSessionRemote([{ frames: [resumed(1, 2, [entry(2)])], hold: true }], [])
+    const changes: SessionJournalChange[] = []
+    const stream = new SessionEventStream(sessionClient(remote), ADDRESS, {
+      sessionId: SID,
+      full: () => false,
+      source: localSource(),
+      publish: (change) => { changes.push(change) },
+      failed: vi.fn(),
+    })
+
+    stream.adopt({}, { first: 0, last: 1, newest: entry(1) })
+    expect(changes).toEqual([])
+
+    await vi.waitFor(() => { expect(changes).toHaveLength(1) })
+    expect(remote.followRequests[0]?.resume).toEqual({ afterSeq: 1, link: linkFor(1) })
+    expect(changes[0]).toEqual({
+      type: 'resume',
+      page: {
+        records: [entry(2)],
+        hasMore: false,
+        projections: { asOfSeq: 2, values: {} },
+        assistantStream: { revision: 0 },
+      },
+      entries: [entry(2)],
+    })
+    await stream.dispose()
+  })
+
+  it('fails the stream when a stored line does not decode to the event it names', async () => {
+    const malformed: SessionLineEntry = { type: 'line', seq: 2, line: '{"seq":9}', link: linkFor(2) }
+    const remote = new ScriptedSessionRemote(
+      [{ frames: [snapshot(1, [entry(0), entry(1)]), malformed], hold: true }],
+      [],
+    )
+    const failed = vi.fn()
+    const changes: SessionJournalChange[] = []
+    const stream = new SessionEventStream(sessionClient(remote), ADDRESS, {
+      sessionId: SID,
+      full: () => false,
+      source: localSource(),
+      publish: (change) => { changes.push(change) },
+      failed,
+    })
+
+    await stream.open({})
+    await vi.waitFor(() => { expect(failed).toHaveBeenCalledOnce() })
+
+    expect(failed.mock.calls[0]?.[0]).toMatchObject({
+      code: 'gateway/internal',
+      message: 'stored line names seq 9 where 2 was sent',
+    })
+    expect(changes).toHaveLength(1)
+    await stream.dispose()
+  })
+
   it('continues the held window when a snapshot opening ends at the offered link', async () => {
     const remote = new ScriptedSessionRemote(
       [
@@ -715,6 +1170,8 @@ describe('Session Client stream adapters', () => {
     )
     const changes: SessionJournalChange[] = []
     const stream = new SessionEventStream(sessionClient(remote), ADDRESS, {
+      sessionId: SID,
+      full: () => false,
       publish: (change) => { changes.push(change) },
       failed: vi.fn(),
     })
@@ -747,6 +1204,8 @@ describe('Session Client stream adapters', () => {
     )
     const changes: SessionJournalChange[] = []
     const stream = new SessionEventStream(sessionClient(remote), ADDRESS, {
+      sessionId: SID,
+      full: () => false,
       publish: (change) => { changes.push(change) },
       failed: vi.fn(),
     })
@@ -768,6 +1227,8 @@ describe('Session Client stream adapters', () => {
     )
     const changes: SessionJournalChange[] = []
     const stream = new SessionEventStream(sessionClient(remote), ADDRESS, {
+      sessionId: SID,
+      full: () => false,
       publish: (change) => { changes.push(change) },
       failed: vi.fn(),
     })
@@ -789,6 +1250,8 @@ describe('Session Client stream adapters', () => {
     )
     const changes: SessionJournalChange[] = []
     const stream = new SessionEventStream(sessionClient(remote), ADDRESS, {
+      sessionId: SID,
+      full: () => false,
       publish: (change) => { changes.push(change) },
       failed: vi.fn(),
     })
@@ -807,6 +1270,8 @@ describe('Session Client stream adapters', () => {
     )
     const changes: SessionJournalChange[] = []
     const stream = new SessionEventStream(sessionClient(remote), ADDRESS, {
+      sessionId: SID,
+      full: () => false,
       publish: (change) => { changes.push(change) },
       failed: vi.fn(),
     })
@@ -828,7 +1293,10 @@ describe('Session Client stream adapters', () => {
       ],
       [],
     )
-    const stream = new SessionEventStream(sessionClient(remote), ADDRESS, { publish: vi.fn(), failed: vi.fn() })
+    const stream = new SessionEventStream(sessionClient(remote), ADDRESS, {
+      sessionId: SID,
+      full: () => false, publish: vi.fn(), failed: vi.fn(),
+    })
 
     await stream.open({})
     await vi.waitFor(() => { expect(remote.followRequests).toHaveLength(2) })
@@ -846,7 +1314,10 @@ describe('Session Client stream adapters', () => {
       ],
       [],
     )
-    const stream = new SessionEventStream(sessionClient(remote), ADDRESS, { publish: vi.fn(), failed: vi.fn() })
+    const stream = new SessionEventStream(sessionClient(remote), ADDRESS, {
+      sessionId: SID,
+      full: () => false, publish: vi.fn(), failed: vi.fn(),
+    })
 
     await stream.open({ stepDetail: 'collapsed' })
     await vi.waitFor(() => { expect(remote.followRequests).toHaveLength(2) })
@@ -863,7 +1334,10 @@ describe('Session Client stream adapters', () => {
       ],
       [],
     )
-    const stream = new SessionEventStream(sessionClient(remote), ADDRESS, { publish: vi.fn(), failed: vi.fn() })
+    const stream = new SessionEventStream(sessionClient(remote), ADDRESS, {
+      sessionId: SID,
+      full: () => false, publish: vi.fn(), failed: vi.fn(),
+    })
 
     await stream.open({})
     await vi.waitFor(() => { expect(remote.followRequests).toHaveLength(2) })
@@ -881,7 +1355,10 @@ describe('Session Client stream adapters', () => {
       ],
       [],
     )
-    const stream = new SessionEventStream(sessionClient(remote), ADDRESS, { publish: vi.fn(), failed: vi.fn() })
+    const stream = new SessionEventStream(sessionClient(remote), ADDRESS, {
+      sessionId: SID,
+      full: () => false, publish: vi.fn(), failed: vi.fn(),
+    })
 
     await stream.open({})
     await vi.waitFor(() => { expect(remote.followRequests).toHaveLength(3) })
@@ -896,7 +1373,10 @@ describe('Session Client stream adapters', () => {
 
   it('rejects a resumed opening that answers a request without a resume point', async () => {
     const remote = new ScriptedSessionRemote([{ frames: [resumed(0, 1, [entry(1)])], hold: true }], [])
-    const stream = new SessionEventStream(sessionClient(remote), ADDRESS, { publish: vi.fn(), failed: vi.fn() })
+    const stream = new SessionEventStream(sessionClient(remote), ADDRESS, {
+      sessionId: SID,
+      full: () => false, publish: vi.fn(), failed: vi.fn(),
+    })
 
     const opening = stream.open({})
     await expect(opening).rejects.toThrow('not offered')
@@ -917,6 +1397,8 @@ describe('Session Client stream adapters', () => {
       [],
     )
     const stream = new SessionEventStream(sessionClient(remote), ADDRESS, {
+      sessionId: SID,
+      full: () => false,
       publish: vi.fn(),
       failed: vi.fn(),
     })
@@ -939,6 +1421,8 @@ describe('Session Client stream adapters', () => {
     )
     const changes: SessionJournalChange[] = []
     const stream = new SessionEventStream(sessionClient(remote), ADDRESS, {
+      sessionId: SID,
+      full: () => false,
       publish: (change) => { changes.push(change) },
       failed: vi.fn(),
     })
@@ -959,6 +1443,8 @@ describe('Session Client stream adapters', () => {
       [{ ok: false, error: failure }],
     )
     const stream = new SessionEventStream(sessionClient(remote), ADDRESS, {
+      sessionId: SID,
+      full: () => false,
       publish: vi.fn(),
       failed: vi.fn(),
     })
@@ -984,6 +1470,7 @@ describe('Session Client stream adapters', () => {
     const accept = vi.fn<(frame: SessionControlFrame) => void>()
     const stream = createSessionControlStream(sessionClient(remote), {
       accept,
+      known: () => [],
       failed: vi.fn(),
     })
 
@@ -995,11 +1482,35 @@ describe('Session Client stream adapters', () => {
     await stream.dispose()
   })
 
+  it('reports the held checkpoints on every control opening', async () => {
+    const baseline: SessionControlFrame = { type: 'baseline', value: { projections: {} } }
+    const checkpoint: SessionControlKnown = {
+      sessionId: 'session-1' as never, asOfSeq: 7, link: 'a'.repeat(64) as never,
+    }
+    let held: readonly SessionControlKnown[] = [checkpoint]
+    const remote = new ScriptedSessionRemote([], [], [baseline])
+    const accept = vi.fn<(frame: SessionControlFrame) => void>()
+    const stream = createSessionControlStream(sessionClient(remote), {
+      accept,
+      known: () => held,
+      failed: vi.fn(),
+    })
+    stream.start()
+    await vi.waitFor(() => { expect(accept).toHaveBeenCalledOnce() })
+    expect(remote.controlRequests).toEqual([{ known: [checkpoint] }])
+
+    held = []
+    stream.restart()
+    await vi.waitFor(() => { expect(accept).toHaveBeenCalledTimes(2) })
+    expect(remote.controlRequests).toEqual([{ known: [checkpoint] }, { known: [] }])
+    await stream.dispose()
+  })
+
   it('classifies control streams that end before and after their opening baseline', async () => {
     const beforeFailed = vi.fn()
     const before = createSessionControlStream(
       sessionClient(new ScriptedSessionRemote([], [], [], false)),
-      { accept: vi.fn(), failed: beforeFailed },
+      { accept: vi.fn(), known: () => [], failed: beforeFailed },
     )
     before.start()
     await vi.waitFor(() => { expect(beforeFailed).toHaveBeenCalledOnce() })
@@ -1017,6 +1528,7 @@ describe('Session Client stream adapters', () => {
     const afterRemote = new ScriptedSessionRemote([], [], [baseline], false)
     const after = createSessionControlStream(sessionClient(afterRemote), {
       accept: vi.fn(),
+      known: () => [],
       carrierFailed: (error) => {
         carrierFailed(error)
         void after.dispose()

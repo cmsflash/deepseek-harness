@@ -12,8 +12,8 @@
   en: 2a4f48cfbd2969af
   zh: 9016a4ec4ec8cf21
 /deepseek-ai-dsh-client-ui-chat/table-of-contents:
-  en: 786c2ea61b3b0687
-  zh: f27312edebb79acc
+  en: 6cc47353735a12b3
+  zh: 2108032e6a664136
 /deepseek-ai-dsh-client-ui-chat/reference-previews:
   en: 1333217883f84d52
   zh: 234a23bc2e793283
@@ -39,8 +39,11 @@
   en: 5254e5ce5c7f85de
   zh: cc81b96229e347dc
 /deepseek-ai-dsh-client-ui-chat/scroll-ownership:
-  en: 91e1f5f12ca51211
-  zh: b92090966d58b82c
+  en: 1c457f2f659d2a41
+  zh: 12806ad84166369f
+/deepseek-ai-dsh-client-ui-chat/scroll-ownership/offline-notice:
+  en: ee98ed7a33a6b854
+  zh: f9e9e4283806f2d4
 /deepseek-ai-dsh-client-ui-chat/model-experience:
   en: c17b4dd43a61c569
   zh: f7414309810c3a08

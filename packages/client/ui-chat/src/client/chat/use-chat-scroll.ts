@@ -1,5 +1,6 @@
 /** Composes viewport operations, reading policy, and history navigation for Chat. */
 import { useCallback, useLayoutEffect, useMemo, useRef, type RefObject } from 'react'
+import { SessionSeq } from '@deepseek-ai/dsh-session/types'
 import type { TranscriptViewMode } from '../../chat-settings.ts'
 import type { ChatSnapshot } from '../contract/snapshot.ts'
 import type { ChatViewSlotProps } from '../contract/slots.ts'
@@ -7,6 +8,9 @@ import { useChatNavigation, type ChatNavigation, type ChatNavigationInput } from
 import { useChatReading, type ChatReadingState } from './use-chat-reading.ts'
 import { useChatViewport } from './use-chat-viewport.ts'
 import type { FlowMotionRows } from './flow-motion.ts'
+
+/** Minimum distance between reader-range reports. */
+const VIEW_REPORT_INTERVAL_MS = 1000
 
 /** Committed content and Session operations used to reconcile scroll ownership. */
 export interface ChatScrollInput extends ChatNavigationInput {
@@ -25,6 +29,13 @@ export interface ChatScrollInput extends ChatNavigationInput {
   /** A changed work-details preference resets fold reservations after the layout settles. */
   readonly transcriptView: TranscriptViewMode
   readonly loadedTurns: ReturnType<ChatSnapshot['navigation']['items']>
+  /** Report the Session seq range the reader sees, so memory eviction keeps the visible pages. */
+  readonly markViewed?: ((fromSeq: SessionSeq, toSeq: SessionSeq) => void) | undefined
+  /**
+   * Resolve one anchor row's Chat position through the Chat node data, or null when it names no event.
+   * Synthetic rows stand between event seqs, so a position can be fractional.
+   */
+  readonly seqOfRow?: ((anchorKey: string, turn: number | null) => number | null) | undefined
 }
 
 interface ChatScrollState extends ChatReadingState {
@@ -48,6 +59,7 @@ export function useChatScroll(input: ChatScrollInput): ChatScrollState {
   const {
     ready, order, firstSeq, lastKey, lastIsUser, steeringId, submissionId, submissionSteers, running,
     deferCompletedTurns, loadedTurns, chatScroll, hasMore, loadingOlder, loadOlder, loadThrough, transcriptView,
+    markViewed, seqOfRow,
   } = input
   const { viewport, listRef, columnRef } = useChatViewport()
   const { reading, state } = useChatReading(viewport, chatScroll, loadedTurns.at(-1)?.turn ?? null)
@@ -58,9 +70,40 @@ export function useChatScroll(input: ChatScrollInput): ChatScrollState {
   const content = useRef<{ input: ChatScrollInput; applied: ChatScrollInput | null; opened: boolean }>({
     input, applied: null, opened: false,
   })
+  const lastViewReport = useRef(0)
+  const reportedOpened = useRef(false)
   // A fold batch owns layout and scrolling until it lands: at the tail for own input or a following
   // reader, otherwise with the reader's content still. Growth consumes any room the landing installed.
   const cancelPendingFollow = useCallback(() => { viewport.motion.cancelInput() }, [viewport])
+  // Geometry measuring is the host's choice: the memory reporter reads rows
+  // only when the host binds both the reader-range sink and the mapping.
+  const reportsViewed = markViewed !== undefined && seqOfRow !== undefined
+  const reportViewed = useCallback(() => {
+    const list = listRef.current
+    if (list === null || markViewed === undefined || seqOfRow === undefined) return
+    if (!content.current.opened) return
+    const now = Date.now()
+    if (now - lastViewReport.current < VIEW_REPORT_INTERVAL_MS) return
+    const bounds = list.getBoundingClientRect()
+    let from: number | null = null
+    let to: number | null = null
+    for (const row of list.querySelectorAll<HTMLElement>('[data-chat-anchor-key]:not([hidden]):not([hidden] *)')) {
+      const rect = row.getBoundingClientRect()
+      if (rect.height === 0 || rect.bottom <= bounds.top || rect.top >= bounds.bottom) continue
+      const key = row.dataset.chatAnchorKey
+      /* v8 ignore next -- the selector matches only rows that carry the attribute */
+      if (key === undefined) continue
+      const turnValue = row.dataset.chatTurn === undefined ? NaN : Number(row.dataset.chatTurn)
+      const seq = seqOfRow(key, Number.isSafeInteger(turnValue) ? turnValue : null)
+      if (seq === null) continue
+      if (from === null || seq < from) from = seq
+      if (to === null || seq > to) to = seq
+    }
+    if (from === null || to === null) return
+    lastViewReport.current = now
+    // Widen fractional row positions to the whole seqs around them.
+    markViewed(SessionSeq(Math.max(0, Math.floor(from))), SessionSeq(Math.max(0, Math.ceil(to))))
+  }, [reportsViewed, listRef, markViewed, seqOfRow])
 
   const processContent = useCallback(() => {
     const current = content.current.input
@@ -109,10 +152,12 @@ export function useChatScroll(input: ChatScrollInput): ChatScrollState {
         if (!content.current.opened) return
         if (!event.movedByReader && viewport.motion.foldActive()) return
         reading.onScroll(event)
+        reportViewed()
       },
       scrollEnd: (outer) => {
         reading.onScrollEnd(outer)
         navigation.readerSettled()
+        reportViewed()
       },
       interact: () => { navigation.cancel() },
       intent: () => { cancelPendingFollow(); reading.interruptFollow() },
@@ -136,7 +181,7 @@ export function useChatScroll(input: ChatScrollInput): ChatScrollState {
       content.current.opened = false
       content.current.applied = null
     }
-  }, [viewport, reading, navigation, processContent, cancelPendingFollow])
+  }, [viewport, reading, navigation, processContent, cancelPendingFollow, reportViewed])
 
   useLayoutEffect(() => {
     const previous = content.current.input
@@ -153,11 +198,18 @@ export function useChatScroll(input: ChatScrollInput): ChatScrollState {
     if (layoutChanged) viewport.invalidate()
     viewport.reclaimBelow()
     processContent()
+    // The first mounted report runs regardless of the scroll rhythm; later
+    // ones stay throttled inside the report itself.
+    if (content.current.opened && !reportedOpened.current) {
+      reportedOpened.current = true
+      lastViewReport.current = 0
+      reportViewed()
+    }
     if (layoutChanged && content.current.opened) reading.refreshActiveTurn()
   }, [
     viewport, reading, processContent, navigationInput, ready, order, lastKey, lastIsUser,
     steeringId, submissionId, submissionSteers, running, loadedTurns, chatScroll, deferCompletedTurns, transcriptView,
-    cancelPendingFollow,
+    cancelPendingFollow, reportViewed,
   ])
 
   const previousView = useRef(transcriptView)

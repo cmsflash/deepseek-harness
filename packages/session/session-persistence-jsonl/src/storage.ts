@@ -52,6 +52,9 @@ export interface LiveEncodeFailure {
 /** Routed live event entries awaiting their batching deadline. */
 type LiveBuffered = EncodedLine | LiveEncodeFailure
 
+/** One validated read of a stored log, which this backend always pairs with its chain. */
+type ChainedReadResult = SessionHandleReadResult & { readonly chain: SessionLogChain }
+
 /** The file-storage primitives the handle drives on its owning service. */
 export interface JsonlHandleStorage {
   /** Append encoded lines; `headerLine` materializes a not-yet-materialized session when given. */
@@ -66,8 +69,8 @@ export interface JsonlHandleStorage {
   truncateTornTail(header: SessionHeader, truncateTo: number): Promise<void>
   /** Resolve the current-generation artifact path, or `undefined` when absent. */
   resolveCurrentLog(id: SessionId, signal?: AbortSignal): Promise<string | undefined>
-  /** Read and validate the stored log at `path`, including its established event aliasing state. */
-  readStoredLog(path: string, expectedId: SessionId, signal?: AbortSignal): Promise<SessionHandleReadResult>
+  /** Read and validate the stored log at `path`, including its established event aliasing state and chain. */
+  readStoredLog(path: string, expectedId: SessionId, signal?: AbortSignal): Promise<ChainedReadResult>
   /** Whether the id is still a created-but-unmaterialized session here. */
   hasPendingSession(id: SessionId): boolean
   /** Acquire the session's cross-process write lock in its artifact directory. */
@@ -93,7 +96,7 @@ export interface StorageHandleState {
   /** The Session log chain this handle's accepted events extend; a private copy. */
   chain?: SessionLogChainBuilder | undefined
   /** The validated stored prefix from a write open, served to reads until the first append. */
-  primed?: SessionHandleReadResult | undefined
+  primed?: ChainedReadResult | undefined
 }
 
 /**
@@ -181,12 +184,12 @@ export class JsonlSessionHandle implements SessionHandle {
   }
 
   /** Read one slice from the prepared historical prefix retained by this handle. */
-  private readPrimed(source: SessionHandleReadResult, offset: number, length: number): SessionHandleReadResult {
+  private readPrimed(source: ChainedReadResult, offset: number, length: number): SessionHandleReadResult {
     this.observedLength = Math.max(this.observedLength, source.events.length)
     return {
       eventState: source.eventState,
       events: source.events.slice(offset, offset + length),
-      ...(source.chain === undefined ? {} : { chain: source.chain }),
+      chain: source.chain,
     }
   }
 
@@ -205,7 +208,7 @@ export class JsonlSessionHandle implements SessionHandle {
     return {
       eventState: source.eventState,
       events: source.events.slice(offset, offset + length),
-      ...(source.chain === undefined ? {} : { chain: source.chain }),
+      chain: source.chain,
     }
   }
 

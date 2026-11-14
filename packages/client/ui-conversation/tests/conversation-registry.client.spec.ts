@@ -29,6 +29,8 @@ function sessionSnapshot(): SessionSnapshot {
     subagent: null,
     removed: false,
     openState: 'open',
+    unconfirmed: false,
+    incompleteCopy: false,
     openError: null,
     hasMore: false,
     loadingOlder: false,
@@ -62,6 +64,7 @@ function fakeSession(): SessionFace {
     setStepDetail: () => Promise.reject(new Error('unused fake Session operation')),
     requireFullHistory: () => Promise.reject(new Error('unused fake Session operation')),
     expandTurn: () => Promise.reject(new Error('unused fake Session operation')),
+    markViewed: () => {},
     loadThrough: () => Promise.reject(new Error('unused fake Session operation')),
     command: () => Promise.reject(new Error('unused fake Session operation')),
   }
@@ -90,6 +93,7 @@ function fakeSessions(ctx: Context): { sessions: ISessions; binding: SessionBind
   }
   const sessions: ISessions = {
     list,
+    registerHistorySource: () => () => {},
     searchResultLimit: 50,
     create: () => Promise.reject(new Error('unused fake Sessions operation')),
     retain: () => reference,

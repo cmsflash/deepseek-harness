@@ -6,8 +6,11 @@ import { SessionLogOffset } from '@deepseek-ai/dsh-session'
 import type { Session, SessionEvent, SessionId } from '@deepseek-ai/dsh-session'
 import { RemoteError } from '@deepseek-ai/dsh-typert-protocol'
 import type { JsonValue } from '@deepseek-ai/dsh-util-values'
-import { entryFor } from '../history.ts'
-import type { SessionProjectionChange, SessionEventEntry } from '../types.ts'
+import { entryFor } from '../history-shared/paging.ts'
+import type { SessionEventEntry, SessionLineEntry, SessionProjectionChange } from '../types.ts'
+
+/** Wire frames one listener converts to: event entries always, and line entries when a follow requests stored lines. */
+export type ListenerEntry = SessionEventEntry | SessionLineEntry
 
 /** Raw history notifications buffered before an opening cut is known. */
 export type EventItem =
@@ -16,11 +19,11 @@ export type EventItem =
 
 /** A single subscription buffers before either consumption mode starts. */
 export class EventListener implements Disposable {
-  private readonly buffer: ListenerBuffer<SessionEventEntry> | undefined
+  private readonly buffer: ListenerBuffer<ListenerEntry> | undefined
   private readonly disposes: (() => void)[] = []
   private firstReceivedSeq: number | undefined
   private nextExpectedSeq: number | undefined
-  private encode: (event: SessionEvent) => SessionEventEntry = entryFor
+  private encode: (event: SessionEvent) => ListenerEntry = entryFor
 
   /**
    * @param ctx - context owning the event registrations.
@@ -29,7 +32,7 @@ export class EventListener implements Disposable {
    * @param queue - optional caller-owned buffer; only an internally created buffer is disposed here.
    */
   constructor(ctx: Context, sessionId: SessionId, signal: AbortSignal,
-    queue?: Pick<ListenerBuffer<SessionEventEntry>, 'createInput' | 'capture'>) {
+    queue?: Pick<ListenerBuffer<ListenerEntry>, 'createInput' | 'capture'>) {
     signal.throwIfAborted()
     const buffer = queue ?? new ListenerBuffer(ctx, signal)
     this.buffer = queue === undefined ? buffer as ListenerBuffer<SessionEventEntry> : undefined
@@ -58,20 +61,30 @@ export class EventListener implements Disposable {
   }
 
   /** Consume notifications without reading history.
-   * @returns event frames from the first received event, without loading a baseline. */
-  events(): AsyncIterable<SessionEventEntry> {
-    return this.iterate()
+   * @returns event frames from the first received event, without loading a baseline or stored lines. */
+  async *events(): AsyncIterable<SessionEventEntry> {
+    if (this.buffer === undefined) throw new Error('Consume the externally owned history buffer directly')
+    try {
+      for await (const item of this.buffer.items()) {
+        // A follow's `lines` encode pushes line entries into the shared buffer; a pure subscription
+        // never sets one, so a line here names an encoding bug rather than a deliverable frame.
+        if (item.type !== 'event') throw new Error('a pure subscription received a stored line frame')
+        yield item
+      }
+    } finally {
+      this[Symbol.dispose]()
+    }
   }
 
   /** Set the inclusive opening cut for buffered history notifications.
    * @param cursor - snapshot cut set before consuming the queue.
    * @param encode - wire encoding applied once, in seq order, to each event after the cut. */
-  setCursor(cursor: number, encode: (event: SessionEvent) => SessionEventEntry = entryFor): void {
+  setCursor(cursor: number, encode?: (event: SessionEvent) => ListenerEntry): void {
     this.nextExpectedSeq = cursor + 1
-    this.encode = encode
+    if (encode !== undefined) this.encode = encode
   }
 
-  private *transform(item: EventItem): Iterable<SessionEventEntry> {
+  private *transform(item: EventItem): Iterable<ListenerEntry> {
     if (this.disposes.length === 0) return
     this.nextExpectedSeq ??= this.firstReceivedSeq
     const result = eventItem(item, this.nextExpectedSeq)
@@ -79,15 +92,6 @@ export class EventListener implements Disposable {
     for (const event of result.events) {
       if (this.disposes.length === 0) return
       yield this.encode(event)
-    }
-  }
-
-  private async *iterate(): AsyncIterable<SessionEventEntry> {
-    if (this.buffer === undefined) throw new Error('Consume the externally owned history buffer directly')
-    try {
-      yield* this.buffer.items()
-    } finally {
-      this[Symbol.dispose]()
     }
   }
 

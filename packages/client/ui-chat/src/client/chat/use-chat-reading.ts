@@ -117,7 +117,11 @@ export class ChatReading {
     this.viewport.interruptFollow(this.follow)
   }
 
-  /** Restore the Session's semantic position, or follow the tail when none is saved. */
+  /**
+   * Restore the Session's semantic position, or follow the tail when none is saved. A restored
+   * position stays retained until the reader acts, because a view that mounts with its rows
+   * already loaded can still reflow, for example when the content width is published after mount.
+   */
   restore(): void {
     const saved = this.store.read()
     if (saved === null) { this.followTail(); return }
@@ -126,9 +130,12 @@ export class ChatReading {
     this.cancelPending()
     const following = this.follow.nearBottom(landing.metrics)
     this.commit(landing, following, following ? this.viewport.latestTurn : this.state.activeTurn, following)
-    if (!this.state.followingTail && landing.position === null) {
-      const position = this.viewport.capturePosition()
-      if (position !== null) this.store.save(position)
+    if (!this.state.followingTail) {
+      const position = landing.position ?? this.viewport.capturePosition()
+      if (position !== null) {
+        if (landing.position === null) this.store.save(position)
+        this.viewport.beginPreserving(position)
+      }
     }
     this.refreshActiveTurn()
   }

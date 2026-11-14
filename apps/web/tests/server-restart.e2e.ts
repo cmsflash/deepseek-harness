@@ -190,6 +190,10 @@ it.each([false, true])('keeps the same revision, Session and page across a serve
   page.on('framenavigated', () => { navigations++ })
 
   await server.stop()
+  const offlinePill = page.getByRole('button', { name: 'Offline, reconnect now' })
+  await offlinePill.waitFor({ timeout: 30_000 })
+  await page.getByText('Offline. Showing the saved copy; new messages arrive when the Host is back.').waitFor({ timeout: 5_000 })
+  expect(await response.isVisible()).toBe(true)
   let restarted: string
   const restarting = server.start(port, holdStartup)
   try {
@@ -214,6 +218,7 @@ it.each([false, true])('keeps the same revision, Session and page across a serve
     restarted = await restarting
   }
   expect(new URL(restarted).origin).toBe(new URL(url).origin)
+  await offlinePill.waitFor({ state: 'detached', timeout: 30_000 })
   await expect.poll(() => readyFrames, { timeout: 30_000 }).toBeGreaterThan(beforeReady)
   await expect.poll(() => sessionBaselines, { timeout: 30_000 }).toBeGreaterThan(beforeBaseline)
   await expect.poll(() => graphs.length, { timeout: 30_000 }).toBeGreaterThan(beforeGraphs)

@@ -90,6 +90,10 @@ export interface SessionSnapshot {
   } | null
   readonly removed: boolean
   readonly openState: OpenState
+  /** The window came from the local copy and no Host opening has confirmed it yet. */
+  readonly unconfirmed: boolean
+  /** The unconfirmed window came from a local copy that does not yet hold the whole log. */
+  readonly incompleteCopy: boolean
   readonly openError: RemoteFailure | null
   readonly hasMore: boolean
   readonly loadingOlder: boolean

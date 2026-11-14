@@ -3,6 +3,7 @@ import { Context } from '@deepseek-ai/cordis'
 import { describe, expect, vi } from 'vitest'
 import type { SessionId } from '@deepseek-ai/dsh-api-remotes/client'
 import type { SessionReference } from '../src/client/contract/sessions.ts'
+import type { SessionHistorySource } from '../src/client/contract/history-source.ts'
 import { RemoteError } from '@deepseek-ai/dsh-typert-protocol'
 import { LlmAttemptId } from '@deepseek-ai/dsh-llm'
 import { RemoteStreamCarrierError } from '@deepseek-ai/dsh-api-gateway/client'
@@ -10,11 +11,13 @@ import { SESSION_FORMAT_VERSION, SessionSeq } from '@deepseek-ai/dsh-session/typ
 import { ok, streamHandle, type RemoteMock } from '@deepseek-ai/dsh-remote-mock'
 import { createClientTest, webApp } from '@deepseek-ai/dsh-client-test-runtime/src/assembly/index.ts'
 import { ClientSessions, SessionCreateError, SessionForkError } from '../src/client/sessions/service.ts'
+import { Session } from '../src/client/sessions/session.ts'
 import { scopeOf } from '../src/client/scope.ts'
 import type {
   SessionAssistantStreamBaseline, SessionFollowFrame, SessionFollowRequest, SessionHistoryRecord,
 } from '../src/types.ts'
-import { FOLLOW, err, followResumed, followScript, linkFor, sessionWorld } from './remote/session.client.ts'
+import { FOLLOW, err, followResumed, followScript, history, linkFor, sessionWorld } from './remote/session.client.ts'
+import { plainTurn } from './event-script.client.ts'
 
 const sid = (s: string): SessionId => s as SessionId
 /** ClientSessions uses the Gateway client for stream supervision and the native Remote mocks for responses. */
@@ -102,6 +105,25 @@ describe('list store projection', () => {
     await Promise.resolve()
     expect(b.svc.list.getSnapshot().byId[sid('s1')]?.formatStatus).toBe('current')
     expect(b.mock.remote.session.projections).not.toHaveBeenCalled()
+  })
+
+  it('publishes the projection watermark each Host list refresh carries', async ({ bench }) => {
+    const b = bench()
+    const row = { sessionId: sid('s1'), updatedAt: 1, running: false, blank: false, agentAvailable: true }
+    b.mock.remote.session.list.mockResolvedValue(ok({ items: [
+      { ...row, projections: { kind: 'sequenced' as const, asOfSeq: 41, values: { title: 'Cut' } } },
+      { ...row, sessionId: sid('s2') },
+    ] }))
+    await b.svc.refresh()
+    await Promise.resolve()
+    expect(b.svc.list.getSnapshot().byId[sid('s1')]?.projectionsAsOfSeq).toBe(41)
+    expect(b.svc.list.getSnapshot().byId[sid('s2')]).not.toHaveProperty('projectionsAsOfSeq')
+    b.mock.remote.session.list.mockResolvedValue(ok({ items: [
+      { ...row, projections: { kind: 'sequenced' as const, asOfSeq: 57, values: { title: 'Cut' } } },
+    ] }))
+    await b.svc.refresh()
+    await Promise.resolve()
+    expect(b.svc.list.getSnapshot().byId[sid('s1')]?.projectionsAsOfSeq).toBe(57)
   })
 
   it('projects durable titles separately from cwd/id display fallbacks and parent links', async ({ bench }) => {
@@ -1230,5 +1252,231 @@ describe('coverage tails (branch duals)', () => {
     await reference.ready
     expect(b.svc.binding(sid('ghost'))).toBeUndefined()
     expect(b.svc.binding(sid('s1'))).toBe(reference.binding)
+  })
+})
+
+describe('history source registration', () => {
+  it('passes a registered local copy only to Sessions retained afterwards', async ({ bench }) => {
+    const b = bench()
+    await feedList(b, [{ id: 'before' }, { id: 'during' }, { id: 'after' }])
+    const none = async (): Promise<undefined> => undefined
+    const opened = vi.fn<SessionHistorySource['opened']>()
+    const source: SessionHistorySource = {
+      opening: vi.fn(none),
+      page: vi.fn(none),
+      interval: vi.fn(none),
+      elided: vi.fn(none),
+      append: vi.fn(),
+      opened,
+      diverged: vi.fn(),
+    }
+    using early = b.svc.retain(sid('before'), { source: 'controllerOperation' })
+    await early.ready
+    expect(opened).not.toHaveBeenCalled()
+
+    const dispose = b.svc.registerHistorySource(source, { memoryBudgetBytes: 1, warmFollowGraceMs: 0, readerLoadGraceMs: 0 })
+    using middle = b.svc.retain(sid('during'), { source: 'controllerOperation' })
+    await middle.ready
+    expect(opened).toHaveBeenCalledExactlyOnceWith(sid('during'))
+    expect(() => b.svc.registerHistorySource(source, { memoryBudgetBytes: 1, warmFollowGraceMs: 0, readerLoadGraceMs: 0 }))
+      .toThrow('history source already registered')
+
+    dispose()
+    dispose() // a stale second disposal finds the slot already empty
+    using late = b.svc.retain(sid('after'), { source: 'controllerOperation' })
+    await late.ready
+    expect(opened).toHaveBeenCalledTimes(1)
+  })
+})
+
+/** The Client Session behind a reference, for the window accounting the budget reads. */
+function clientSession(reference: SessionReference): Session {
+  const session = reference.binding.session
+  if (!(session instanceof Session)) throw new Error('expected a Client Session')
+  return session
+}
+
+describe('warm released generations', () => {
+  /** A fake copy that answers nothing; registration alone changes retirement. */
+  function fakeCopy(): SessionHistorySource {
+    const none = async (): Promise<undefined> => undefined
+    return {
+      opening: vi.fn(none), page: vi.fn(none), interval: vi.fn(none), elided: vi.fn(none),
+      append: vi.fn(), opened: vi.fn(), diverged: vi.fn(),
+    }
+  }
+  const TURN = plainTurn(SessionSeq(10), 3, '问', '答')
+
+  it('disposes the generation on release without a registered copy', async ({ bench }) => {
+    const b = bench()
+    b.mock.stream(FOLLOW, followScript(history(TURN)))
+    await feedList(b, [{ id: 'warm1' }])
+    using reference = b.svc.retain(sid('warm1'), { source: 'controllerOperation' })
+    await reference.ready
+    const first = reference.binding
+    expect(b.svc.binding(sid('warm1'))).toBe(first)
+    reference.release()
+    await Promise.resolve()
+    expect(b.svc.binding(sid('warm1'))).toBeUndefined()
+
+    b.mock.stream(FOLLOW, followScript(history(TURN)))
+    using again = b.svc.retain(sid('warm1'), { source: 'controllerOperation' })
+    await again.ready
+    expect(again.binding).not.toBe(first)
+  })
+
+  it('keeps a released opened Session warm and revives it on retain under a fresh scope', async ({ bench }) => {
+    const b = bench()
+    b.svc.registerHistorySource(fakeCopy(), { memoryBudgetBytes: 1_000_000, warmFollowGraceMs: 60_000, readerLoadGraceMs: 30_000 })
+    b.mock.stream(FOLLOW, followScript(history(TURN)))
+    await feedList(b, [{ id: 'warm2' }])
+    using reference = b.svc.retain(sid('warm2'), { source: 'controllerOperation' })
+    await reference.ready
+    const warmBinding = reference.binding
+    const held = warmBinding.eventSource.getSnapshot()
+    let scopeDisposed = false
+    warmBinding.ctx.effect(() => () => { scopeDisposed = true }, 'test: binding-owned state')
+    reference.release()
+    await Promise.resolve()
+    // Borrowing stays unchanged: a warm generation is not a retained one.
+    expect(b.svc.binding(sid('warm2'))).toBeUndefined()
+    expect(b.svc.scope(sid('warm2'))).toBeUndefined()
+    // Binding-owned state resets on entering the pool; only the Session stays.
+    await vi.waitFor(() => { expect(scopeDisposed).toBe(true) })
+
+    b.mock.stream(FOLLOW, followScript(history(TURN)))
+    using revived = b.svc.retain(sid('warm2'), { source: 'controllerOperation' })
+    // Revival returns the same Session and window without opening a second follow.
+    expect(revived.binding).not.toBe(warmBinding)
+    expect(revived.binding.ctx).not.toBe(warmBinding.ctx)
+    expect(revived.binding.session).toBe(warmBinding.session)
+    expect(b.svc.binding(sid('warm2'))).toBe(revived.binding)
+    expect(b.svc.sessionOf(revived.binding.ctx)).toBe(warmBinding.session)
+    expect(b.svc.sessionOf(warmBinding.ctx)).toBeUndefined()
+    await revived.ready
+    expect(revived.binding.eventSource.getSnapshot()).toBe(held)
+    expect(b.mock.log.requests(FOLLOW)).toHaveLength(1)
+  })
+
+  it('suspends a warm follow after the grace and revives it as one resumed opening', async ({ bench }) => {
+    const b = bench()
+    b.svc.registerHistorySource(fakeCopy(), { memoryBudgetBytes: 1_000_000, warmFollowGraceMs: 20, readerLoadGraceMs: 30_000 })
+    b.mock.stream(FOLLOW, followScript(history(TURN)))
+    await feedList(b, [{ id: 'warm3' }])
+    const reference = b.svc.retain(sid('warm3'), { source: 'controllerOperation' })
+    await reference.ready
+    const binding = reference.binding
+    const held = binding.eventSource.getSnapshot().entries
+    const revision = binding.eventSource.getSnapshot().revision
+    reference.release()
+
+    // The grace releases the remote stream; the held window survives it.
+    await new Promise(resolve => setTimeout(resolve, 40))
+    expect(binding.eventSource.getSnapshot().entries).toEqual(held)
+
+    // Revival after the grace resumes after the newest held record: the
+    // window never republished, and the held entries stay exactly as they were.
+    let resumedAfter: number | undefined
+    b.mock.stream(FOLLOW, async ([request], stream) => {
+      const follow = request as SessionFollowRequest
+      resumedAfter = follow.resume?.afterSeq
+      stream.push(followResumed(follow, []))
+    })
+    using revived = b.svc.retain(sid('warm3'), { source: 'controllerOperation' })
+    await revived.ready
+    await vi.waitFor(() => { expect(b.mock.log.requests(FOLLOW)).toHaveLength(2) })
+    expect(resumedAfter).toBe(TURN.at(-1)?.seq)
+    expect(revived.binding.session).toBe(binding.session)
+    expect(binding.eventSource.getSnapshot().revision).toBe(revision)
+    expect(binding.eventSource.getSnapshot().entries).toEqual(held)
+    reference.release()
+  })
+
+  it('disposes a warm Session once the budget evicts its last page', async ({ bench }) => {
+    const b = bench()
+    b.svc.registerHistorySource(fakeCopy(), { memoryBudgetBytes: 1, warmFollowGraceMs: 60_000, readerLoadGraceMs: 30_000 })
+    b.mock.stream(FOLLOW, followScript(history(TURN)))
+    await feedList(b, [{ id: 'warm5' }, { id: 'kept5' }])
+    using kept = b.svc.retain(sid('kept5'), { source: 'controllerOperation' })
+    await kept.ready
+    b.mock.stream(FOLLOW, followScript(history(TURN)))
+    using reference = b.svc.retain(sid('warm5'), { source: 'controllerOperation' })
+    await reference.ready
+    const held = clientSession(reference)
+    await vi.waitFor(() => { expect(held.bytes()).toBeGreaterThan(0) })
+    expect(held.pages()).toHaveLength(1)
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => undefined)
+    reference.release()
+
+    await vi.waitFor(() => { expect(held.pages()).toHaveLength(0) }, { timeout: 3_000 })
+    expect(debug).toHaveBeenCalledWith(expect.stringContaining('after evicting 1 pages'))
+    // A referenced Session that reported no viewport keeps every page.
+    expect(clientSession(kept).pages()).toHaveLength(1)
+    b.mock.stream(FOLLOW, followScript(history(TURN)))
+    using again = b.svc.retain(sid('warm5'), { source: 'controllerOperation' })
+    await again.ready
+    expect(again.binding.session).not.toBe(held)
+    expect(b.mock.log.requests(FOLLOW)).toHaveLength(3)
+  })
+
+  it('keeps a warm Session that a retain takes back while the budget trims it', async ({ bench }) => {
+    const b = bench()
+    b.svc.registerHistorySource(fakeCopy(), { memoryBudgetBytes: 1, warmFollowGraceMs: 60_000, readerLoadGraceMs: 30_000 })
+    b.mock.stream(FOLLOW, followScript(history(TURN)))
+    await feedList(b, [{ id: 'warm6' }])
+    const reference = b.svc.retain(sid('warm6'), { source: 'controllerOperation' })
+    await reference.ready
+    const held = clientSession(reference)
+    await vi.waitFor(() => { expect(held.bytes()).toBeGreaterThan(0) })
+    vi.spyOn(console, 'debug').mockImplementation(() => undefined)
+    let revived: SessionReference | undefined
+    const stop = held.eventSource.subscribe(() => {
+      if (revived === undefined && held.pages().length === 0) {
+        revived = b.svc.retain(sid('warm6'), { source: 'controllerOperation' })
+      }
+    })
+    reference.release()
+
+    await vi.waitFor(() => { expect(revived).toBeDefined() }, { timeout: 3_000 })
+    stop()
+    expect(revived?.binding.session).toBe(held)
+    expect(b.svc.binding(sid('warm6'))?.session).toBe(held)
+    revived?.release()
+  })
+
+  it('disposes a Session whose scope ends from outside instead of keeping it warm', async ({ bench }) => {
+    const b = bench()
+    b.svc.registerHistorySource(fakeCopy(), { memoryBudgetBytes: 1_000_000, warmFollowGraceMs: 60_000, readerLoadGraceMs: 30_000 })
+    b.mock.stream(FOLLOW, followScript(history(TURN)))
+    await feedList(b, [{ id: 'warm7' }])
+    using reference = b.svc.retain(sid('warm7'), { source: 'controllerOperation' })
+    await reference.ready
+    const held = reference.binding.session
+    await reference.binding.ctx.fiber.dispose()
+    expect(b.svc.binding(sid('warm7'))).toBeUndefined()
+
+    b.mock.stream(FOLLOW, followScript(history(TURN)))
+    using again = b.svc.retain(sid('warm7'), { source: 'controllerOperation' })
+    await again.ready
+    expect(again.binding.session).not.toBe(held)
+  })
+
+  it('retires warm generations when the copy unregisters instead of keeping them', async ({ bench }) => {
+    const b = bench()
+    const dispose = b.svc.registerHistorySource(fakeCopy(), {
+      memoryBudgetBytes: 1_000_000, warmFollowGraceMs: 60_000, readerLoadGraceMs: 30_000,
+    })
+    b.mock.stream(FOLLOW, followScript(history(TURN)))
+    await feedList(b, [{ id: 'warm4' }])
+    using reference = b.svc.retain(sid('warm4'), { source: 'controllerOperation' })
+    await reference.ready
+    const first = reference.binding
+    reference.release()
+    dispose()
+
+    b.mock.stream(FOLLOW, followScript(history(TURN)))
+    using again = b.svc.retain(sid('warm4'), { source: 'controllerOperation' })
+    await again.ready
+    expect(again.binding).not.toBe(first)
   })
 })

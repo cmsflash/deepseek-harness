@@ -46,8 +46,13 @@ describe.skipIf(MODE === 'record')('web e2e: public mount through a prefix-strip
     await scaffold?.close()
   })
 
-  /** Requests outside the mount: the proxy strips no prefix from them, so nothing answers. */
-  const offMountRequests = (): string[] => requestUrls.filter(url => !url.startsWith(scaffold.baseUrl))
+  /**
+   * Requests outside the mount: the proxy strips no prefix from them, so nothing
+   * answers. A `blob:` URL, such as the local copy's worker script, names an
+   * object inside the page and reaches no server.
+   */
+  const offMountRequests = (): string[] => requestUrls.filter(url =>
+    !url.startsWith(scaffold.baseUrl) && !url.startsWith('blob:'))
 
   it('loads the shell, its plugin bundles, and the Gateway WebSocket under the mount', async () => {
     const welcome = page.getByRole('dialog', { name: WELCOME_NOTICE_COPY.zh.title })

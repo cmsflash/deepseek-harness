@@ -141,6 +141,7 @@ export function apply(ctx: ClientContext): void {
       shortcuts: ctx.shortcuts.catalog,
       desktopUpdate: desktopUpdate.store,
       connectionState: connection.state,
+      offline: ctx.remote.$offline,
       sections: {
         getSnapshot: () => {
           const version = ctx.slots.getVersion('settings.section')

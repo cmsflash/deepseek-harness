@@ -63,7 +63,7 @@ await ctx.sessionPersistence.flush()                           // backend-wide d
 <a id="the-session-log-chain"></a>
 ### 会话日志链
 
-后端可以为其读取或写入的每个日志代际保留一份会话日志链：对该日志各行确切存储字节计算的 SHA-256 链接。头部链接是 `SHA-256(SESSION_LOG_CHAIN_TAG ‖ headerLine)`，标签为 `dsh-session-chain/1`；seq 为 `n` 的事件链接是 `SHA-256(link(n − 1) ‖ line(n))`，其中前一个链接以其 32 个原始字节参与哈希，`link(−1)` 是头部链接，一行是去掉换行符的一条 JSONL 记录的存储 UTF-8 字节。因此一个链接覆盖头部及截至其事件（含）的每一行，相等的链接标识字节完全相同的日志前缀。`SessionLogChain.linkAt(seq)` 以 64 个小写十六进制字符返回链接。`SessionHandle.read()` 在 `chain` 中返回所读代际的链；`SessionPersistence.liveChain(id)` 返回本进程活跃写句柄的链，它覆盖该句柄已接受的全部事件，包括写入仍处于待定状态的事件。不保留链的后端省略两者；消费方将缺失的链或链接视为不可验证。
+后端可以为其读取或写入的每个日志代际保留一份会话日志链：对该日志各行确切存储字节计算的 SHA-256 链接。头部链接是 `SHA-256(SESSION_LOG_CHAIN_TAG ‖ headerLine)`，标签为 `dsh-session-chain/1`；seq 为 `n` 的事件链接是 `SHA-256(link(n − 1) ‖ line(n))`，其中前一个链接以其 32 个原始字节参与哈希，`link(−1)` 是头部链接，一行是去掉换行符的一条 JSONL 记录的存储 UTF-8 字节。因此一个链接覆盖头部及截至其事件（含）的每一行，相等的链接标识字节完全相同的日志前缀。`SessionLogChain.linkAt(seq)` 以 64 个小写十六进制字符返回链接。链还可以暴露 `headerLine`（其起始的已存储头部行）与 `storedLine(event)`（仅当某被覆盖事件的后端编码字节哈希到该 seq 的链链接时返回该编码，使读取方无需长存这些行即可提供已存储行）。`SessionHandle.read()` 在 `chain` 中返回所读代际的链；`SessionPersistence.liveChain(id)` 返回本进程活跃写句柄的链，它覆盖该句柄已接受的全部事件，包括写入仍处于待定状态的事件。不保留链的后端省略两者；消费方将缺失的链或链接视为不可验证。
 
 链还可以提供 `extend(events)`：它将本会继续该链的事件按后端写路径对追加事件的完全相同编码进行链接，并返回一条不改动原链的新链；当事件不继续该链或无法编码时返回 `undefined`。session-query 用它为冷读取补入的被中断轮次 closer 生成链接。
 

@@ -344,6 +344,8 @@ export interface ChatViewInjected {
     interactionIds: ObservableSnapshot<readonly string[]>
     /** Live presentation policy derived from the accepted work-details mode. */
     presentation: ObservableSnapshot<ChatPresentationPolicy>
+    /** Whether the page answers from its offline record because the Host is unreachable. */
+    offline: ObservableSnapshot<boolean>
   }
   keyedHooks: {
     /** Resolve the stable source for one Chat Node key. */
@@ -361,6 +363,12 @@ export interface ChatViewInjected {
   loadOlder: () => void
   /** Jump loader: page history back through seq; resolves when the window covers it. */
   loadThrough: (seq: SessionSeq) => Promise<void>
+  /**
+   * Report the inclusive Session seq range the transcript reader currently sees,
+   * so memory eviction keeps the visible pages. View hosts without memory
+   * accounting omit it, and the view then never measures reader geometry.
+   */
+  markViewed?: ((fromSeq: SessionSeq, toSeq: SessionSeq) => void) | undefined
   /**
    * Read back the steps a collapsed history page withheld from one turn, so
    * the rows can render once the reader opens it. Only a row reporting

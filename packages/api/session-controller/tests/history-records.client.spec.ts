@@ -7,7 +7,10 @@ import {
   historyEntries,
   historyRecordFirstSeq,
   historyRecordLastSeq,
+  shareLocalHeaders,
 } from '../src/client/sessions/history-records.ts'
+import type { LocalHistoryRecord } from '../src/client/contract/history-source.ts'
+import type { JsonValue } from '@deepseek-ai/dsh-util-values'
 
 describe('Session history record projection', () => {
   it('retains an ordinary event and its point cursor', () => {
@@ -90,5 +93,41 @@ describe('Session history record projection', () => {
     expect(record).toMatchObject({ type: 'tool-call-chunks', id: 'call-1' })
     expect(Object.hasOwn(record as object, 'name')).toBe(false)
     expect(historyRecordLastSeq(attempt)).toBe(20)
+  })
+})
+
+describe('local request header sharing', () => {
+  /** One local record whose event carries `data`, keyed by `headerKey` when given. */
+  function local(seq: number, data: Record<string, JsonValue> | JsonValue[] | null, headerKey?: string): LocalHistoryRecord {
+    return {
+      type: 'event',
+      event: { type: 'request/header', seq, time: seq, data },
+      bytes: 8,
+      ...(headerKey === undefined ? {} : { headerKey }),
+    }
+  }
+
+  it('gives every later record with a held key the first header object, leaving the rest unchanged', () => {
+    const first = local(1, { header: { model: 'm' } }, 'k')
+    const again = local(2, { header: { model: 'm' }, turn: 1 }, 'k')
+    const shared = new Map<string, JsonValue>()
+    const records = shareLocalHeaders([first, again], shared)
+    expect(records[0]).toBe(first)
+    expect(records[1]?.event.data).toEqual({ header: { model: 'm' }, turn: 1 })
+    expect((records[1]?.event.data as { header: JsonValue }).header).toBe((first.event.data as { header: JsonValue }).header)
+    expect(shared.get('k')).toBe((first.event.data as { header: JsonValue }).header)
+  })
+
+  it('returns the same array when nothing is shared: no key, no object data, no header, or the held object itself', () => {
+    const held = { model: 'm' }
+    const shared = new Map<string, JsonValue>([['k', held]])
+    const records = [
+      local(1, { header: { model: 'm' } }),
+      local(2, null, 'k'),
+      local(3, ['header'], 'k'),
+      local(4, { turn: 1 }, 'k'),
+      local(5, { header: held }, 'k'),
+    ]
+    expect(shareLocalHeaders(records, shared)).toBe(records)
   })
 })

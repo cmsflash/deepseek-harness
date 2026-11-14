@@ -7,6 +7,7 @@
  * `session/projections` admitted per Session through the Gateway.
  */
 
+import { createHash } from 'node:crypto'
 import { Context } from '@deepseek-ai/cordis'
 import { AttachmentId } from '@deepseek-ai/dsh-attachment'
 import type { Agent } from '@deepseek-ai/dsh-agent'
@@ -15,12 +16,18 @@ import TypertGatewayService from '@deepseek-ai/dsh-api-gateway'
 import type { RemoteAccessBinding, RemoteAccessRole } from '@deepseek-ai/dsh-api-remote-access'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { SessionId } from '@deepseek-ai/dsh-session'
+import { SessionLogLink } from '@deepseek-ai/dsh-session-persistence'
 import { remoteMethods, type PeerId, type PeerScope, type Principal, type RemoteInvocation } from '@deepseek-ai/dsh-typert-protocol'
 import TypertRegistry from '@deepseek-ai/dsh-typert-registry'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type SessionController from '../src/index.ts'
 import { ApiSessionList } from '../src/list.ts'
-import type { SessionControlFrame, SessionRequestId, SessionSearchValue } from '../src/types.ts'
+import type {
+  SessionControlFrame,
+  SessionControlRequest,
+  SessionRequestId,
+  SessionSearchValue,
+} from '../src/types.ts'
 import { createSessionTestController } from './test-remote.ts'
 
 declare module '@deepseek-ai/dsh-typert-protocol' {
@@ -223,8 +230,8 @@ describe('Session Controller access', () => {
     const { ctx, shared, hidden, as } = await harness()
     guestPolicy(ctx, LIST_CALLS, READS_SHARED)
     const abort = new AbortController()
-    const guest = as(GUEST, 'control').sessionController.control(abort.signal)[Symbol.asyncIterator]()
-    const owner = as(OWNER, 'control').sessionController.control(abort.signal)[Symbol.asyncIterator]()
+    const guest = as(GUEST, 'control').sessionController.control({}, abort.signal)[Symbol.asyncIterator]()
+    const owner = as(OWNER, 'control').sessionController.control({}, abort.signal)[Symbol.asyncIterator]()
     const baselineSessions = async (iterator: AsyncIterator<SessionControlFrame>): Promise<string[]> => {
       const next = await iterator.next()
       if (next.done === true || next.value.type !== 'baseline') throw new Error('control stream opened without a baseline')
@@ -247,6 +254,53 @@ describe('Session Controller access', () => {
     expect(await projected(guest)).toBe(SHARED)
     abort.abort()
     await Promise.all([guest.return?.(), owner.return?.()])
+  })
+
+  it('filters the retained identities of a control baseline for a non-owner', async () => {
+    const { ctx, shared, hidden, as } = await harness()
+    // A chain the caller can hold a checkpoint of, so both Sessions qualify for retention.
+    ctx.provide('sessionPersistence', {
+      liveChain: () => ({
+        length: 64,
+        linkAt: (seq: number) => (0 <= seq && seq < 64
+          ? SessionLogLink(createHash('sha256').update(String(seq)).digest('hex'))
+          : undefined),
+      }),
+    } as never)
+    hidden.inbox.append('next-turn', message('private work'))
+    shared.inbox.append('next-turn', message('shared work'))
+    guestPolicy(ctx, LIST_CALLS, READS_SHARED)
+    const opening = async (
+      principal: Principal,
+    ): Promise<Extract<SessionControlFrame, { type: 'baseline' }>['value']> => {
+      const abort = new AbortController()
+      const iterator = as(principal, 'control').sessionController.control(defaultKnown, abort.signal)[Symbol.asyncIterator]()
+      try {
+        const next = await iterator.next()
+        if (next.done === true || next.value.type !== 'baseline') throw new Error('control stream opened without a baseline')
+        return next.value.value
+      } finally {
+        abort.abort()
+        await iterator.return?.()
+      }
+    }
+
+    let defaultKnown: SessionControlRequest = {}
+    const held = await opening(OWNER)
+    expect(held.retained).toBeUndefined()
+    const known = [SHARED, PRIVATE].flatMap((sessionId) => {
+      const block = held.projections[sessionId]
+      if (block?.link === undefined) throw new Error('the baseline block carries no link')
+      return [{ sessionId, asOfSeq: block.asOfSeq, link: block.link }]
+    })
+    defaultKnown = { known }
+
+    const owner = await opening(OWNER)
+    expect(owner.projections).toEqual({})
+    expect([...(owner.retained ?? [])].sort()).toEqual([PRIVATE, SHARED].sort())
+    const guest = await opening(GUEST)
+    expect(guest.projections).toEqual({})
+    expect(guest.retained).toEqual([SHARED])
   })
 
   it('records a non-owner caller on the prompt source and leaves owner sources unchanged', async () => {

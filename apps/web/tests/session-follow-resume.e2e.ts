@@ -10,9 +10,20 @@ import { newEnglishPage, saveFailureShot } from './support.ts'
 /** A Session log chain link as the wire carries it. */
 const LINK = /^[0-9a-f]{64}$/
 
+/** One followed record on the wire: a decoded event, or its stored line when the local copy asks follow for lines. */
 interface WireRecord {
-  readonly event: { readonly seq: number; readonly type: string }
+  readonly event?: { readonly seq: number; readonly type: string } | undefined
+  readonly seq?: number | undefined
+  readonly line?: string | undefined
   readonly link?: string | undefined
+}
+
+/** One followed record's durable seq and event type, from its event or its stored line. */
+function recordSeqType(record: WireRecord): { readonly seq: number; readonly type: string | undefined } | undefined {
+  if (record.event !== undefined) return { seq: record.event.seq, type: record.event.type }
+  if (record.seq === undefined || record.line === undefined) return undefined
+  const stored = JSON.parse(record.line) as { readonly type?: string }
+  return { seq: record.seq, type: stored.type }
 }
 
 interface FollowOpening {
@@ -163,8 +174,10 @@ describe('web e2e: resumable Session follow', () => {
     const reconnect = openings.slice(openingsBefore).find(opening => opening.type !== undefined)!
     expect(reconnect.type).toBe('resumed')
     const records = reconnect.records ?? []
-    expect(records[0]?.event.seq).toBe((reconnect.resume?.afterSeq ?? Number.NaN) + 1)
-    expect(records.at(-1)?.event.type).toBe('session/title')
+    const first = records[0] === undefined ? undefined : recordSeqType(records[0])
+    const last = records.length === 0 ? undefined : recordSeqType(records.at(-1)!)
+    expect(first?.seq).toBe((reconnect.resume?.afterSeq ?? Number.NaN) + 1)
+    expect(last?.type).toBe('session/title')
     expect(records.length).toBeLessThan(initial?.records?.length ?? 0)
     expect(reconnect.bytes).toBeLessThan(initial?.bytes ?? 0)
 
@@ -180,7 +193,7 @@ describe('web e2e: resumable Session follow', () => {
     }
     expect(chain?.linkAt(resume.afterSeq)).toBe(resume.link)
     for (const record of records) expect(record.link).toMatch(LINK)
-    expect(records.at(-1)?.link).toBe(chain?.linkAt(records.at(-1)!.event.seq))
+    expect(records.at(-1)?.link).toBe(last !== undefined ? chain?.linkAt(last.seq) : undefined)
 
     await showHistoryStart(page)
     await page.getByText(FIXTURE.markers.user(1), { exact: false }).first().waitFor({ state: 'attached', timeout: 10_000 })

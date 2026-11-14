@@ -240,6 +240,11 @@
     - id: api-remotes
       name: '@deepseek-ai/dsh-api-remotes'
 
+    # One worker per tab keeps a chain-verified copy of Session logs in
+    # IndexedDB and serves complete threads' history from it.
+    - id: local-copy
+      name: '@deepseek-ai/dsh-client-local-copy'
+
     - id: cordis-client-runner
       name: '@deepseek-ai/dsh-cordis-client-runner'
 

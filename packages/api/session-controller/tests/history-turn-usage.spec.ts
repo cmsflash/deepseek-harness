@@ -4,7 +4,7 @@ import { SessionSeq } from '@deepseek-ai/dsh-session'
 import type { TokenUsage } from '@deepseek-ai/dsh-llm'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import type { TurnTokenUsage } from '@deepseek-ai/dsh-token-meter/turn-usage'
-import { HistoryTurnUsage, historyTurnUsage } from '../src/turn-usage.ts'
+import { HistoryTurnUsage, historyTurnUsage } from '../src/history-shared/turn-usage.ts'
 
 const USAGE: TokenUsage = {
   inputTokens: 7, outputTokens: 3, totalTokens: 17,

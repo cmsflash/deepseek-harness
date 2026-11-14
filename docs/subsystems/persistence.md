@@ -131,6 +131,15 @@ interface SessionLogChain {
    *   does not continue the chain or cannot be encoded.
    */
   extend?(events: readonly SessionEvent[]): SessionLogChain | undefined
+  /** Stored header line, without its newline, that the chain starts from; absent when the backend does not keep it. */
+  readonly headerLine?: Uint8Array
+  /**
+   * Return one covered event's stored line: this backend's encoding of `event`,
+   * only when its bytes hash to the chain's link at `event.seq`.
+   * @param event - an event whose seq this chain covers.
+   * @returns the line bytes without the newline, or `undefined` when the seq is not covered or the encoding differs from the stored bytes.
+   */
+  storedLine?(event: SessionEvent): Uint8Array | undefined
 }
 ```
 

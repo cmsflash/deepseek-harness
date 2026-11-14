@@ -198,7 +198,7 @@
   "packages/api/session-controller/src/client/transport.ts": {
     "6a6302072b3044d1366f925d2ccea779370ea82e46555e897fe556b5c0d23ff1": 1
   },
-  "packages/api/session-controller/src/history.ts": {
+  "packages/api/session-controller/src/history-shared/paging.ts": {
     "971ec45a1146ab52f2fb13f75b782d5d35c0fb2ddba1fb9ccab14cc54f7291d5": 1
   },
   "packages/api/session-controller/src/list.ts": {

@@ -1,14 +1,19 @@
 /** Live Session projection state with reconnect baselines. */
 
 import type { Context } from '@deepseek-ai/cordis'
+import { brandString } from '@deepseek-ai/dsh-brand'
 import { Deque } from '@deepseek-ai/dsh-deque'
 import type {
   Session, SessionId,
 } from '@deepseek-ai/dsh-session'
+import type {} from '@deepseek-ai/dsh-session-persistence'
 import type { JsonValue } from '@deepseek-ai/dsh-util-values'
 import type {
+  SessionChainLink,
   SessionControlBaseline,
   SessionControlFrame,
+  SessionControlKnown,
+  SessionControlRequest,
   SessionProjectionBaseline,
   SessionProjectionValues,
 } from './types.ts'
@@ -28,6 +33,7 @@ export class SessionControlController {
         seq,
       })
     })
+    ctx.on('session/created', (session: Session) => { this.announceValues(session) })
     ctx.effect(() => () => {
       for (const stream of this.streams) stream.end()
       this.streams.clear()
@@ -36,15 +42,18 @@ export class SessionControlController {
 
   /**
    * Open one generation of Host-wide live control state.
+   * @param request - Sessions the Client already holds.
    * @param signal - Remote stream cancellation.
-   * @returns one complete baseline followed by live replacement frames.
+   * @returns one complete baseline, holding only the Sessions whose projections
+   *   the caller's checkpoints do not already cover, followed by live
+   *   replacement frames, including every value of a Session that becomes live later.
    */
-  async *control(signal: AbortSignal): AsyncIterable<SessionControlFrame> {
+  async *control(request: SessionControlRequest, signal: AbortSignal): AsyncIterable<SessionControlFrame> {
     signal.throwIfAborted()
     const queue = new ControlQueue()
     this.streams.add(queue)
     try {
-      yield { type: 'baseline', value: this.baseline() }
+      yield { type: 'baseline', value: this.baseline(request.known ?? []) }
       yield* queue.iterate(signal)
     } finally {
       this.streams.delete(queue)
@@ -52,26 +61,67 @@ export class SessionControlController {
     }
   }
 
-  private baseline(): SessionControlBaseline {
-    const sessions = this.ctx.sessions.list()
-    return {
-      projections: this.projectionBaseline(sessions),
-    }
+  private baseline(known: readonly SessionControlKnown[]): SessionControlBaseline {
+    return this.projectionBaseline(this.ctx.sessions.list(), known)
   }
 
+  /**
+   * One baseline over the live Sessions, skipping those a caller checkpoint
+   * already covers.
+   * @param sessions - live Sessions with readable projections.
+   * @param known - checkpoints the caller holds, one per Session.
+   * @returns full blocks by Session, and the omitted Sessions whose values the caller keeps.
+   */
   private projectionBaseline(
     sessions: readonly Session[],
-  ): Readonly<Record<SessionId, SessionProjectionBaseline>> {
+    known: readonly SessionControlKnown[],
+  ): Pick<SessionControlBaseline, 'projections' | 'retained'> {
+    const held = new Map(known.map(entry => [entry.sessionId, entry]))
     const blocks = Object.create(null) as Record<SessionId, SessionProjectionBaseline>
+    const retained: SessionId[] = []
     for (const session of sessions) {
       const snapshot = this.ctx.sessionProjections.snapshot(session)
-      blocks[session.id] = {
+      const stored = this.ctx.get('sessionPersistence')?.liveChain?.(session.id)?.linkAt(snapshot.asOfSeq)
+      const block: SessionProjectionBaseline = {
         asOfSeq: snapshot.asOfSeq,
         // Every projection definition validates its value before snapshot publication.
         values: snapshot.values as SessionProjectionValues,
+        ...(stored === undefined ? {} : { link: brandString<SessionChainLink>(stored) }),
       }
+      const checkpoint = held.get(session.id)
+      // Only a link the caller also holds proves the values behind it are the
+      // same ones, so an unlinked block always travels in full.
+      if (checkpoint !== undefined && block.link !== undefined
+        && checkpoint.asOfSeq === block.asOfSeq && checkpoint.link === block.link) {
+        retained.push(session.id)
+        continue
+      }
+      blocks[session.id] = block
     }
-    return blocks
+    return { projections: blocks, ...(retained.length === 0 ? {} : { retained }) }
+  }
+
+  /**
+   * Send every value of a Session that became live after the open streams'
+   * baselines, one frame per key at its cut; change frames carry only the keys
+   * an event changed, so a stream would otherwise never hold the rest.
+   * A Session without events has nothing durable to state yet.
+   * @param session - the Session just announced.
+   */
+  private announceValues(session: Session): void {
+    if (this.streams.size === 0) return
+    let snapshot: ReturnType<Context['sessionProjections']['snapshot']>
+    try {
+      snapshot = this.ctx.sessionProjections.snapshot(session)
+    } catch (error: unknown) {
+      // A throw here would veto the Session's creation; its later change frames still travel.
+      this.ctx.logger.warn(`session control: values of "${session.id}" were not sent: ${String(error)}`)
+      return
+    }
+    if (snapshot.asOfSeq < 0) return
+    for (const [key, value] of Object.entries(snapshot.values)) {
+      this.broadcast({ type: 'projection', sessionId: session.id, key, value: value as JsonValue, seq: snapshot.asOfSeq })
+    }
   }
 
   private broadcast(frame: SessionControlFrame): void {

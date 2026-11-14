@@ -23,10 +23,10 @@ export interface OfflineReplayStore {
 }
 
 /**
- * Whether a stream records only its opening item, its complete item log since
- * that opening, or a resumable journal log (see {@link REPLAYED_STREAMS}).
+ * Whether a stream records only its opening item or its complete item log since
+ * that opening (see {@link REPLAYED_STREAMS}).
  */
-type StreamRecording = 'opening' | 'log' | 'journal'
+type StreamRecording = 'opening' | 'log'
 
 /**
  * Unary endpoints whose successful results are recorded and replayed. Only
@@ -57,22 +57,30 @@ const REPLAYED_CALLS: ReadonlySet<string> = new Set([
 /**
  * Streams replayed offline. The forwarded-event stream replays only its ready
  * item: its later frames are deliveries and requests that must not run twice.
- * A `journal` stream speaks the Session follow vocabulary: its key ignores the
- * request's `resume` point, and a `resumed` opening that continues the recorded
- * log folds that log into one snapshot, so the record stays replayable from its
- * first item.
+ * Session follow is not recorded: the browser's local thread copy serves held
+ * transcripts. While replaying, a follow that offers a resume point stays open
+ * without items, so its Session keeps the window it holds until the Host is
+ * back; a follow without one fails as a carrier failure, so a thread with
+ * nothing to show reports it.
  */
 const REPLAYED_STREAMS: ReadonlyMap<string, StreamRecording> = new Map([
   ['$events', 'opening'],
   ['job/list', 'log'],
   ['session/control', 'log'],
-  ['session/follow', 'journal'],
   ['workspace/follow', 'log'],
 ])
 
 /** Upper bound on one stream log; later items of the same opening are not recorded. */
 const STREAM_LOG_LIMIT = 20_000
 const STREAM_PERSIST_DELAY_MS = 1_000
+/** One stream's items since its latest opening, with its pending persistence and fold. */
+interface StreamLog {
+  readonly items: unknown[]
+  timer: ReturnType<typeof setTimeout> | undefined
+  /** Settles once the opening item holds the earlier record's folded blocks. */
+  folding: Promise<void> | undefined
+}
+
 const PROBE_TIMEOUT_MS = 4_000
 const PROBE_INTERVAL_MS = 5_000
 const SLOW_CONNECT_MS = 3_000
@@ -93,6 +101,16 @@ export interface OfflineReplayEnvironment {
   watch(listener: (online: boolean) => void): () => void
 }
 
+/** Observable boolean: `getSnapshot` is stable until the value changes. */
+export interface OfflineReplayObservable {
+  getSnapshot(): boolean
+  /**
+   * @param listener - called after each change of the snapshot.
+   * @returns the unsubscriber.
+   */
+  subscribe(listener: () => void): () => void
+}
+
 /** Records Host reads and answers them while the Host is unreachable. */
 export class OfflineReplay {
   /** Present while calls are answered from the record; aborting it ends every stream served from the record. */
@@ -100,7 +118,8 @@ export class OfflineReplay {
   private disposed = false
   private probing: Promise<void> | undefined
   private probeTimer: ReturnType<typeof setTimeout> | undefined
-  private readonly logs = new Map<string, { items: unknown[]; timer: ReturnType<typeof setTimeout> | undefined }>()
+  private readonly listeners = new Set<() => void>()
+  private readonly logs = new Map<string, StreamLog>()
   private readonly stopWatching: () => void
   private readonly stopObservingState: () => void
 
@@ -138,6 +157,15 @@ export class OfflineReplay {
   /** Whether calls are currently answered from the record. */
   get active(): boolean {
     return this.episode !== undefined
+  }
+
+  /** Observable form of {@link OfflineReplay.active}; the object keeps its identity and notifies on `enter` and `leave`. */
+  readonly offline: OfflineReplayObservable = {
+    getSnapshot: () => this.active,
+    subscribe: (listener) => {
+      this.listeners.add(listener)
+      return () => { this.listeners.delete(listener) }
+    },
   }
 
   /**
@@ -192,10 +220,10 @@ export class OfflineReplay {
     live: () => AsyncIterable<unknown>,
   ): AsyncIterable<unknown> {
     const recording = REPLAYED_STREAMS.get(endpoint)
-    const key = streamKey(endpoint, recording === 'journal' ? withoutResume(payload) : payload)
+    const key = streamKey(endpoint, payload)
     const episode = this.episode
-    if (episode !== undefined) return this.replay(recording, key, signal, episode.signal)
-    return this.record(recording, key, signal, live())
+    if (episode !== undefined) return this.replay(recording, key, resumesHeldWindow(endpoint, payload), signal, episode.signal)
+    return this.record(recording, key, signal, live(), endpoint === 'session/control' && namesKnown(payload))
   }
 
   /** Stop probing and flush pending stream logs. */
@@ -207,7 +235,7 @@ export class OfflineReplay {
     for (const [key, log] of this.logs) {
       if (log.timer === undefined) continue
       clearTimeout(log.timer)
-      this.write(key, log.items)
+      this.persist(key, log)
     }
     this.logs.clear()
   }
@@ -215,12 +243,15 @@ export class OfflineReplay {
   private async * replay(
     recording: StreamRecording | undefined,
     key: string,
+    held: boolean,
     signal: AbortSignal,
     episode: AbortSignal,
   ): AsyncIterable<unknown> {
-    const items = recording === undefined ? undefined : await this.read(key)
-    if (!Array.isArray(items)) throw new RemoteStreamCarrierError('the Host is unreachable and no offline copy exists')
-    for (const item of items) {
+    const recorded = recording === undefined ? undefined : await this.read(key)
+    if (!Array.isArray(recorded) && !held) {
+      throw new RemoteStreamCarrierError('the Host is unreachable and no offline copy exists')
+    }
+    for (const item of Array.isArray(recorded) ? recorded : []) {
       episode.throwIfAborted()
       yield item
     }
@@ -234,15 +265,15 @@ export class OfflineReplay {
     key: string,
     signal: AbortSignal,
     source: AsyncIterable<unknown>,
+    relative: boolean,
   ): AsyncIterable<unknown> {
     let opened = false
     try {
       for await (const item of source) {
         if (!opened) {
           opened = true
-          if (recording === 'journal') await this.openJournal(key, item)
-          else if (recording !== undefined) this.restartLog(key, item)
-        } else if (recording === 'log' || recording === 'journal') {
+          if (recording !== undefined) this.restartLog(key, item, relative)
+        } else if (recording === 'log') {
           this.appendLog(key, item)
         }
         yield item
@@ -253,44 +284,27 @@ export class OfflineReplay {
     }
   }
 
-  private restartLog(key: string, item: unknown): void {
+  /**
+   * Start a new log with an opening item.
+   * @param key - record key.
+   * @param item - the opening item.
+   * @param relative - whether the opening is a control baseline that restates only
+   *   what changed since the checkpoints its request named; the earlier record is
+   *   folded into it (see {@link foldControlBaseline}) so the record still describes
+   *   every Session.
+   */
+  private restartLog(key: string, item: unknown, relative: boolean): void {
     const previous = this.logs.get(key)
     clearTimeout(previous?.timer)
-    this.logs.set(key, { items: [item], timer: undefined })
+    const log: StreamLog = { items: [item], timer: undefined, folding: undefined }
+    if (relative) {
+      const earlier = previous === undefined
+        ? this.read(key).then((stored): readonly unknown[] => Array.isArray(stored) ? stored as readonly unknown[] : [])
+        : (previous.folding ?? Promise.resolve()).then(() => previous.items)
+      log.folding = earlier.then((items) => { log.items.splice(0, 1, ...foldControlBaseline(items, item)) })
+    }
+    this.logs.set(key, log)
     this.schedulePersist(key)
-  }
-
-  /**
-   * Start or continue a journal record. A `resumed` opening that continues the
-   * recorded log becomes one snapshot holding every recorded event and the
-   * resumed records, with the resumed opening's header, projections and
-   * assistant baseline; the earlier assistant frames are dropped because their
-   * revisions precede that baseline. A resumed opening the record does not end
-   * at, or one that would fold more than the log limit of events, leaves the
-   * persisted record as it is and records nothing until the next snapshot opening.
-   */
-  private async openJournal(key: string, item: unknown): Promise<void> {
-    if (!isResumedOpening(item)) {
-      this.restartLog(key, item)
-      return
-    }
-    const previous = this.logs.get(key)
-    this.logs.delete(key)
-    if (previous?.timer !== undefined) {
-      clearTimeout(previous.timer)
-      this.write(key, previous.items)
-    }
-    // A window replayed from the record has no in-memory log to continue.
-    const recorded = previous?.items ?? await this.read(key)
-    const items: readonly unknown[] = Array.isArray(recorded) ? recorded : []
-    const [opening, ...rest] = items
-    if (!isSnapshotOpening(opening)) return
-    const events = rest.filter(isEventItem)
-    if ((events.at(-1)?.event.seq ?? opening.cursor) !== item.after) return
-    const { type: _resumed, after: _after, records, ...current } = item
-    const folded = [...opening.records, ...events, ...records]
-    if (folded.length > STREAM_LOG_LIMIT) return
-    this.restartLog(key, { ...opening, ...current, type: 'snapshot', records: folded })
   }
 
   private appendLog(key: string, item: unknown): void {
@@ -305,8 +319,13 @@ export class OfflineReplay {
     if (log === undefined || log.timer !== undefined) return
     log.timer = setTimeout(() => {
       log.timer = undefined
-      this.write(key, log.items)
+      this.persist(key, log)
     }, STREAM_PERSIST_DELAY_MS)
+  }
+
+  private persist(key: string, log: StreamLog): void {
+    if (log.folding === undefined) this.write(key, log.items)
+    else void log.folding.then(() => { this.write(key, log.items) })
   }
 
   /** Replay while the Host is unreachable; the next generation attempt opens the recorded one. */
@@ -314,6 +333,7 @@ export class OfflineReplay {
     if (this.episode !== undefined || this.disposed) return
     this.episode = new AbortController()
     console.warn('[offline-replay] Host unreachable; showing recorded data')
+    this.notify()
     this.connection.holdNetworkAvailable(true)
     this.connection.reconnect()
     this.scheduleProbe()
@@ -326,9 +346,14 @@ export class OfflineReplay {
     this.episode = undefined
     clearTimeout(this.probeTimer)
     console.warn('[offline-replay] Host reachable; reconnecting')
+    this.notify()
     this.connection.holdNetworkAvailable(false)
     this.connection.reconnect()
     episode.abort(new RemoteStreamCarrierError('the Host is reachable again'))
+  }
+
+  private notify(): void {
+    for (const listener of [...this.listeners]) listener()
   }
 
   private scheduleProbe(): void {
@@ -370,55 +395,111 @@ function callKey(endpoint: string, args: unknown): string {
 }
 
 function streamKey(endpoint: string, payload: unknown): string {
-  return `stream ${endpoint} ${stableJson(payload)}`
+  return `stream ${endpoint} ${stableJson(endpoint === 'session/control' ? withoutKnown(payload) : payload)}`
 }
 
-/** The wire payload of a journal stream without the `args.request.resume` point that varies per reconnect. */
-function withoutResume(payload: unknown): unknown {
+/**
+ * Drop the checkpoints a control opening names: they change with every
+ * generation, while the recorded baseline answers any of them.
+ * @param payload - wire payload of one stream opening.
+ * @returns the payload as recorded, or the payload itself when it carries no checkpoints.
+ */
+function withoutKnown(payload: unknown): unknown {
   if (!isRecord(payload) || !isRecord(payload.args) || !isRecord(payload.args.request)) return payload
-  const { resume: _resume, ...request } = payload.args.request
+  const request = Object.fromEntries(
+    Object.entries(payload.args.request).filter(([key]) => key !== 'known'),
+  )
   return { ...payload, args: { ...payload.args, request } }
+}
+
+/**
+ * @param payload - wire payload of one control opening.
+ * @returns whether the opening names checkpoints, so its baseline omits the Sessions they cover.
+ */
+function namesKnown(payload: unknown): boolean {
+  if (!isRecord(payload) || !isRecord(payload.args) || !isRecord(payload.args.request)) return false
+  const known = payload.args.request.known
+  return Array.isArray(known) && known.length > 0
+}
+
+/**
+ * Complete a relative control baseline from the earlier record. A Session with
+ * a block in the earlier baseline gets that block, updated by the record's
+ * later projection frames; a block a frame changed loses its link, so a page
+ * seeded from it cannot claim the Host's checkpoint for values the Host never
+ * sent as one block. A Session known only from frames keeps its newest frame per
+ * key after the baseline: a block would replace every value the page holds for
+ * it, including list-cached ones, while a frame changes only its key. The new
+ * baseline's own blocks replace both.
+ * @param earlier - the earlier record's items, opening first.
+ * @param opening - the new opening item.
+ * @returns the items that replace the opening: a complete baseline followed by
+ *   the carried frames, or the opening alone when it is not a baseline or
+ *   nothing earlier completes it.
+ */
+function foldControlBaseline(earlier: readonly unknown[], opening: unknown): unknown[] {
+  if (!isBaselineFrame(opening) || !isRecord(opening.value.projections)) return [opening]
+  const restated = opening.value.projections
+  const blocks = new Map<string, Readonly<Record<string, unknown>>>()
+  const frames = new Map<string, ProjectionFrame>()
+  for (const item of earlier) {
+    if (isBaselineFrame(item) && isRecord(item.value.projections)) {
+      for (const [sessionId, block] of Object.entries(item.value.projections)) {
+        if (isRecord(block)) blocks.set(sessionId, block)
+      }
+    } else if (isProjectionFrame(item) && !Object.hasOwn(restated, item.sessionId)) {
+      const block = blocks.get(item.sessionId)
+      if (block === undefined) {
+        const key = JSON.stringify([item.sessionId, item.key])
+        if (item.seq > (frames.get(key)?.seq ?? -1)) frames.set(key, item)
+        continue
+      }
+      const asOfSeq = typeof block.asOfSeq === 'number' ? block.asOfSeq : -1
+      if (item.seq <= asOfSeq) continue
+      const values = isRecord(block.values) ? block.values : {}
+      blocks.set(item.sessionId, { asOfSeq: item.seq, values: { ...values, [item.key]: item.value } })
+    }
+  }
+  if (blocks.size === 0 && frames.size === 0) return [opening]
+  const { retained: _covered, ...value } = opening.value
+  return [
+    { ...opening, value: { ...value, projections: { ...Object.fromEntries(blocks), ...restated } } },
+    ...frames.values(),
+  ]
+}
+
+/** One recorded control frame that replaces a single projection key of one Session. */
+interface ProjectionFrame {
+  readonly type: 'projection'
+  readonly sessionId: string
+  readonly key: string
+  readonly value: unknown
+  readonly seq: number
+}
+
+function isBaselineFrame(item: unknown): item is { readonly type: 'baseline'; readonly value: Readonly<Record<string, unknown>> } {
+  return isRecord(item) && item.type === 'baseline' && isRecord(item.value)
+}
+
+function isProjectionFrame(item: unknown): item is ProjectionFrame {
+  return isRecord(item) && item.type === 'projection' && typeof item.sessionId === 'string'
+    && typeof item.key === 'string' && typeof item.seq === 'number'
+}
+
+/** Whether a stream request is a Session follow that resumes a window its caller already holds. */
+function resumesHeldWindow(endpoint: string, payload: unknown): boolean {
+  if (endpoint !== 'session/follow' || !isRecord(payload) || !isRecord(payload.args) || !isRecord(payload.args.request)) return false
+  return payload.args.request.resume !== undefined
 }
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-/** A recorded journal event frame. */
-interface JournalEventItem {
-  readonly type: 'event'
-  readonly event: { readonly seq: number }
-}
-
-/** A recorded journal opening; the remaining fields are carried over unchanged. */
-interface JournalOpening {
-  readonly type: 'snapshot' | 'resumed'
-  readonly cursor: number
-  readonly records: readonly JournalEventItem[]
-}
-
-function isEventItem(item: unknown): item is JournalEventItem {
-  return isRecord(item) && item.type === 'event' && isRecord(item.event) && typeof item.event.seq === 'number'
-}
-
-function isJournalOpening(item: unknown): item is JournalOpening & Readonly<Record<string, unknown>> {
-  return isRecord(item) && typeof item.cursor === 'number' && Array.isArray(item.records)
-}
-
-function isSnapshotOpening(item: unknown): item is JournalOpening & Readonly<Record<string, unknown>> {
-  return isJournalOpening(item) && item.type === 'snapshot'
-}
-
-function isResumedOpening(
-  item: unknown,
-): item is JournalOpening & Readonly<Record<string, unknown>> & { readonly after: number } {
-  return isJournalOpening(item) && item.type === 'resumed' && typeof item.after === 'number'
-}
-
 function stableJson(value: unknown): string {
   return JSON.stringify(value, (_key, field: unknown) => {
     if (typeof field !== 'object' || field === null || Array.isArray(field)) return field
-    return Object.fromEntries(Object.entries(field).sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0))
+    return Object.fromEntries(Object.entries(field).sort(([left], [right]) => left < right ? -1 : 1))
   })
 }
 
@@ -427,28 +508,88 @@ const OBJECT_STORE = 'records'
 
 /**
  * Open the page's IndexedDB record store, one database per origin.
+ *
+ * The database opens at whatever version it has. A database without the record
+ * object store holds no records; the store adds it once per page by upgrading
+ * to the next version, which keeps any records another page's repair wrote in
+ * the meantime. If that repair fails, the store warns once and, for the rest of
+ * the page, finds no record and drops every write; the next page load tries
+ * again. A connection the browser closes, or that another page's upgrade or
+ * deletion asks to close, is replaced on the next call, and a failed open is
+ * retried on the next call.
  * @returns the store, or undefined when IndexedDB is unavailable.
  */
 export function openIndexedDbReplayStore(): OfflineReplayStore | undefined {
   if (typeof indexedDB === 'undefined') return undefined
-  let database: Promise<IDBDatabase> | undefined
-  const open = (): Promise<IDBDatabase> => {
-    database ??= new Promise<IDBDatabase>((resolve, reject) => {
-      const request = indexedDB.open(DATABASE, 1)
-      request.onupgradeneeded = () => { request.result.createObjectStore(OBJECT_STORE) }
-      request.onsuccess = () => { resolve(request.result) }
-      request.onerror = () => {
-        database = undefined
-        reject(request.error ?? new Error('offline replay: IndexedDB open failed'))
-      }
-    })
-    return database
+  const factory = indexedDB
+  let database: Promise<IDBDatabase | undefined> | undefined
+  let repaired = false
+  const forget = (connection: Promise<IDBDatabase | undefined>): void => {
+    if (database === connection) database = undefined
   }
-  const run = async <T>(mode: IDBTransactionMode, operation: (store: IDBObjectStore) => IDBRequest<T>): Promise<T> => {
-    const db = await open()
-    return new Promise<T>((resolve, reject) => {
-      const request = operation(db.transaction(OBJECT_STORE, mode).objectStore(OBJECT_STORE))
+  const reportUnavailable = (error: unknown): void => {
+    console.warn('[offline-replay] the record database cannot be repaired; this page keeps no offline records until it reloads:', error)
+  }
+  const connect = async (): Promise<IDBDatabase | undefined> => {
+    const db = await openRecordDatabase(factory, undefined)
+    if (db.objectStoreNames.contains(OBJECT_STORE)) return db
+    db.close()
+    if (repaired) {
+      reportUnavailable(new Error('offline replay: the record object store is missing again after this page added it'))
+      return undefined
+    }
+    repaired = true
+    console.warn(`[offline-replay] the record database has no "${OBJECT_STORE}" object store and so holds no records; adding the store`)
+    let upgraded: IDBDatabase
+    try {
+      upgraded = await openRecordDatabase(factory, db.version + 1)
+    } catch (error) {
+      reportUnavailable(error)
+      return undefined
+    }
+    if (upgraded.objectStoreNames.contains(OBJECT_STORE)) return upgraded
+    upgraded.close()
+    reportUnavailable(new Error('offline replay: the record object store is still missing after the upgrade'))
+    return undefined
+  }
+  const connection = (): Promise<IDBDatabase | undefined> => {
+    if (database !== undefined) return database
+    const opening: Promise<IDBDatabase | undefined> = connect().then((db) => {
+      if (db !== undefined) {
+        db.onclose = () => { forget(opening) }
+        db.onversionchange = () => {
+          db.close()
+          forget(opening)
+        }
+      }
+      return db
+    }, (error: unknown) => {
+      forget(opening)
+      throw error
+    })
+    database = opening
+    return opening
+  }
+  const run = async <T>(
+    mode: IDBTransactionMode,
+    operation: (store: IDBObjectStore) => IDBRequest<T>,
+    reconnect = true,
+  ): Promise<T | undefined> => {
+    const current = connection()
+    const db = await current
+    if (db === undefined) return undefined
+    let request: IDBRequest<T>
+    try {
+      request = operation(db.transaction(OBJECT_STORE, mode).objectStore(OBJECT_STORE))
+    } catch (error) {
+      // A connection the browser closed before its close event arrived.
+      if (!reconnect || !(error instanceof Error && error.name === 'InvalidStateError')) throw error
+      forget(current)
+      return await run(mode, operation, false)
+    }
+    return await new Promise<T>((resolve, reject) => {
       request.onsuccess = () => { resolve(request.result) }
+      /* v8 ignore next -- an error event always sets the request's error */
       request.onerror = () => { reject(request.error ?? new Error('offline replay: IndexedDB request failed')) }
     })
   }
@@ -456,6 +597,31 @@ export function openIndexedDbReplayStore(): OfflineReplayStore | undefined {
     get: key => run('readonly', store => store.get(key)),
     put: async (key, value) => { await run('readwrite', store => store.put(value, key)) },
   }
+}
+
+/**
+ * Open the record database, creating the record object store in any upgrade.
+ * @param factory - the page's IndexedDB factory.
+ * @param version - the version to upgrade to, or undefined to open the current one.
+ * @returns the connection. It rejects when another page keeps the database open
+ *   at its older version, and an upgrade that completes after that is closed again.
+ */
+function openRecordDatabase(factory: IDBFactory, version: number | undefined): Promise<IDBDatabase> {
+  return new Promise<IDBDatabase>((resolve, reject) => {
+    const request = version === undefined ? factory.open(DATABASE) : factory.open(DATABASE, version)
+    let blocked = false
+    request.onupgradeneeded = () => { request.result.createObjectStore(OBJECT_STORE) }
+    request.onsuccess = () => {
+      if (blocked) request.result.close()
+      else resolve(request.result)
+    }
+    /* v8 ignore next -- an error event always sets the request's error */
+    request.onerror = () => { reject(request.error ?? new Error('offline replay: IndexedDB open failed')) }
+    request.onblocked = () => {
+      blocked = true
+      reject(new Error('offline replay: another page keeps the record database open at its older version'))
+    }
+  })
 }
 
 /** Statuses a proxy in front of a stopped Host answers with instead of failing the request. */

@@ -156,6 +156,8 @@
     "tests/replay-round-trip.e2e.ts",
     "tests/session-replay-reload.e2e.ts",
     "tests/session-follow-resume.e2e.ts",
+    "tests/local-copy.e2e.ts",
+    "tests/local-copy-refresh.e2e.ts",
     "tests/hmr-live.e2e.ts",
     "tests/preview-boot.e2e.ts",
     "tests/seeded-history.e2e.ts",

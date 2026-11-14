@@ -1,6 +1,7 @@
-/** Test-only direct Remote face over the Session Controller's internal controllers. */
+/** Test-only direct Remote face over the Session Controller's internal controllers, with Session-chain doubles. */
 import type { SessionControllerInternals } from '../src/index.ts'
 
+import { createHash } from 'node:crypto'
 import { SessionLogOffset } from '@deepseek-ai/dsh-session'
 import { Service, type Context } from '@deepseek-ai/cordis'
 import type { ModelSelection as AgentModelSelection } from '@deepseek-ai/dsh-agent'
@@ -10,7 +11,13 @@ import type {
   ImageAttachmentLimits,
 } from '@deepseek-ai/dsh-attachment'
 import type { SessionEvent, SessionHeader, SessionId } from '@deepseek-ai/dsh-session'
-import type { SessionProjectionsValue } from '../src/types.ts'
+import {
+  SESSION_LOG_CHAIN_TAG,
+  SessionLogLink,
+  type SessionLogChain,
+} from '@deepseek-ai/dsh-session-persistence'
+import { encodeEventLine } from '@deepseek-ai/dsh-session-persistence-jsonl/src/format.ts'
+import type { SessionControlRequest, SessionProjectionsValue } from '../src/types.ts'
 import {
   SessionPersistenceNotFoundError,
   SessionPersistenceRevision,
@@ -93,7 +100,7 @@ export interface TestSessionRemote {
   projections(request: SessionProjectionsRequest, signal?: AbortSignal): Promise<RemoteResult<SessionProjectionsValue>>
   expandSteps(request: SessionExpandStepsRequest, signal?: AbortSignal): Promise<RemoteResult<SessionExpandStepsValue>>
   follow(request: SessionFollowRequest, signal?: AbortSignal): AsyncIterable<SessionFollowFrame>
-  control(signal?: AbortSignal): AsyncIterable<SessionControlFrame>
+  control(request: SessionControlRequest, signal?: AbortSignal): AsyncIterable<SessionControlFrame>
 }
 
 /** Dependencies and policy supplied by a Session Controller unit harness. */
@@ -126,6 +133,8 @@ export const TEST_IMAGE_LIMITS: ImageAttachmentLimits = Object.freeze({
 interface TestSessionInspection {
   readonly meta: SessionHeader
   readonly events: readonly SessionEvent[]
+  /** Session log chain over the session's stored line bytes, when the test declares links. */
+  readonly chain?: SessionLogChain
 }
 
 type LegacyTestPersistence = Record<string, unknown> & {
@@ -145,7 +154,11 @@ type LegacyTestPersistence = Record<string, unknown> & {
   ) => Promise<SessionHandle>
 }
 
-/** One immutable read handle over a double's inspected header and events. */
+/**
+ * One immutable read handle over a double's inspected header and events.
+ * @param sessionId - session the handle serves.
+ * @param inspection - the double's declared header, events, and optional chain.
+ */
 function testReadHandle(
   sessionId: SessionId,
   inspection: TestSessionInspection,
@@ -161,6 +174,7 @@ function testReadHandle(
       return Promise.resolve({
         eventState: 'detached',
         events: structuredClone(events.slice(offset, length === undefined ? undefined : offset + length)),
+        ...(inspection.chain === undefined ? {} : { chain: inspection.chain }),
       } as const)
     },
     append: () => Promise.reject(new SessionReadOnlyError(sessionId, 'append')),
@@ -218,6 +232,63 @@ export function testSessionPersistence(
     }
   }
   return adapted
+}
+
+/**
+ * Oracle links over stored line bytes under the Session log chain scheme: the
+ * header link hashes the literal tag and the header line, and each event link
+ * hashes the previous raw digest and the event's line. Callers derive them from
+ * the file's bytes, never from the code under test.
+ * @param headerLine - the stored header line without its newline.
+ * @param lines - the stored event lines without their newlines, from seq 0.
+ * @returns one raw 32-byte digest per event, at its seq.
+ */
+export function testChainLinks(headerLine: Uint8Array, lines: readonly Uint8Array[]): Buffer[] {
+  const links: Buffer[] = []
+  let previous = createHash('sha256').update(SESSION_LOG_CHAIN_TAG, 'utf8').update(headerLine).digest()
+  for (const line of lines) {
+    previous = createHash('sha256').update(previous).update(line).digest()
+    links.push(previous)
+  }
+  return links
+}
+
+/**
+ * Build a Session log chain test double over stored line bytes. Links follow the
+ * oracle scheme over those bytes; `storedLine` answers with an event's JSONL
+ * encoding only when that encoding hashes to the event's link, as the
+ * persistence chain contract requires.
+ * @param headerLine - the stored header line without its newline.
+ * @param lines - the stored event lines without their newlines, from seq 0.
+ * @returns the chain double.
+ */
+export function testStoredChain(headerLine: Uint8Array, lines: readonly Uint8Array[]): SessionLogChain {
+  const links = testChainLinks(headerLine, lines)
+  return {
+    length: lines.length,
+    linkAt: (seq: number) => {
+      const raw = links[seq]
+      return raw === undefined ? undefined : SessionLogLink(raw.toString('hex'))
+    },
+    headerLine,
+    storedLine: (event) => {
+      const linked = event.seq >= 0 ? links[event.seq] : undefined
+      if (linked === undefined) return undefined
+      let encoded: Buffer
+      try {
+        encoded = encodeEventLine(event)
+      } catch {
+        // An event the backend cannot encode has no stored line to serve.
+        return undefined
+      }
+      const previous = event.seq === 0
+        ? createHash('sha256').update(SESSION_LOG_CHAIN_TAG, 'utf8').update(headerLine).digest()
+        : links[event.seq - 1]
+      if (previous === undefined) return undefined
+      const digest = createHash('sha256').update(previous).update(encoded).digest()
+      return digest.equals(linked) ? encoded : undefined
+    },
+  }
 }
 
 /** Concrete point-read query used by Session Controller tests that do not exercise search. */
@@ -404,6 +475,6 @@ export async function createSessionTestRemote(
       signal,
     ),
     follow: (request, signal = new AbortController().signal) => direct.follow(request, signal),
-    control: (signal = new AbortController().signal) => direct.control(signal),
+    control: (request, signal = new AbortController().signal) => direct.control(request, signal),
   }
 }

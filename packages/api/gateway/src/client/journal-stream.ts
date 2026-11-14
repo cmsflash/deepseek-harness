@@ -30,6 +30,8 @@ export type RemoteJournalChange<Page, Entry, Notification = never> =
     readonly page: Page
     readonly entries: readonly Entry[]
     readonly hasMore: boolean
+    /** The page came from the caller's local copy; a remote opening has not confirmed it yet. */
+    readonly local?: true
   }
   | {
     readonly type: 'prepend'
@@ -110,8 +112,10 @@ export interface RemoteJournalStreamOptions<Page, Entry, Cursor, Notification = 
  * reconnect's snapshot replaces the window even when its cursor is behind the
  * held one, because the source's log is the authority. When resume is enabled,
  * a reconnecting generation offers the held window's newest entries, and a
- * `resumed` opening appends only the entries after them.
- * Notifications never change a cursor and wait behind an in-flight gap repair.
+ * `resumed` opening appends only the entries after them. An opening may instead
+ * publish a caller-held local page at once and treat the first remote opening
+ * like a reconnect of that window. Notifications never change a cursor and wait
+ * behind an in-flight gap repair.
  */
 export abstract class RemoteJournalStream<
   Page, Entry, Cursor, PageRequest = void, Notification = never,
@@ -208,15 +212,30 @@ export abstract class RemoteJournalStream<
   }
 
   /**
-   * Establish follow and publish the opening snapshot carried by its first frame.
-   * @param request - initial tail-page request.
-   * @returns after the first complete window is published.
+   * Establish follow and publish the opening snapshot carried by its first frame,
+   * or publish a locally held page at once and let the first remote opening confirm it.
+   * @param request - opening-window request held for reconnects and repair.
+   * @param local - a locally held page and its cursor; it is published as a
+   *   `replace` marked `local` before any remote frame, and the first remote
+   *   opening is then handled like a reconnect of the held window.
+   * @returns after the first complete window is published, or at once when `local` is given.
    */
-  async open(request: PageRequest): Promise<void> {
+  async open(request: PageRequest, local?: { readonly page: Page; readonly cursor: Cursor }): Promise<void> {
     if (this.started) throw new Error(`${this.options.name} already opened`)
     this.started = true
     this.initialRequest = request
     const iterator = this.stream[Symbol.asyncIterator]()
+    if (local !== undefined) {
+      try {
+        this.replaceFromOpening(local.page, local.cursor, true)
+      } catch (error) {
+        await this.stream.dispose()
+        throw error
+      }
+      this.opened = true
+      this.done = this.consume(iterator)
+      return
+    }
     try {
       const first = await this.takeNext(iterator)
       if (first.done) throw protocolViolation(`${this.options.name} ended before its opening cursor`)
@@ -227,6 +246,25 @@ export abstract class RemoteJournalStream<
       await this.stream.dispose()
       throw error
     }
+  }
+
+  /**
+   * Take over an already-published window and follow from its newest entry. Nothing is
+   * published; the first remote generation resumes after the adopted window like a
+   * reconnect, or replaces it with a snapshot.
+   * @param request - opening-window request held for reconnects and repair.
+   * @param window - the adopted window's bounds and newest entry.
+   */
+  adopt(request: PageRequest, window: { readonly first: Cursor; readonly last: Cursor; readonly newest: Entry }): void {
+    if (this.started) throw new Error(`${this.options.name} already opened`)
+    this.started = true
+    this.initialRequest = request
+    this.firstCursor = window.first
+    this.lastCursor = window.last
+    this.setResumeCursor(window.last)
+    this.tail = [window.newest]
+    this.opened = true
+    this.done = this.consume(this.stream[Symbol.asyncIterator]())
   }
 
   /**
@@ -258,6 +296,16 @@ export abstract class RemoteJournalStream<
       entries: accepted,
       hasMore: this.options.hasMore(page),
     })
+  }
+
+  /**
+   * Record that the domain dropped the published window's entries before
+   * `first`, so the next {@link prepend} accepts the older page that ends just
+   * before it. A cursor at or before the held head changes nothing.
+   * @param first - first cursor the domain's window still holds.
+   */
+  dropBefore(first: Cursor): void {
+    if (this.firstCursor !== undefined && this.options.compare(first, this.firstCursor) > 0) this.firstCursor = first
   }
 
   /** Replace the active physical generation while retaining the published window. */
@@ -337,7 +385,7 @@ export abstract class RemoteJournalStream<
   }
 
   /** Publish a generation's opening page without issuing a second Remote call. */
-  private replaceFromOpening(page: Page, cursor: Cursor): void {
+  private replaceFromOpening(page: Page, cursor: Cursor, local?: true): void {
     this.assertPageThrough(page, cursor)
     const entries = [...this.options.entries(page)]
     this.assertPage(entries)
@@ -351,6 +399,7 @@ export abstract class RemoteJournalStream<
       page,
       entries,
       hasMore: this.options.hasMore(page),
+      ...(local === undefined ? {} : { local }),
     })
   }
 

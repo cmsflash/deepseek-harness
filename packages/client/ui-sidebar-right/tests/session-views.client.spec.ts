@@ -87,6 +87,22 @@ it('retires only unselected Views without retained bodies and rejects released r
   expect(views.source.getSnapshot()).toEqual([])
 })
 
+it('withdraws a View whose Session is still opening without reporting an opening failure', async () => {
+  const r = await SlotTestRuntime.create()
+  runtimes.push(r)
+  await r.sessions.add({ id: A, initialOpen: signal => new Promise<void>((resolve) => { signal.addEventListener('abort', () => { resolve() }) }) })
+  await r.sessions.add({ id: B })
+  const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+  const views = new SidebarSessionViews(r.sessions)
+  owners.push(views)
+  views.select(A)
+  const a = views.source.getSnapshot()[0]!
+  views.select(B)
+  await expect(a.reference.ready).rejects.toThrow('is released')
+  await views.source.getSnapshot()[0]!.reference.ready
+  expect(error).not.toHaveBeenCalled()
+})
+
 it('reports opening failure and releases Views even when committed roots are still present', async () => {
   const r = await runtime()
   const reference = r.sessions.retain(A, { source: 'sidebarView' })

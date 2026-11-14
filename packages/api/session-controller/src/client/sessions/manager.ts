@@ -7,6 +7,7 @@ import type { WorkspaceId } from '@deepseek-ai/dsh-workspace/types'
 import type {
   SessionControlBaseline,
   SessionControlFrame,
+  SessionControlKnown,
   SessionProjectionHints,
   SessionRenameValue,
   SessionStepDetail,
@@ -26,6 +27,7 @@ import { Notifier } from './notifier.ts'
 import { ProjectionValueStore } from './projection-store.ts'
 import { Session } from './session.ts'
 import type { SessionRemotes } from './remotes.ts'
+import type { SessionHistorySource } from '../contract/history-source.ts'
 import type { SessionTarget } from '../contract/sessions.ts'
 
 function sessionSeqCursor(value: number): SessionSeqCursor {
@@ -91,6 +93,8 @@ export class SessionManager {
   private readonly sessions = new Map<SessionId, Session>()
   /** Deployment-wide step detail every Session pages with; see {@link setStepDetail}. */
   private stepDetail: SessionStepDetail = 'full'
+  /** Local copy that Sessions constructed from now on consult before the Host. */
+  private historySource: SessionHistorySource | undefined
   /** In-flight Session disposals remain here after instances leave `sessions`, so manager disposal can await quiescence. */
   private readonly sessionDisposals = new Set<Promise<void>>()
   /**
@@ -290,6 +294,15 @@ export class SessionManager {
     await Promise.all([...this.sessions.values()].map(session => session.setStepDetail(detail)))
   }
 
+  /**
+   * Set the local-copy source that every Session constructed afterwards reads
+   * history from before asking the Host.
+   * @param source - the registered copy, or undefined once its registration is disposed.
+   */
+  setHistorySource(source: SessionHistorySource | undefined): void {
+    this.historySource = source
+  }
+
   private createSession(sessionId: SessionId): Session {
     const address = this.addresses.get(sessionId)
     const parentAvailable = address === undefined
@@ -301,6 +314,9 @@ export class SessionManager {
         address,
         ...parentAvailable === undefined ? {} : { parentAvailable },
       }),
+      ...(address === undefined && this.historySource !== undefined
+        ? { historySource: this.historySource }
+        : {}),
       // The sender's local first-send flip mirrors into the list row so the
       // session surfaces (lists filter on blank) before any host frame lands.
       onEngaged: (engaged) => {
@@ -671,12 +687,31 @@ export class SessionManager {
     this.notifier.markDirty()
   }
 
-  private replaceControlBaseline(baseline: SessionControlBaseline): void {
+  /**
+   * Sessions whose control-baseline projections this Client holds at a linked cut.
+   * @returns one checkpoint per Session, in store order.
+   */
+  controlKnown(): readonly SessionControlKnown[] {
+    const known: SessionControlKnown[] = []
+    for (const [sessionId, store] of this.projectionStores) {
+      const checkpoint = store.controlCheckpoint()
+      if (checkpoint !== undefined) known.push({ sessionId, ...checkpoint })
+    }
+    return known
+  }
 
+  private replaceControlBaseline(baseline: SessionControlBaseline): void {
     for (const [sessionId, block] of Object.entries(baseline.projections)) {
       const store = this.projectionStore(sessionId as SessionId)
       const asOfSeq = sessionSeqCursor(block.asOfSeq)
-      store.seed({ ...block, asOfSeq })
+      store.seedControl({ ...block, asOfSeq })
+    }
+    // A retained Session keeps the values the Host just confirmed at their cut.
+    // A Session the baseline leaves out keeps them too: a Host that restarted
+    // holds nothing until something activates it, so absence says nothing about
+    // the durable log those values describe.
+    for (const sessionId of baseline.retained ?? []) {
+      this.projectionStores.get(sessionId)?.confirmGeneration()
     }
     this.notifier.markDirty()
   }
@@ -775,12 +810,14 @@ export class SessionManager {
 
   /**
    * Repair one re-established Host-event generation with queryable baselines.
-   * Discard old projection cuts before new queries, including cold Sessions
-   * absent from the process-local control baseline.
+   * Values stay visible: the new generation's control baseline retains the
+   * Sessions it can vouch for and restates the changed ones, and a Session it
+   * leaves out keeps its values until a persisted-checkpoint view or a follow
+   * opening describes it again.
    * Opened Session follow streams resume independently through API Gateway.
    */
   handleConnected(): void {
-    for (const store of this.projectionStores.values()) store.clear()
+    for (const store of this.projectionStores.values()) store.beginGeneration()
     this.listMutations = null
     this.listInflight = null
     void this.refreshList()
@@ -822,6 +859,7 @@ export class SessionManager {
         && prev.origin === entry.origin && prev.title === entry.title && prev.depth === entry.depth
         && prev.formatStatus === entry.formatStatus
         && prev.projectionValues === entry.projectionValues
+        && prev.projections === entry.projections
       ) return prev
       this.entryCache.set(entry.sessionId, entry)
       return entry

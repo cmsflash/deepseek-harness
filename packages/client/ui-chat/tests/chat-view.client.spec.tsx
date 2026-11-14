@@ -102,6 +102,8 @@ function sessionSnapshot(overrides: Partial<TestSessionSnapshot> = {}): TestSess
     running: false,
     removed: false,
     openState: 'open',
+    unconfirmed: false,
+    incompleteCopy: false,
     openError: null,
     hasMore: false,
     loadingOlder: false,
@@ -444,6 +446,7 @@ function makeHarness(
   const foldedReplies = createSnapshotStore<FoldedReplies>('all')
   const performanceUsage = createSnapshotStore<'compact' | 'detailed'>('detailed')
   const originRenderer = createSnapshotStore<UserChainState>({ renderer: undefined })
+  const offline = createSnapshotStore(false)
   const t = makeTranslate(zh, commonZh)
   const toolOwners: ToolOwner[] = []
   const usePerformanceUsage = bindSnapshotSelector(performanceUsage)
@@ -538,6 +541,7 @@ function makeHarness(
     useInteractionIds: bindSnapshotSelector(createSnapshotStore<readonly string[]>([])),
     dispatchInteraction: () => null,
     usePresentation: bindSnapshotSelector(derivePresentationPolicy(transcriptView, collapseTiming, foldedReplies)),
+    useOffline: bindSnapshotSelector(offline),
     // The fixture implements the concrete flow dispatch behind the generic slot signature.
     renderSlot: renderSlot as ChatViewSlotProps['renderSlot'],
     SessionProvider: SessionProviderStub,
@@ -578,6 +582,7 @@ function makeHarness(
   return {
     set, setSession: session.set, setChat: chatSource.set, ChatView, props,
     setConnection: (state: ConnectionState) => { connection.set(state) },
+    setOffline: (value: boolean) => { offline.set(value) },
     openFile, openUserFile, loadOlder, loadThrough, expandTurn, openView,
     setOutline: (value: unknown) => { outlineValue = value },
     chatScroll, forkAt, toolOwners,
@@ -4483,6 +4488,65 @@ describe('ChatView', () => {
     }
   })
 
+  it('keeps a restored semantic row still through a later reflow until the reader acts', () => {
+    let notify: (() => void) | undefined
+    const BaseObserver = ResizeObserver
+    class ResizeObserverStub extends BaseObserver {
+      private readonly onResize: () => void
+
+      constructor(callback: ResizeObserverCallback) {
+        super(callback)
+        this.onResize = () => { callback([], this) }
+      }
+
+      override observe(element: Element): void {
+        super.observe(element)
+        if (element.closest('nav') === null) notify = this.onResize
+      }
+    }
+    vi.stubGlobal('ResizeObserver', ResizeObserverStub)
+    const host = document.createElement('div')
+    host.setAttribute('data-conversation-scroll', '')
+    Object.defineProperty(host, 'scrollHeight', { value: 2000, writable: true, configurable: true })
+    Object.defineProperty(host, 'clientHeight', { value: 500, writable: true, configurable: true })
+    Object.defineProperty(host, 'scrollTop', { value: 0, writable: true, configurable: true })
+    document.body.appendChild(host)
+    let anchorOffset = 180
+    vi.spyOn(host, 'getBoundingClientRect').mockImplementation(() => ({ top: 0, bottom: 500 } as DOMRect))
+    const rect = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      if (this.dataset.chatAnchorKey === 'fixture:user:1') {
+        const anchorTop = anchorOffset - host.scrollTop
+        return { top: anchorTop, bottom: anchorTop + 40 } as DOMRect
+      }
+      return { top: 0, bottom: 40 } as DOMRect
+    })
+    try {
+      const h = makeHarness({ nodes: [user(1, 'q'), assistant(2, 'a')] })
+      const view = render(<h.ChatView {...h.props} />, { container: host })
+      readerScroll(host, 100)
+      view.rerender(<div />)
+      anchorOffset = 660
+      host.scrollTop = 0
+      view.rerender(<h.ChatView {...h.props} />)
+      expect(host.scrollTop).toBe(580)
+
+      // The rows above reflow after the remount, as when the content width is published late.
+      anchorOffset = 500
+      act(() => { notify?.() })
+      expect(host.scrollTop).toBe(420)
+      expect(h.chatScroll.read()).toMatchObject({ anchorKey: 'fixture:user:1', anchorTop: 80, scrollTop: 420 })
+
+      // A reader gesture releases the restored row.
+      fireEvent.wheel(host)
+      anchorOffset = 400
+      act(() => { notify?.() })
+      expect(host.scrollTop).toBe(420)
+    } finally {
+      rect.mockRestore()
+      host.remove()
+    }
+  })
+
   it('normalizes a semantic restore clamped to the bottom before an immediate remount', () => {
     const host = document.createElement('div')
     host.setAttribute('data-conversation-scroll', '')
@@ -4559,6 +4623,28 @@ describe('ChatView', () => {
     const loading = makeHarness({}, { openState: 'loading' })
     const lv = render(<loading.ChatView {...loading.props} />)
     expect(lv.getByText('载入历史…')).toBeTruthy()
+  })
+
+  it('shows a status notice above the transcript only while the page is offline', () => {
+    const h = makeHarness({ nodes: [user(1, 'hi')] })
+    const view = render(<h.ChatView {...h.props} />)
+    expect(view.queryByRole('status')).toBeNull()
+    act(() => { h.setOffline(true) })
+    const notice = view.getByRole('status')
+    expect(notice.textContent).toBe(zh['chat.offline'])
+    expect(notice.compareDocumentPosition(view.getByText('hi')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    act(() => { h.setOffline(false) })
+    expect(view.queryByRole('status')).toBeNull()
+  })
+
+  it('adds the incomplete-copy sentence to the offline notice while the window comes from a partial copy', () => {
+    const h = makeHarness({ nodes: [user(1, 'hi')] }, { unconfirmed: true, incompleteCopy: true })
+    const view = render(<h.ChatView {...h.props} />)
+    expect(view.queryByText(zh['chat.offlineIncomplete'])).toBeNull()
+    act(() => { h.setOffline(true) })
+    expect(view.getByRole('status').textContent).toBe(zh['chat.offline'] + zh['chat.offlineIncomplete'])
+    act(() => { h.setSession({ unconfirmed: false, incompleteCopy: false }) })
+    expect(view.getByRole('status').textContent).toBe(zh['chat.offline'])
   })
 
   it('renders command nodes as durable rows: settled text, error state, executing spinner, run-less soft-fall', () => {

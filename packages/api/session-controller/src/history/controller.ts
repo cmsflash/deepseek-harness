@@ -6,18 +6,25 @@ import type { SessionId, SessionEvent } from '@deepseek-ai/dsh-session'
 import type { SessionObservation } from '@deepseek-ai/dsh-session-query'
 import { RemoteError, remoteErrorOf } from '@deepseek-ai/dsh-typert-protocol'
 import {
-  DEFAULT_MAX_MESSAGES, paginate, pageRecords, entryFor, addressId, detailPage,
+  addressId, lineRecords, linkAtOf,
   validateHistoryWindow, validateHistoryInterval, validateExpandStepsRequest, validateAddress, rejectNotFound,
 } from '../history.ts'
-import { elidedEventsOfTurn } from '../step-collapse.ts'
-import { historyTurnUsage, type HistoryTurnUsage } from '../turn-usage.ts'
+import { DEFAULT_MAX_MESSAGES, paginate, pageRecords, entryFor, detailPage } from '../history-shared/paging.ts'
+import { elidedEventsOfTurn } from '../history-shared/step-collapse.ts'
+import { historyTurnUsage, type HistoryTurnUsage } from '../history-shared/turn-usage.ts'
 import { EventListener, ProjectionListener } from './listener.ts'
 import { SessionAssistantStreamsListener } from './assistant-stream.ts'
 import type {
   SessionEventFrame, SessionEventsPage, SessionPageRequest, SessionExpandStepsRequest, SessionExpandStepsValue,
   SessionObserveEventRequest, SessionProjectionsRequest, SessionProjectionFrame,
   SessionAddress, SessionProjectionBaseline, SessionProjectionValues, SessionProjectionsValue, SessionWaitOutput, SessionHistoryRecord,
+  SessionLineEntry,
 } from '../types.ts'
+
+/** A `history` page: interval reads under the `lines` option may also carry stored-line records. */
+type HistoryLinesPage = Omit<SessionEventsPage, 'records'> & {
+  readonly records: readonly (SessionHistoryRecord | SessionLineEntry)[]
+}
 
 
 /** Session snapshots do not share lifetime with passive subscriptions. */
@@ -245,7 +252,25 @@ export function validateObservationAddress(address: SessionAddress, observation:
 export function history(
   observation: SessionObservation,
   request: Omit<SessionPageRequest, 'address'> & { readonly maxMessages: number },
-): { readonly page: SessionEventsPage; readonly turnUsage: HistoryTurnUsage } {
+): { readonly page: SessionEventsPage; readonly turnUsage: HistoryTurnUsage }
+/**
+ * Convert a borrowed observation to one page, optionally serving exact-interval
+ * events as their stored lines (`lines`). Page mode never sends stored lines.
+ * @param observation - exact read cut owned by the caller.
+ * @param request - validated page window or exact interval head, step detail, and optional inclusive cut.
+ * @param options - wire encoding: `lines: true` records stored-line entries where the chain checks them.
+ * @returns a chronological page at the requested cut, and the turn accounting fold positioned at that cut.
+ */
+export function history(
+  observation: SessionObservation,
+  request: Omit<SessionPageRequest, 'address'> & { readonly maxMessages: number },
+  options: { readonly lines?: boolean },
+): { readonly page: HistoryLinesPage; readonly turnUsage: HistoryTurnUsage }
+export function history(
+  observation: SessionObservation,
+  request: Omit<SessionPageRequest, 'address'> & { readonly maxMessages: number },
+  options: { readonly lines?: boolean } = {},
+): { readonly page: HistoryLinesPage; readonly turnUsage: HistoryTurnUsage } {
   const cursor = request.throughSeq === undefined ? observation.cursor
     : request.throughSeq === -1 ? -1 : SessionSeq(request.throughSeq)
   if (cursor > observation.cursor) {
@@ -259,7 +284,13 @@ export function history(
     const events = scope.slice(request.fromSeq)
     const usage = historyTurnUsage(events, scope)
     return {
-      page: { cursor, records: pageRecords(events, usage.byEnd, observation.chain), hasMore: request.fromSeq > 0 },
+      page: {
+        cursor,
+        records: options.lines === true
+          ? lineRecords(events, usage.byEnd, observation.chain)
+          : pageRecords(events, usage.byEnd, linkAtOf(observation.chain)),
+        hasMore: request.fromSeq > 0,
+      },
       turnUsage: usage.continuation,
     }
   }
@@ -272,7 +303,11 @@ export function history(
   )
   const usage = historyTurnUsage(page.events, scope)
   return {
-    page: { cursor, ...detailPage(page.events, scope, request.stepDetail, usage.byEnd, observation.chain), hasMore: page.hasMore },
+    page: {
+      cursor,
+      ...detailPage(page.events, scope, request.stepDetail, usage.byEnd, linkAtOf(observation.chain)),
+      hasMore: page.hasMore,
+    },
     turnUsage: usage.continuation,
   }
 }

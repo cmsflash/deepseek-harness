@@ -116,6 +116,18 @@ export interface ClientRemote extends TypertClientRemote {
    * the latest one afterwards.
    */
   readonly $host: RemoteHostFacts
+  /** Whether calls are answered from the offline record because the Host is unreachable. */
+  readonly $offline: RemoteOfflineSnapshot
+}
+
+/**
+ * Observable whether the Client is answering from its offline record. The
+ * source keeps its identity, and `getSnapshot` returns the same value until the
+ * fact moves.
+ */
+export interface RemoteOfflineSnapshot {
+  getSnapshot(): boolean
+  subscribe(listener: () => void): () => void
 }
 
 /** The fixed Host facts exposed on `ctx.remote.$host`. */
@@ -153,6 +165,10 @@ class ClientRemoteService extends Service implements ClientRemote {
   private readonly events: ClientRemoteEvents | undefined
   private readonly replay: OfflineReplay | undefined
   private mutations = Promise.resolve()
+  private static readonly offlineFalse: RemoteOfflineSnapshot = {
+    getSnapshot: (): boolean => false,
+    subscribe: (): (() => void) => () => {},
+  }
 
   constructor(ctx: Context) {
     super(ctx, 'remote')
@@ -214,6 +230,10 @@ class ClientRemoteService extends Service implements ClientRemote {
       this.hostFacts = { home, isLoopback: this.connection.isLoopback }
     }
     return this.hostFacts
+  }
+
+  get $offline(): RemoteOfflineSnapshot {
+    return this.replay?.offline ?? ClientRemoteService.offlineFalse
   }
 
   async $mount(contribution: TypertRemoteContribution): ReturnType<TypertClientRemote['$mount']> {

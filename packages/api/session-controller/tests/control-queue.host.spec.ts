@@ -66,7 +66,7 @@ describe('Session control Inbox projection', () => {
     inbox.append('next-step', context)
 
     const abort = new AbortController()
-    const iterator = control.control(abort.signal)[Symbol.asyncIterator]()
+    const iterator = control.control({}, abort.signal)[Symbol.asyncIterator]()
     const opened = await iterator.next()
     expect(opened.value).toMatchObject({
       type: 'baseline',
@@ -100,7 +100,7 @@ describe('Session control Inbox projection', () => {
     const agent = await loop.create(SessionId('late-projection-queue'))
     const { inbox } = agent
     const abort = new AbortController()
-    const iterator = control.control(abort.signal)[Symbol.asyncIterator]()
+    const iterator = control.control({}, abort.signal)[Symbol.asyncIterator]()
     await iterator.next()
     const pending = message('late projection')
 
@@ -124,7 +124,7 @@ describe('Session control Inbox projection', () => {
     const cold = ctx.sessions.create(SessionId('cold-session'))
 
     const abort = new AbortController()
-    const iterator = control.control(abort.signal)[Symbol.asyncIterator]()
+    const iterator = control.control({}, abort.signal)[Symbol.asyncIterator]()
     const opened = await iterator.next()
     if (opened.done || opened.value.type !== 'baseline') throw new Error('missing baseline')
     expect(opened.value.value.projections[cold.id]?.values.inbox).toEqual({ 'next-turn': [], 'next-step': [] })
@@ -145,7 +145,7 @@ describe('Session control Inbox projection', () => {
     inbox.append('next-step', message('plain steering'))
 
     const abort = new AbortController()
-    const iterator = control.control(abort.signal)[Symbol.asyncIterator]()
+    const iterator = control.control({}, abort.signal)[Symbol.asyncIterator]()
     const opened = await iterator.next()
     if (opened.done || opened.value.type !== 'baseline') throw new Error('missing baseline')
     const inboxValue = opened.value.value.projections['queue-session' as SessionId]?.values.inbox as unknown as InboxState
@@ -159,7 +159,7 @@ describe('Session control Inbox projection', () => {
   it('publishes Inbox values for sessions without a live Agent', async () => {
     const { ctx, control } = await harness()
     const abort = new AbortController()
-    const iterator = control.control(abort.signal)[Symbol.asyncIterator]()
+    const iterator = control.control({}, abort.signal)[Symbol.asyncIterator]()
     await iterator.next()
     const session = ctx.sessions.create(SessionId('unattached-inbox'))
     const pending = message('unattached')
@@ -177,7 +177,7 @@ describe('Session control Inbox projection', () => {
   it('drops broadcasts after cancellation has ended its queue', async () => {
     const { control, inbox } = await harness()
     const abort = new AbortController()
-    const iterator = control.control(abort.signal)[Symbol.asyncIterator]()
+    const iterator = control.control({}, abort.signal)[Symbol.asyncIterator]()
     await iterator.next()
     const waiting = iterator.next()
     await Promise.resolve()
@@ -190,7 +190,7 @@ describe('Session control Inbox projection', () => {
 
   it('ends active streams on context disposal after flushing buffered frames', async () => {
     const { ctx, control, inbox } = await harness()
-    const iterator = control.control(new AbortController().signal)[Symbol.asyncIterator]()
+    const iterator = control.control({}, new AbortController().signal)[Symbol.asyncIterator]()
     await iterator.next()
     const first = message('first')
     const second = message('second')

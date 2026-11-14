@@ -151,7 +151,7 @@ describe('RemoteMock.remote stream proxies', () => {
     const mock = RemoteMock.create()
     const session = mock.remote.session
     const unary = session.control
-    expect(() => unary()).toThrow('no rule for session/control')
+    expect(() => unary({})).toThrow('no rule for session/control')
     expect(mock.log.unmatched()).toEqual([{ endpoint: 'session/control', mode: 'unary' }])
 
     mock.stream('session/control', frames([baseline])).stream('session/control')
@@ -160,11 +160,11 @@ describe('RemoteMock.remote stream proxies', () => {
     expect(stream).not.toBe(unary)
     expect(vi.isMockFunction(stream)).toBe(true)
     expect(session.control).toBe(stream)
-    const opened = stream()
+    const opened = stream({})
     mock.stream('session/control', frames([]))
     expect(session.control).toBe(stream)
     await expect(drain(opened)).resolves.toEqual([baseline])
-    await expect(drain(stream())).resolves.toEqual([])
+    await expect(drain(stream({}))).resolves.toEqual([])
     expect(unary).toHaveBeenCalledOnce()
     expect(stream).toHaveBeenCalledTimes(2)
     expect(mock.log.streams('session/control').map(entry => entry.state)).toEqual(['ended', 'ended'])
@@ -186,15 +186,15 @@ describe('RemoteMock.remote stream proxies', () => {
     })
     const control = mock.remote.session.control
     const request = { after: 7 }
-    const local = control(localController.signal)[Symbol.asyncIterator]()
+    const local = control({}, localController.signal)[Symbol.asyncIterator]()
     const wire = mock.rpc.open!('/api', 'session/control', { args: [request] }, wireController.signal)[Symbol.asyncIterator]()
     await expect(local.next()).resolves.toEqual({ value: baseline, done: false })
     await expect(wire.next()).resolves.toEqual({ value: baseline, done: false })
-    expect(control.mock.calls).toEqual([[localController.signal], [request, wireController.signal]])
-    expect(script.mock.calls.map(([args]) => args)).toEqual([[], [request]])
+    expect(control.mock.calls).toEqual([[{}, localController.signal], [request, wireController.signal]])
+    expect(script.mock.calls.map(([args]) => args)).toEqual([[{}], [request]])
     expect(signals).toHaveLength(2)
     expect(signals.map(signal => signal.aborted)).toEqual([false, false])
-    expect(mock.log.streams('session/control').map(entry => entry.args)).toEqual([[], [request]])
+    expect(mock.log.streams('session/control').map(entry => entry.args)).toEqual([[{}], [request]])
 
     const waiting = local.next()
     localController.abort()
@@ -210,14 +210,14 @@ describe('RemoteMock.remote stream proxies', () => {
     let openedSignal: AbortSignal | undefined
     const mock = RemoteMock.create().stream('session/control', (_args, stream) => { openedSignal = stream.signal })
     const control = mock.remote.session.control
-    const reader = control()[Symbol.asyncIterator]()
+    const reader = control({})[Symbol.asyncIterator]()
     onTestFinished(async () => { await reader.return!() })
     expect(openedSignal).toBeInstanceOf(AbortSignal)
     expect(openedSignal?.aborted).toBe(false)
     const waiting = reader.next()
     await reader.return!()
     await expect(waiting).resolves.toEqual({ value: undefined, done: true })
-    expect(control.mock.calls).toEqual([[]])
+    expect(control.mock.calls).toEqual([[{}]])
     expect(mock.log.streams('session/control')[0]?.state).toBe('cancelled')
   })
 
@@ -255,12 +255,12 @@ describe('RemoteMock.remote stream proxies', () => {
 
   it('requires an explicit stream script and keeps live failures observable by the consumer', async () => {
     const mock = RemoteMock.create().stream('session/control')
-    expect(() => mock.remote.session.control()).toThrow('no rule for session/control')
+    expect(() => mock.remote.session.control({})).toThrow('no rule for session/control')
     expect(mock.log.unmatched()).toEqual([{ endpoint: 'session/control', mode: 'stream' }])
     mock.stream('session/control', openStream())
     const controller = new AbortController()
     onTestFinished(() => { controller.abort() })
-    const reader = mock.remote.session.control(controller.signal)[Symbol.asyncIterator]()
+    const reader = mock.remote.session.control({}, controller.signal)[Symbol.asyncIterator]()
     const failure = new Error('stream disconnected')
     const pending = expect(reader.next()).rejects.toBe(failure)
     expect(mock.streams.fail('session/control', failure)).toBe(1)

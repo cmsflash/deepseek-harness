@@ -4,7 +4,7 @@
 
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { SessionProjectionSummaryValues } from '@deepseek-ai/dsh-session-projection/types'
-import type { SessionSummary } from '../../types.ts'
+import type { SessionProjectionHints, SessionSummary } from '../../types.ts'
 
 /** Host list summary enriched with the latest Session Controller title projection. */
 export interface TitledSessionSummary extends SessionSummary {
@@ -35,6 +35,8 @@ export interface SessionListEntry {
   /** Format classification supplied by the Host list. */
   formatStatus?: SessionSummary['formatStatus']
   cwd?: string
+  /** The Host row's projection hints as listed; `projectionValues` is what list consumers read. */
+  projections?: SessionProjectionHints
   /**
    * The row's summary projection values, never the full projection set; see
    * `TitledSessionSummary.projectionValues`.

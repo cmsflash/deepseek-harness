@@ -311,6 +311,23 @@
   }
 }
 
+.offline {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  flex: none;
+  padding: 6px calc(var(--dsh-composer-side-clearance) + 16px);
+  background: var(--dsw-alias-state-warn-tertiary);
+  color: var(--dsw-alias-state-warn-label);
+  font-size: var(--dsh-content-font-size-secondary, 13px);
+  line-height: calc(18px + var(--dsh-content-font-delta-secondary, 0px));
+  text-align: center;
+}
+
+.offlineIncomplete {
+  margin-inline-start: 0.25em;
+}
+
 .openError {
   color: var(--dsw-alias-state-error-primary);
   font-size: var(--dsh-content-font-size-secondary, 13px);

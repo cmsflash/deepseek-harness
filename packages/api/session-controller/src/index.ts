@@ -30,6 +30,7 @@ import { ApiSessionList } from './list.ts'
 import { buildModelCatalog, hasProviderApiKey } from './catalog.ts'
 import { SessionSkillCatalog } from './skill-catalog.ts'
 import { SessionMediaReferences } from './media-references.ts'
+import { SessionLinesRoute } from './lines-route.ts'
 import { ArchivedSessionGate } from './archived-session-gate.ts'
 import type {
   ModelCatalog,
@@ -40,6 +41,7 @@ import type {
   SessionCancelRequest,
   SessionCancelValue,
   SessionControlFrame,
+  SessionControlRequest,
   SessionCreateRequest,
   SessionCreateValue,
   SessionExpandStepsRequest,
@@ -227,6 +229,7 @@ export class SessionController extends TypertRemoteService {
     await this.listState.initialize()
     ctx.plugin(SessionFileReferences)
     ctx.plugin(SessionMediaReferences)
+    ctx.plugin(SessionLinesRoute)
     ctx.plugin(SessionSkillCatalog)
     // An archived Session, or a subagent descendant of one, runs no model step
     // until it is restored; what it still runs is stopped by the owners that
@@ -625,7 +628,10 @@ export class SessionController extends TypertRemoteService {
 
   /**
    * Follow one Session log from a snapshot, or from the end of a window the caller already holds.
-   * @param request - durable address, opening window, and an optional resume point naming the newest held event and its chain link.
+   * @param request - durable address, opening window, optional stored lines, and an optional resume
+   *   point naming the newest held event and its chain link. With `lines`, records of a `resumed`
+   *   opening and live event frames are stored lines wherever the Host checks them against its
+   *   Session log chain.
    * @param signal - cancellation owned by the Remote stream carrier.
    * @returns a complete opening snapshot, or a `resumed` opening holding only the
    *   events after the resume point, followed by gap-free durable event frames and
@@ -649,17 +655,25 @@ export class SessionController extends TypertRemoteService {
 
   /**
    * Stream a complete live-control baseline followed by replacement frames.
+   * @param request - Sessions the Client already holds.
    * @param signal - cancellation owned by the Remote stream carrier.
-   * @returns one complete baseline followed by live replacement frames.
+   * @returns one complete baseline, holding the Sessions the caller's checkpoints
+   *   do not cover and listing the retained ones by identity, followed by live
+   *   replacement frames.
    */
   @Remote({ mode: 'stream' })
-  async *control(signal: AbortSignal): AsyncIterable<SessionControlFrame> {
-    for await (const frame of this.controlState.control(signal)) {
+  async *control(request: SessionControlRequest, signal: AbortSignal): AsyncIterable<SessionControlFrame> {
+    for await (const frame of this.controlState.control(request, signal)) {
       switch (frame.type) {
         case 'baseline': {
           const projections = Object.fromEntries(Object.entries(frame.value.projections)
             .filter(([sessionId]) => this.ctx.remoteAccess.allows({ kind: 'session', id: sessionId as SessionId })))
-          yield { type: 'baseline', value: { ...frame.value, projections } }
+          const retained = frame.value.retained
+            ?.filter(sessionId => this.ctx.remoteAccess.allows({ kind: 'session', id: sessionId }))
+          yield {
+            type: 'baseline',
+            value: { ...frame.value, projections, ...(retained === undefined ? {} : { retained }) },
+          }
           break
         }
         case 'projection':

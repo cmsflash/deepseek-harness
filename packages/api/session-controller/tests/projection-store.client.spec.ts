@@ -102,6 +102,25 @@ describe('Session projection value semantics', () => {
     expect(store.get('test/marks')).toEqual({ marks: ['cached late'] })
   })
 
+  it('lets a persisted-checkpoint view of a new generation replace the values an earlier one sequenced', () => {
+    const store = new ProjectionValueStore()
+    store.apply('title', 'Frame title', SessionSeq(4))
+    store.applyCached({ title: 'First view', 'test/marks': { marks: ['first'] } })
+    expect(store.get('title')).toBe('Frame title')
+
+    store.beginGeneration()
+    store.applyCached({ title: 'Checkpoint title' })
+    expect(store.get('title')).toBe('Checkpoint title')
+    // The view is the complete statement about the Session: a key it omits no
+    // longer survives from the earlier view.
+    expect(store.get('test/marks')).toBeUndefined()
+
+    store.beginGeneration()
+    store.apply('title', 'Fresh frame', SessionSeq(9))
+    store.applyCached({ title: 'Older view' })
+    expect(store.get('title')).toBe('Fresh frame')
+  })
+
   it('every sequenced write outranks a cached row regardless of seq', () => {
     const store = new ProjectionValueStore()
     store.applyCached({ 'test/marks': { marks: ['cached'] }, title: 'Cached title', schedule: [] })

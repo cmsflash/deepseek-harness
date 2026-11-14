@@ -75,6 +75,8 @@ function bench(options: {
       : { address: { parentSessionId: options.parentSessionId, childSessionId: sessionId, mode: 'continuable' } },
     removed: false,
     openState: options.openState ?? 'open',
+    unconfirmed: false,
+    incompleteCopy: false,
     openError: null,
     hasMore: false,
     loadingOlder: false,

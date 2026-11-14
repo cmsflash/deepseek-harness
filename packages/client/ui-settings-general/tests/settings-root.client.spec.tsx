@@ -55,6 +55,7 @@ function mount({
   wide = true,
   dictionary = en,
   connectionState = 'connected',
+  offline = false,
   desktopUpdate = { failed: false, opening: false },
   onboardingActive = true,
   mainView = true,
@@ -72,6 +73,7 @@ function mount({
   wide?: boolean
   dictionary?: typeof en | typeof zh
   connectionState?: ConnectionSnapshot
+  offline?: boolean
   desktopUpdate?: DesktopUpdateView
   onboardingActive?: boolean
   mainView?: boolean
@@ -82,6 +84,7 @@ function mount({
   // plays a ledger change through the same observable contract.
   let current = rows
   let currentConnectionState = connectionState
+  let currentOffline = offline
   const listeners = new Set<() => void>()
   const connectionListeners = new Set<() => void>()
   const reconnect = vi.fn()
@@ -130,6 +133,15 @@ function mount({
       }, [])
       return select(currentConnectionState)
     },
+    useOffline: (select) => {
+      const [, force] = useState(0)
+      useEffect(() => {
+        const listener = () => { force(n => n + 1) }
+        connectionListeners.add(listener)
+        return () => { connectionListeners.delete(listener) }
+      }, [])
+      return select(currentOffline)
+    },
     useOnboardingSteps: select => select(steps),
     useSections: (select) => {
       const [, force] = useState(0)
@@ -155,6 +167,12 @@ function mount({
       for (const fn of [...connectionListeners]) fn()
     })
   }
+  const setOffline = (next: boolean) => {
+    act(() => {
+      currentOffline = next
+      for (const fn of [...connectionListeners]) fn()
+    })
+  }
   const setDesktopUpdate = (next: DesktopUpdateView) => {
     desktopUpdate = next
     view.rerender(<SettingsRoot {...props} />)
@@ -170,7 +188,10 @@ function mount({
     act(() => { sessions.byId[activeId] = { ...session, blank: next } })
     view.rerender(<SettingsRoot {...props} />)
   }
-  return { view, renderSlot, bump, listeners, reconnect, setConnectionState, setDesktopUpdate, setShortcuts, setOnboardingActive }
+  return {
+    view, renderSlot, bump, listeners, reconnect, setConnectionState, setOffline, setDesktopUpdate, setShortcuts,
+    setOnboardingActive,
+  }
 }
 
 function openPanel() {
@@ -277,6 +298,32 @@ describe('SettingsRoot trigger', () => {
     act(() => { vi.advanceTimersByTime(2_000) })
     act(() => { vi.advanceTimersByTime(150) })
     expect(screen.queryByRole('status')).toBeNull()
+  })
+
+  it('shows a persistent Offline pill over a connected state while the page answers from its record', () => {
+    vi.useFakeTimers()
+    const mounted = mount({ offline: true })
+    const pill = screen.getByRole('button', { name: 'Offline, reconnect now' })
+    expect(pill.textContent).toContain('Offline')
+    expect(screen.queryByText('Connected')).toBeNull()
+    act(() => { vi.advanceTimersByTime(10_000) })
+    expect(screen.getByRole('button', { name: 'Offline, reconnect now' })).toBeTruthy()
+    fireEvent.click(pill)
+    expect(mounted.reconnect).toHaveBeenCalledOnce()
+
+    mounted.setConnectionState('connecting')
+    expect(screen.getByRole('button', { name: 'Offline, reconnect now' })).toBeTruthy()
+    expect(screen.queryByText('Reconnecting')).toBeNull()
+
+    mounted.setOffline(false)
+    mounted.setConnectionState('connected')
+    act(() => { vi.advanceTimersByTime(800) })
+    expect(screen.queryByRole('button', { name: 'Offline, reconnect now' })).toBeNull()
+  })
+
+  it('names the Offline pill in the page locale', () => {
+    mount({ offline: true, dictionary: zh })
+    expect(screen.getByRole('button', { name: '离线，点击重新连接' }).textContent).toContain('离线')
   })
 
   it('keeps the reconnect indicator out of the collapsed rail', () => {

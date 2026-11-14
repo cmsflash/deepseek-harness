@@ -20,7 +20,7 @@ Session 格式 V3 使用一种规范事件信封。每个 `system/message`、`us
 
 [核心 Session](../../../../packages/core/session/src/surface.ts)负责事件本地的位置、请求头空字段与工具错误规则，其 surface 管理器负责需要事件日志的关系。seed、append 与恢复会在接纳事件前应用这些规则。它们不会为插件自有载荷创建通用 schema，也不会提前展开嵌入式提供方 stream。
 
-通用 Gateway 客户端返回未经校验的原始输出。因此，现有 [SessionEventStream](../../../../packages/api/session-controller/src/client/transport.ts) 会在发布前检查 follow 快照、实时持久条目与历史页。其私有[协议事件检查器](../../../../packages/api/session-controller/src/client/session-wire-event.ts)验证精确信封，并将事件本地规则委托给可在浏览器中使用的核心校验器。它不添加通用 Gateway schema，也不校验无关插件载荷。surface 成员关系与来源是否存在仍由 Host 负责，因为浏览器窗口可能未包含较早事件。
+通用 Gateway 客户端返回未经校验的原始输出。因此，现有 [SessionEventStream](../../../../packages/api/session-controller/src/client/transport.ts) 会在发布前检查 follow 快照、实时持久条目与历史页。其私有[协议事件检查器](../../../../packages/api/session-controller/src/history-shared/wire-event.ts)验证精确信封，并将事件本地规则委托给可在浏览器中使用的核心校验器。它不添加通用 Gateway schema，也不校验无关插件载荷。surface 成员关系与来源是否存在仍由 Host 负责，因为浏览器窗口可能未包含较早事件。
 
 ### 已发布 V2 到 V3 的转换
 

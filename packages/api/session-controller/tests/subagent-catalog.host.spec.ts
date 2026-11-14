@@ -69,7 +69,7 @@ describe('SessionController subagent catalog', () => {
   it('pushes complete catalog values through the shared control stream', async () => {
     const { ctx, controller } = await bench()
     const signal = new AbortController()
-    const stream = controller.control(signal.signal)[Symbol.asyncIterator]()
+    const stream = controller.control({}, signal.signal)[Symbol.asyncIterator]()
     try {
       await stream.next()
       const parent = ctx.sessions.create(PARENT, { meta: { createdAt: 7, cwd: '/workspace' } })

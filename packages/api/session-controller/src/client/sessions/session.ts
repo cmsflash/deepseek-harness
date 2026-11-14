@@ -10,12 +10,19 @@ import type { UserMessage } from '@deepseek-ai/dsh-llm/types'
 import { SessionLogOffset, SessionSeq, type SessionId } from '@deepseek-ai/dsh-session/types'
 import { SessionEventStream } from '../transport.ts'
 import type { ClientSessionPageRequest, SessionJournalChange } from '../transport.ts'
-import { historyInteriorEntries, historyPageFirstSeq } from './history-records.ts'
+import { historyEntries, historyInteriorEntries, historyPageFirstSeq, shareLocalHeaders } from './history-records.ts'
+import type { JsonValue } from '@deepseek-ai/dsh-util-values'
+import { brandString } from '@deepseek-ai/dsh-brand'
+import type {
+  LocalHistoryPage, LocalHistoryRecord, SessionHistorySource,
+} from '../contract/history-source.ts'
+import { scheduleIdle } from './schedule.ts'
 import type {
   PromptContentPart,
   QueueAction,
   SessionAddress,
   SessionAssistantStreamBaseline,
+  SessionChainLink,
   SessionHistoryRecord,
   SessionProjectionBaseline,
   SessionRequestId,
@@ -65,6 +72,9 @@ export const COLLAPSED_PAGE_MESSAGES = 300
 /** Turn-aligned window: at least 50 messages and two Turn starts, capped at 500 messages. */
 const HISTORY_PAGE_OPTIONS = { maxMessages: 500, turnWindow: { minMessages: PAGE_MESSAGES, minTurns: 2 } }
 
+/** Cap of one requestIdleCallback measurement slice, per the memory plan's idle budget. */
+const MEASURE_SLICE_MS = 5
+
 /** Minimum messages per page while a turn jump loops backwards. */
 export const JUMP_PAGE_MESSAGES = 200
 
@@ -76,7 +86,34 @@ const JUMP_PAGE_OPTIONS = {
 interface PendingHistory {
   beforeSeq: SessionLogOffset
   hasMore: boolean
-  readonly pages: { readonly entries: readonly SessionEventLikeEntry[]; readonly digests: readonly StepDigest[] }[]
+  readonly pages: {
+    readonly entries: readonly SessionEventLikeEntry[]
+    readonly digests: readonly StepDigest[]
+    readonly coveredFrom: number
+  }[]
+}
+
+/** One contiguous window page the device memory budget tracks. */
+export interface SessionWindowPage {
+  /** First seq the page covers, including events a collapsed record stands for. */
+  readonly from: number
+  /** Last seq the page covers. */
+  readonly to: number
+  /** Wall time of the reader's last view of the page; null while never viewed. */
+  viewedAt: number | null
+  /** Wall time {@link Session.loadOlder} or {@link Session.loadThrough} added the page; null for every other page. */
+  readonly loadedAt: number | null
+  /** Measured bytes of the page's event text; null until measured. */
+  bytes: number | null
+}
+
+/** Mutable bookkeeping behind one {@link SessionWindowPage}. */
+interface WindowPageData {
+  from: number
+  to: number
+  viewedAt: number | null
+  readonly loadedAt: number | null
+  bytes: number | null
 }
 
 /** Manager-owned observers of a Session object's local state edges. */
@@ -85,6 +122,11 @@ export interface SessionOptions {
   address?: SubagentAddress
   /** Whether the exact direct parent Agent is available in Host summaries; absent until known. */
   parentAvailable?: boolean
+  /**
+   * Local copy this Session reads history from before asking the Host. An
+   * addressed subagent never consults it: subagent Sessions are not copied.
+   */
+  historySource?: SessionHistorySource
   /**
    * Publish each accepted prompt to the Manager, including after this Session
    * object is replaced. Acceptance converts display state, but does not
@@ -173,6 +215,15 @@ export class Session implements SessionFace {
   private detailLoad: { readonly source: SessionEventStream; readonly promise: Promise<void> } | undefined
   private stepDetailError: RemoteFailure | null = null
   /**
+   * The window came from the local copy and no Host opening has confirmed it
+   * yet; the first remote change clears it.
+   */
+  private unconfirmed = false
+  /** The unconfirmed window came from a partial copy; cleared with {@link unconfirmed}. */
+  private incompleteCopy = false
+  /** One header object per distinct local `request/header` content held in this window. */
+  private readonly sharedHeaders = new Map<string, JsonValue>()
+  /**
    * Elided-step digests of the loaded window, by turn: the window's account of
    * what it does NOT hold. A turn drops out once {@link expandTurn} loads it.
    */
@@ -186,6 +237,19 @@ export class Session implements SessionFace {
   private readonly expanding = new Map<number, Promise<void>>()
   /** Published keys of {@link expanding}; replaced only when membership changes, so selectors keep identity. */
   private expandingTurns: ReadonlySet<number> = new Set()
+  /** Window pages, seq-ascending; rebuilt by window replacement and trimming, extended by live appends. */
+  private windowPages: WindowPageData[] = []
+  /** Entry event-text sizes; filled from local records on arrival and idle-time for the rest. */
+  private readonly entrySizes = new WeakMap<SessionEventLikeEntry, number>()
+  private measureQueue: SessionEventLikeEntry[] = []
+  private measureScheduled = false
+  /** The seq range the reader last reported through {@link markViewed}. */
+  private viewportRange: { readonly from: number; readonly to: number } | undefined
+  /**
+   * The held window a suspended follow resumes from, captured at
+   * {@link suspendFollow}; undefined while follow is live or never suspended.
+   */
+  private revival: { readonly last: number; readonly newest: SessionHistoryRecord } | undefined
 
   /**
    * Per-session projection value store (push model; see the session-projection
@@ -492,6 +556,200 @@ export class Session implements SessionFace {
     return promise
   }
 
+  /**
+   * Report the seq range the reader currently sees (see ISession). Pages the
+   * range intersects are stamped as viewed, which keeps them out of memory
+   * eviction, and the range becomes the Session's protected viewport.
+   * @param fromSeq - first seq of the visible range.
+   * @param toSeq - last seq of the visible range.
+   */
+  markViewed(fromSeq: SessionSeq, toSeq: SessionSeq): void {
+    this.viewportRange = { from: fromSeq, to: toSeq }
+    const viewedAt = Date.now()
+    for (const page of this.windowPages) {
+      if (page.viewedAt !== viewedAt && page.to >= fromSeq && page.from <= toSeq) page.viewedAt = viewedAt
+    }
+  }
+
+  /**
+   * Window pages with their last-view stamps, for the device memory budget.
+   * @returns every window page as a copy, in order.
+   */
+  pages(): readonly SessionWindowPage[] {
+    return this.windowPages.map(page => ({ ...page }))
+  }
+
+  /**
+   * Seq range the reader last reported viewing.
+   * @returns the last reported viewport range, or undefined before any report.
+   */
+  viewedRange(): { readonly from: number; readonly to: number } | undefined {
+    return this.viewportRange
+  }
+
+  /**
+   * Sum of event-text bytes the window holds, from local record sizes and
+   * idle-time measurements; unmeasured entries contribute zero until measured.
+   * @returns the measured total.
+   */
+  bytes(): number {
+    const stale: WindowPageData[] = []
+    let cached = 0
+    for (const page of this.windowPages) {
+      if (page.bytes === null) stale.push(page)
+      else cached += page.bytes
+    }
+    const sums = stale.length === 0 ? [] : this.measureFromEntries(stale)
+    let measured = 0
+    for (const [index, page] of stale.entries()) {
+      const sum = sums[index] ?? 0
+      measured += sum
+      // A page consumes a cache only once every queued entry measurement has
+      // landed, so an early read cannot freeze a partial sum.
+      if (this.measureQueue.length === 0) page.bytes = sum
+    }
+    return cached + measured
+  }
+
+  /**
+   * Drop the oldest pages, moving the window's head forward. Reads become
+   * locally reloadable (`hasMore` turns true) and the next {@link loadOlder}
+   * pages back from the new head; digests whose whole step is gone are
+   * dropped with them. A running older-history load, step expansion or
+   * full-history reload blocks trimming: each would write records from below
+   * the new head back into the window.
+   * @param pageCount - number of oldest pages to drop.
+   * @returns whether any page was dropped.
+   */
+  trimHead(pageCount: number): boolean {
+    if (pageCount <= 0 || this.openState !== 'open') return false
+    if (this.loadingOlder || this.expanding.size > 0 || this.detailLoad !== undefined) return false
+    const removed = this.windowPages.slice(0, pageCount)
+    const last = removed.at(-1)
+    if (last === undefined) return false
+    const kept = this.windowPages.slice(pageCount)
+    const nextBase = kept[0] === undefined ? SessionLogOffset(last.to + 1) : SessionLogOffset(kept[0].from)
+    this.windowPages = kept
+    this.events?.dropBefore(nextBase)
+    this.digests = dropDigestsBefore(this.digests, nextBase)
+    this.accounts = dropDigestsBefore(this.accounts, nextBase)
+    const entries = this.eventSource.getSnapshot().entries.filter(entry =>
+      entry.type !== 'event' || entryCoveredLastSeq(entry) >= nextBase,
+    )
+    this.baseSeq = nextBase
+    this.hasMore = true
+    this.clearMeasureQueue()
+    this.eventSource.replace(entries, true)
+    this.notifier.markDirty()
+    return true
+  }
+
+  // ---- Page accounting ----
+
+  /**
+   * Sum every stale page's entries' known sizes, one window pass.
+   * @param stale - pages whose cached bytes are unknown, seq-ascending.
+   * @returns each page's sum, in the given order.
+   */
+  private measureFromEntries(stale: readonly WindowPageData[]): number[] {
+    const entries = this.eventSource.getSnapshot().entries
+    const sums: number[] = Array.from({ length: stale.length }, () => 0)
+    let next = 0
+    for (const entry of entries) {
+      const seq = Math.floor(entry.event.seq)
+      while (next < stale.length - 1 && (stale[next]?.to ?? seq) < seq) next += 1
+      const index = Math.min(next, stale.length - 1)
+      const page = stale[index]
+      if (page === undefined || seq < page.from) continue
+      sums[index] = (sums[index] ?? 0) + (this.entrySizes.get(entry) ?? 0)
+    }
+    return sums
+  }
+
+  /**
+   * Fill entry sizes for the entries that enter the window: local records'
+   * stored sizes immediately, every other entry measured at idle time.
+   * @param entries - durable or transient entries about to be published.
+   */
+  private admitEntries(entries: readonly SessionEventLikeEntry[]): void {
+    for (const entry of entries) this.admitEntry(entry)
+  }
+
+  private admitEntry(entry: SessionEventLikeEntry): void {
+    if (this.entrySizes.has(entry)) return
+    const bytes = localBytesOf(entry)
+    if (bytes !== undefined) {
+      this.entrySizes.set(entry, bytes)
+      return
+    }
+    this.measureQueue.push(entry)
+    this.scheduleMeasure()
+  }
+
+  private scheduleMeasure(): void {
+    if (this.measureScheduled) return
+    this.measureScheduled = true
+    scheduleIdle(() => {
+      this.measureScheduled = false
+      const startedAt = Date.now()
+      while (this.measureQueue.length > 0 && Date.now() - startedAt < MEASURE_SLICE_MS) {
+        const entry = this.measureQueue.shift()
+        if (entry === undefined || this.entrySizes.has(entry)) continue
+        this.entrySizes.set(entry, JSON.stringify(entry.event).length)
+      }
+      if (this.measureQueue.length > 0) this.scheduleMeasure()
+    })
+  }
+
+  private clearMeasureQueue(): void {
+    this.measureQueue = []
+    this.measureScheduled = false
+  }
+
+  /** Invalidate byte caches of pages the spliced-in or replaced entries changed. */
+  private invalidateEntryBytes(entries: readonly SessionEventLikeEntry[]): void {
+    const first = entries[0]
+    const last = entries.at(-1)
+    if (first === undefined || last === undefined) return
+    const from = Math.floor(first.event.seq)
+    const to = Math.floor(last.event.seq)
+    for (const page of this.windowPages) {
+      if (page.to >= from && page.from <= to) page.bytes = null
+    }
+  }
+
+  /** Invalidate the newest page's byte cache; every live fold change happens there. */
+  private invalidateTailPage(): void {
+    const last = this.windowPages.at(-1)
+    if (last !== undefined) last.bytes = null
+  }
+
+  /** Drop all memory accounting; the next publication rebuilds pages without history. */
+  private resetMemoryTracking(): void {
+    this.windowPages = []
+    this.viewportRange = undefined
+    this.revival = undefined
+    this.clearMeasureQueue()
+  }
+
+  /** Grow the newest page to cover one appended durable event. */
+  private extendTailPage(seq: number): void {
+    const last = this.windowPages.at(-1)
+    if (last === undefined) {
+      if (this.eventSource.getSnapshot().entries.length === 0) return
+      this.windowPages = [{ from: this.baseSeq, to: seq, viewedAt: null, loadedAt: null, bytes: null }]
+      return
+    }
+    if (seq > last.to) last.to = seq
+    last.bytes = null
+  }
+
+  /** Replace the page list with one page covering `from` through the window's covered tail. */
+  private resetPages(from: number, entries: readonly SessionEventLikeEntry[]): void {
+    const page = freshPage(from, entries, null)
+    this.windowPages = page === undefined ? [] : [page]
+  }
+
   private async expandTurnWindow(turn: number, events: SessionEventStream, generation: number): Promise<void> {
     while (this.events === events && generation === this.windowGeneration) {
       const requested = this.digests.get(turn)
@@ -517,7 +775,7 @@ export class Session implements SessionFace {
     const source = this.events
     if (source !== undefined && this.detailLoad?.source === source) return this.detailLoad.promise
     if (this.effectiveStepDetail() !== 'full' || this.openState !== 'open'
-      || source === undefined || this.digests.size === 0) return Promise.resolve()
+      || source === undefined || (this.digests.size === 0 && !this.fullHistoryStripped())) return Promise.resolve()
     this.stepDetailError = null
     const promise = this.completeHistoryWindow(source).finally(() => {
       if (this.detailLoad?.promise !== promise) return
@@ -531,12 +789,55 @@ export class Session implements SessionFace {
     return promise
   }
 
+  /** Whether the window holds an entry whose recorded stream was cut to its first-token prefix. */
+  private holdsStrippedEntry(): boolean {
+    return this.eventSource.getSnapshot().entries.some(
+      entry => entry.type === 'event' && entry.stripped === true,
+    )
+  }
+
+  /**
+   * Read the window's whole range from the local copy when it covers it.
+   * @param events - the stream whose published cursor bounds the read.
+   * @returns the local records, or `undefined` when the copy does not cover the range.
+   */
+  private async localFullRange(events: SessionEventStream): Promise<readonly LocalHistoryRecord[] | undefined> {
+    const source = this.options.historySource
+    if (source === undefined) return undefined
+    try {
+      return await source.interval(this.sessionId, {
+        fromSeq: this.baseSeq,
+        throughSeq: events.cursor(),
+        full: true,
+      })
+    } catch (error) {
+      console.error('[session-controller] local full history failed:', error)
+      return undefined
+    }
+  }
+
+  /** Whether full history is required and the window still holds a cut recorded stream. */
+  private fullHistoryStripped(): boolean {
+    return this.fullHistoryRequired && this.holdsStrippedEntry()
+  }
+
   private async completeHistoryWindow(events: SessionEventStream): Promise<void> {
     while (this.events === events && this.openState === 'open'
-      && this.effectiveStepDetail() === 'full' && this.digests.size > 0) {
+      && this.effectiveStepDetail() === 'full'
+      && (this.digests.size > 0 || this.fullHistoryStripped())) {
       const generation = this.windowGeneration
       const requested = this.digests
       const window = this.eventSource.getSnapshot().entries
+      const local = await this.localFullRange(events)
+      if (this.events !== events || generation !== this.windowGeneration) continue
+      if (local !== undefined) {
+        this.replaceWindowRecords(local)
+        continue
+      }
+      // The Host path splices interiors; it cannot rebuild an entry whose
+      // recorded stream was cut, so a window that only holds those waits for
+      // the next trigger instead of looping.
+      if (this.digests.size === 0) return
       let records: readonly SessionHistoryRecord[]
       try {
         records = await events.readFullRange(this.baseSeq)
@@ -553,6 +854,23 @@ export class Session implements SessionFace {
     }
   }
 
+  /**
+   * Replace the window with the full-detail records the local copy re-read for
+   * it. The window's bounds and accounts are kept; elided turns and cut
+   * recorded streams are gone, and reads stay full for this Session's lifetime.
+   */
+  private replaceWindowRecords(records: readonly LocalHistoryRecord[]): void {
+    this.windowGeneration++
+    this.expanding.clear()
+    if (this.expandingTurns.size > 0) this.expandingTurns = new Set()
+    const visible = this.assistantStream.replace(historyEntries(shareLocalHeaders(records, this.sharedHeaders)))
+    this.admitEntries(visible)
+    this.digests = new Map()
+    this.resetPages(this.baseSeq, visible)
+    this.eventSource.replace(visible, this.hasMore)
+    this.notifier.markDirty()
+  }
+
   private restoreStepHistory(
     records: readonly SessionHistoryRecord[],
     window: readonly SessionEventLikeEntry[],
@@ -564,7 +882,10 @@ export class Session implements SessionFace {
       if (digests.get(turn) === captured) digests.delete(turn)
     }
     this.digests = digests
-    this.eventSource.splice(historyInteriorEntries(records, window))
+    const interiors = historyInteriorEntries(records, window)
+    this.admitEntries(interiors)
+    this.invalidateEntryBytes(interiors)
+    this.eventSource.splice(interiors)
     this.notifier.markDirty()
   }
 
@@ -641,6 +962,7 @@ export class Session implements SessionFace {
             pending.hasMore,
             pending.beforeSeq,
             pages.flatMap(page => page.digests),
+            pages.map(page => ({ entries: page.entries, coveredFrom: page.coveredFrom })),
           )
         }
         this.notifier.markDirty()
@@ -664,6 +986,7 @@ export class Session implements SessionFace {
     this.baseSeq = SessionLogOffset(0)
     this.digests = new Map()
     this.accounts = new Map()
+    this.resetMemoryTracking()
     this.notifier.markDirty()
     await this.open()
   }
@@ -778,18 +1101,26 @@ export class Session implements SessionFace {
     this.openGeneration++
     const events = this.events
     this.events = undefined
+    this.resetMemoryTracking()
     await events?.dispose()
   }
 
   // ---- Private ----
 
-  /** @param generation - openGeneration at launch; stale passes cannot publish after replacement. */
-  private async doOpen(generation: number): Promise<void> {
-    this.openState = 'loading'
-    this.openError = null
-    this.notifier.markDirty()
+  /**
+   * Build the addressed journal stream wired to this Session's publication
+   * sinks; the guards bind the caller's open generation.
+   * @param generation - openGeneration owning the stream's publications.
+   * @returns the unstarted stream.
+   */
+  private buildEventStream(generation: number): SessionEventStream {
+    // A subagent child is never copied, so it always opens from the Host.
+    const historySource = this.address === undefined ? this.options.historySource : undefined
     const events = new SessionEventStream(this.remote, this.sessionAddress(), {
       stepDetail: () => this.effectiveStepDetail(),
+      sessionId: this.sessionId,
+      full: () => this.fullHistoryRequired,
+      ...(historySource === undefined ? {} : { source: historySource, sharedHeaders: this.sharedHeaders }),
       publish: (change) => {
         if (generation !== this.openGeneration || this.events !== events) return
         this.acceptEventChange(change)
@@ -798,9 +1129,41 @@ export class Session implements SessionFace {
         this.failEventStream(events, generation, error)
       },
     })
+    return events
+  }
+
+  /** @param generation - openGeneration at launch; stale passes cannot publish after replacement. */
+  private async doOpen(generation: number): Promise<void> {
+    this.openState = 'loading'
+    this.openError = null
+    this.revival = undefined
+    this.notifier.markDirty()
+    const events = this.buildEventStream(generation)
     this.events = events
     try {
-      await events.open(this.pageRequest(undefined, HISTORY_PAGE_OPTIONS))
+      const request = this.pageRequest(undefined, HISTORY_PAGE_OPTIONS)
+      let local: { readonly page: LocalHistoryPage; readonly cursor: number } | undefined
+      const historySource = this.address === undefined ? this.options.historySource : undefined
+      if (historySource !== undefined) {
+        historySource.opened(this.sessionId)
+        try {
+          const page = await historySource.opening(this.sessionId, { ...request, full: this.fullHistoryRequired })
+          if (generation !== this.openGeneration || this.events !== events) return
+          if (page !== undefined) local = { page, cursor: page.cursor }
+        } catch (error) {
+          console.error('[session-controller] local opening failed:', error)
+        }
+      }
+      this.unconfirmed = local !== undefined
+      this.incompleteCopy = local?.page.partial === true
+      await events.open(request, local === undefined ? undefined : {
+        page: {
+          records: shareLocalHeaders(local.page.records, this.sharedHeaders),
+          hasMore: local.page.hasMore,
+          ...(local.page.digests === undefined ? {} : { digests: local.page.digests }),
+        },
+        cursor: local.cursor,
+      })
       if (generation !== this.openGeneration || this.events !== events) return
       this.openState = 'open'
       await this.completeHistoryIfRequired()
@@ -815,8 +1178,66 @@ export class Session implements SessionFace {
     }
   }
 
+  /**
+   * Release the remote follow while keeping the open window, so a warm Session
+   * survives until its revival or disposal without live traffic.
+   */
+  async suspendFollow(): Promise<void> {
+    const events = this.events
+    if (events === undefined || this.openState !== 'open') return
+    const last = events.cursor()
+    const newest = this.newestHeldRecord()
+    this.events = undefined
+    this.revival = newest === undefined ? undefined : { last, newest }
+    await events.dispose()
+  }
+
+  /**
+   * Resume following a suspended warm Session from its held window: the first
+   * remote opening continues after the newest held record, or replaces the
+   * window when the Host cannot continue it. Older pages load from the
+   * window's current head, which eviction may have moved during suspension.
+   */
+  reviveFollow(): void {
+    if (this.events !== undefined || this.openState !== 'open') return
+    const revival = this.revival
+    if (revival === undefined) return
+    const events = this.buildEventStream(this.openGeneration)
+    this.events = events
+    events.adopt(this.pageRequest(undefined, HISTORY_PAGE_OPTIONS), { ...revival, first: this.baseSeq })
+  }
+
+  /**
+   * The held window's newest durable record with its Host chain link, the
+   * resume identity a revival offers its reopening stream.
+   */
+  private newestHeldRecord(): SessionHistoryRecord | undefined {
+    const entries = this.eventSource.getSnapshot().entries
+    for (let index = entries.length - 1; index >= 0; index--) {
+      const entry = entries[index]
+      if (entry === undefined || entry.type !== 'event') continue
+      const link = entryLinkOf(entry)
+      // The window entry is the record's stored form; the one-way structural
+      // step covers the JSON-value envelope like historyEntries' cast mirrors.
+      return {
+        type: 'event',
+        event: entry.event,
+        ...(link === undefined ? {} : { link }),
+      } as SessionHistoryRecord
+    }
+    return undefined
+  }
+
   /** Apply one contiguous journal update already reconciled by the Remote stream. */
   private acceptEventChange(change: SessionJournalChange): void {
+    const confirmed = change.type !== 'replace' || change.local !== true
+    if (this.unconfirmed && change.type !== 'prepend' && confirmed) {
+      this.unconfirmed = false
+      this.incompleteCopy = false
+      // A snapshot that replaces an unconfirmed local window means the copy's
+      // log disagrees with the Host's; the copy repair is queued.
+      if (change.type === 'replace') this.options.historySource?.diverged(this.sessionId)
+    }
     switch (change.type) {
       case 'replace':
         this.installWindow(
@@ -867,8 +1288,10 @@ export class Session implements SessionFace {
     if (this.expandingTurns.size > 0) this.expandingTurns = new Set()
     this.stepDetailError = null
     const visible = this.assistantStream.replace(entries, assistantStream)
+    this.admitEntries(visible)
     this.baseSeq = SessionLogOffset(coveredHead ?? entries[0]?.event.seq ?? 0)
     this.hasMore = hasMore
+    this.resetPages(this.baseSeq, visible)
     if (this.pendingHistory !== null) {
       this.pendingHistory.beforeSeq = this.baseSeq
       this.pendingHistory.hasMore = hasMore
@@ -887,10 +1310,42 @@ export class Session implements SessionFace {
   /**
    * Continue the held window with the events a resumed opening added after it.
    * The window keeps its head, older pages, collapsed-step digests and expanded
-   * turns. Its live Assistant rows are rebuilt from the opening's baseline,
-   * because the previous generation can end between an attempt's frames.
+   * turns. When nothing needs rebuilding — no settlement is staged, the window
+   * holds no transient row, and the opening carries no live attempt — the new
+   * entries are appended one by one, so a resumed reconnect that adds nothing
+   * re-renders nothing. Otherwise the window is rebuilt through the Assistant
+   * stream fold from the opening's baseline.
    */
   private resumeWindow(
+    entries: readonly SessionEventLikeEntry[],
+    projections?: ProjectionsBaseline,
+    assistantStream?: SessionAssistantStreamBaseline,
+  ): void {
+    const held = this.eventSource.getSnapshot().entries
+    if (assistantStream?.activeAttempt === undefined
+      && this.assistantStream.staged().length === 0
+      && !held.some(entry => entry.type === 'transient')) {
+      for (const [index, entry] of entries.entries()) {
+        const result = this.assistantStream.acceptDurable(entry as SessionLiveEventEntry)
+        if (result === undefined) {
+          // The entry is a settlement staged for an attempt whose live frames
+          // predate this opening; rebuild through the fold so it becomes visible.
+          this.resumeWindowFromFold(entries.slice(index), projections, assistantStream)
+          return
+        }
+        this.publishAssistantEntry(result)
+      }
+      if (entries.some(entry => entry.event.type === 'turn/start')) this.firstPromptPendingTurn = false
+      if (projections !== undefined) this.projections.seed(projections)
+      this.observeBaseline(entries, projections)
+      this.notifier.markDirty()
+      return
+    }
+    this.resumeWindowFromFold(entries, projections, assistantStream)
+  }
+
+  /** Rebuild the held window and its live Assistant rows from a resumed opening's baseline. */
+  private resumeWindowFromFold(
     entries: readonly SessionEventLikeEntry[],
     projections?: ProjectionsBaseline,
     assistantStream?: SessionAssistantStreamBaseline,
@@ -901,6 +1356,8 @@ export class Session implements SessionFace {
       ? held
       : [...held, ...staged].sort((left, right) => left.event.seq - right.event.seq)
     const visible = this.assistantStream.replace([...durable, ...entries], assistantStream)
+    this.admitEntries(visible)
+    this.resetPages(this.baseSeq, visible)
     if (entries.some(entry => entry.event.type === 'turn/start')) this.firstPromptPendingTurn = false
     if (projections !== undefined) this.projections.seed(projections)
     this.eventSource.replace(visible, this.hasMore)
@@ -937,22 +1394,30 @@ export class Session implements SessionFace {
       return
     }
     if (result?.type === 'settlement') {
+      this.admitEntry(result.entry)
       this.eventSource.settleAssistant(result.attemptId, result.entry)
+      this.invalidateTailPage()
       this.observeSubmissionEvent(result.entry.event)
       this.notifier.markDirty()
       return
     }
     if (result?.type === 'abandonment') {
       this.eventSource.settleAssistant(result.attemptId)
+      this.invalidateTailPage()
       this.notifier.markDirty()
       return
     }
     if (result?.type === 'publish') {
       const changed = this.appendLive(result.entry)
-      if (result.retireAttemptId !== undefined) this.eventSource.settleAssistant(result.retireAttemptId)
+      if (result.retireAttemptId !== undefined) {
+        this.eventSource.settleAssistant(result.retireAttemptId)
+        this.invalidateTailPage()
+      }
       if (changed || result.retireAttemptId !== undefined) this.notifier.markDirty()
     } else if (result?.type === 'transient') {
+      this.admitEntry(result.entry)
       this.eventSource.append(result.entry)
+      this.invalidateTailPage()
       this.notifier.markDirty()
     }
   }
@@ -963,17 +1428,30 @@ export class Session implements SessionFace {
     hasMore: boolean,
     coveredHead: number | undefined,
     digests?: readonly StepDigest[],
+    segments?: readonly { readonly entries: readonly SessionEventLikeEntry[]; readonly coveredFrom: number }[],
   ): void {
     const head = entries.length === 0 ? undefined : coveredHead ?? entries[0]?.event.seq
     if (this.pendingHistory !== null) {
       const pending = this.pendingHistory
       pending.beforeSeq = head === undefined ? pending.beforeSeq : SessionLogOffset(head)
       pending.hasMore = hasMore
-      pending.pages.push({ entries, digests: digests ?? [] })
+      pending.pages.push({ entries, digests: digests ?? [], coveredFrom: head ?? pending.beforeSeq })
       return
     }
     this.baseSeq = head === undefined ? this.baseSeq : SessionLogOffset(head)
     this.hasMore = hasMore
+    this.admitEntries(entries)
+    // A jump loop publishes one combined prepend; its queued segments keep the
+    // page granularity each fetched page carries.
+    const pageSegments = segments
+      ?? (entries.length > 0 && head !== undefined ? [{ entries, coveredFrom: head }] : [])
+    const fresh: WindowPageData[] = []
+    const loadedAt = Date.now()
+    for (const { entries: segmentEntries, coveredFrom: segmentHead } of pageSegments) {
+      const page = freshPage(segmentHead, segmentEntries, loadedAt)
+      if (page !== undefined) fresh.push(page)
+    }
+    if (fresh.length > 0) this.windowPages = [...fresh, ...this.windowPages]
     if (entries.length > 0 && digests !== undefined && digests.length > 0) {
       this.digests = mergeDigests(this.digests, digests)
       this.accounts = mergeDigests(this.accounts, digests)
@@ -1008,6 +1486,8 @@ export class Session implements SessionFace {
     const event = entry.event
     const awaitingFirstTurn = this.firstPromptPendingTurn
     if (event.type === 'turn/start') this.firstPromptPendingTurn = false
+    this.admitEntry(entry)
+    this.extendTailPage(event.seq)
     this.eventSource.append(entry)
     // After the feed append: the conversation assembly's animation frame is
     // registered by the feed subscribers above, so the echo-retirement frame
@@ -1171,6 +1651,8 @@ export class Session implements SessionFace {
         },
       removed: this.removed,
       openState: this.openState,
+      unconfirmed: this.unconfirmed,
+      incompleteCopy: this.incompleteCopy,
       openError: this.openError,
       hasMore: this.hasMore,
       loadingOlder: this.loadingOlder,
@@ -1225,6 +1707,77 @@ function mergeDigests(held: StepDigestsByTurn, added: readonly StepDigest[]): St
     merged.set(turn, [...byStep.values()].sort((left, right) => left.startSeq - right.startSeq))
   }
   return merged
+}
+
+/** Remove per-turn digests whose whole elided step lies below `base`, keeping the rest. */
+function dropDigestsBefore(held: StepDigestsByTurn, base: number): StepDigestsByTurn {
+  let changed = false
+  const kept = new Map<number, StepDigest[]>()
+  for (const [turn, digests] of held) {
+    const remaining = digests.filter(digest => (digest.endSeq ?? digest.startSeq) >= base)
+    if (remaining.length !== digests.length) changed = true
+    if (remaining.length > 0) kept.set(turn, remaining)
+    else changed = true
+  }
+  return changed ? kept : held
+}
+
+/**
+ * Event-text bytes a record carries from the local copy, when it arrived with
+ * its recorded size.
+ * @param entry - a history or live entry.
+ * @returns the record's byte size, or undefined when the size is Host-side.
+ */
+function localBytesOf(entry: SessionEventLikeEntry): number | undefined {
+  if (entry.type !== 'event' || !('bytes' in entry)) return undefined
+  const bytes = entry.bytes
+  return typeof bytes === 'number' && Number.isSafeInteger(bytes) && bytes >= 0 ? bytes : undefined
+}
+
+/** First inclusive seq an entry occupies; transient rows round into their durable page. */
+function eventFirstSeq(entry: SessionEventLikeEntry): number {
+  return Math.floor(entry.event.seq)
+}
+
+/** Last inclusive seq an entry's event or coverage stands for. */
+function entryCoveredLastSeq(entry: SessionEventLikeEntry): number {
+  if (entry.type !== 'event') return eventFirstSeq(entry)
+  return entry.covers?.to ?? entry.event.seq
+}
+
+/**
+ * Build one page covering `from` through the entries' covered tail.
+ * @param from - first covered seq, including events a collapsed record stands for.
+ * @param entries - the entries the page holds, ascending.
+ * @param loadedAt - wall time an older-history load added the page, or null.
+ * @returns the page, or undefined when the entries hold no durable event.
+ */
+function freshPage(
+  from: number,
+  entries: readonly SessionEventLikeEntry[],
+  loadedAt: number | null,
+): WindowPageData | undefined {
+  let last: SessionEventLikeEntry | undefined
+  for (let index = entries.length - 1; index >= 0; index--) {
+    const entry = entries[index]
+    if (entry !== undefined && entry.type === 'event') {
+      last = entry
+      break
+    }
+  }
+  if (last === undefined) return undefined
+  return { from, to: entryCoveredLastSeq(last), viewedAt: null, loadedAt, bytes: null }
+}
+
+/**
+ * The chain link an entry arrived with, which carries only at runtime.
+ * @param entry - a history entry.
+ * @returns the Host's link for the entry's covered tail, or undefined without one.
+ */
+function entryLinkOf(entry: SessionEventLikeEntry): SessionChainLink | undefined {
+  if (entry.type !== 'event' || !('link' in entry)) return undefined
+  const link = entry.link
+  return typeof link === 'string' && /^[0-9a-f]{64}$/.test(link) ? brandString<SessionChainLink>(link) : undefined
 }
 
 /** Run one callback on the next animation frame, or a macrotask where no frame clock exists. */

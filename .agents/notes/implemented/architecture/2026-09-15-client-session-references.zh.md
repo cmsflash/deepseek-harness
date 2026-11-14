@@ -219,7 +219,7 @@ Gateway 持有本地引用，直到 handler 使用与回复结算均结束。Con
 
 使用方必须把引用保留到真实结束点；在活跃 Client 根内，未释放引用仍会泄漏。最后释放后再次 retain 会创建新一代，并可能重新打开历史。来源计数描述所有权，不描述可见性、任务成功或操作权限；以主标记作为业务兜底会重新引入隐式 current-Session 耦合。
 
-最后一份 reference 释放后，未持久化的 binding 自有状态会被丢弃，包括已加载的历史页、Chat 滚动锚点、预览换行、Files 展开状态、composer 附件和 undo 历史。只有持久化的 Session-keyed Store 值或由另一份 reference 保活的 generation 能跨视图切换保留；runtime 不会清除这些持久值。
+最后一份 reference 释放后，未持久化的 binding 自有状态会被丢弃，包括 Chat 滚动锚点、预览换行、Files 展开状态、composer 附件和 undo 历史。已加载的历史页也会被丢弃，除非注册了本地副本历史源：此时 [warm 池](2026-11-07-browser-local-session-copy.zh.md)会保留普通、已打开的 Session 对象及其窗口和 follow，直到内存预算将其淘汰，之后的获取为它绑定新的 generation。只有持久化的 Session-keyed Store 值或由另一份 reference 保活的 generation 能跨视图切换保留；runtime 不会清除这些持久值。
 
 每次公开 `retain` 都会启动该 generation 共享的首次历史打开，包括普通 Session 重命名所用的临时引用。Fork 标题设置直接发送 rename 并应用返回的投影，不获取 Client 引用，也不读取历史。因此，仅修改元数据的 fork 操作不会创建列表临时行或切换主视图。
 

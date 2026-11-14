@@ -655,23 +655,84 @@ describe('list lifecycle', () => {
     expect(items.find(item => item.sessionId === S2)?.title).toBe('Pushed')
   })
 
-  it('discards the previous generation title before accepting its lower-seq replay', async ({ mock, remote }) => {
+  it('reports the linked cuts it holds and keeps the Sessions a new control baseline leaves out', async ({ mock, remote }) => {
+    const link = (seq: number) => String(seq).padStart(64, '0') as never
+    remote.session.list.mockResolvedValue(ok({
+      items: [summary(S1), summary(S2, { updatedAt: 200 })] as never[],
+    }))
+    const manager = makeManager(mock, remote)
+    try {
+      await manager.refreshList()
+      manager.handleControlFrame({
+        type: 'baseline',
+        value: {
+          projections: {
+            [S1]: { asOfSeq: 2, values: { title: 'Held' }, link: link(2) },
+            [S2]: { asOfSeq: 5, values: { title: 'Unlinked' } },
+          },
+        },
+      })
+      // Only a linked cut can be reported back: an unlinked block says nothing
+      // the Host could compare.
+      expect(manager.controlKnown()).toEqual([{ sessionId: S1, asOfSeq: 2, link: link(2) }])
+
+      manager.handleControlFrame({ type: 'baseline', value: { projections: {}, retained: [S1] } })
+      expect(manager.controlKnown()).toEqual([{ sessionId: S1, asOfSeq: 2, link: link(2) }])
+      const items = manager.getListSnapshot().items
+      expect(items.find(item => item.sessionId === S1)?.title).toBe('Held')
+      // Being absent from a baseline is not evidence that the Session is gone:
+      // a Host that restarted holds nothing until something activates it.
+      expect(items.find(item => item.sessionId === S2)?.title).toBe('Unlinked')
+    } finally {
+      await manager.dispose()
+    }
+  })
+
+  it('keeps a thread projections through a restarted Host that lists nothing', async ({ mock, remote }) => {
     remote.session.list.mockResolvedValue(ok({ items: [summary(S1)] as never[] }))
     const manager = makeManager(mock, remote)
     try {
       await manager.refreshList()
-      manager.handleControlFrame({ type: 'projection', sessionId: S1, key: 'title', value: 'Unflushed', seq: 4 })
-
-      manager.handleConnected()
-      await manager.refreshList()
-      expect(manager.getListSnapshot().items[0]?.title).toBeUndefined()
       manager.handleControlFrame({
         type: 'baseline',
         value: {
-          projections: { [S1]: { asOfSeq: 2, values: { title: 'Durable' } } },
+          projections: {
+            [S1]: { asOfSeq: 4, values: { title: 'Daily', subagentCatalog: [] }, link: 'd'.repeat(64) as never },
+          },
         },
       })
-      expect(manager.getListSnapshot().items[0]?.title).toBe('Durable')
+      expect(manager.getListSnapshot().items[0]?.title).toBe('Daily')
+
+      // The Host restarted: its first baseline lists and retains nothing until
+      // a follow activates a Session, and the values it sent before describe
+      // the same durable log.
+      manager.handleConnected()
+      manager.handleControlFrame({ type: 'baseline', value: { projections: {} } })
+      const held = manager.getListSnapshot().items.find(item => item.sessionId === S1)
+      expect(held?.title).toBe('Daily')
+      expect(held?.projectionValues).toMatchObject({ title: 'Daily', subagentCatalog: [] })
+    } finally {
+      await manager.dispose()
+    }
+  })
+
+  it('reseeds a Session the new baseline restates at another cut', async ({ mock, remote }) => {
+    remote.session.list.mockResolvedValue(ok({ items: [summary(S1)] as never[] }))
+    const manager = makeManager(mock, remote)
+    try {
+      await manager.refreshList()
+      manager.handleControlFrame({
+        type: 'baseline',
+        value: { projections: { [S1]: { asOfSeq: 2, values: { title: 'Old' }, link: 'a'.repeat(64) as never } } },
+      })
+      expect(manager.getListSnapshot().items[0]?.title).toBe('Old')
+
+      manager.handleControlFrame({
+        type: 'baseline',
+        value: { projections: { [S1]: { asOfSeq: 6, values: { title: 'New' }, link: 'b'.repeat(64) as never } } },
+      })
+      expect(manager.getListSnapshot().items[0]?.title).toBe('New')
+      expect(manager.controlKnown()).toEqual([{ sessionId: S1, asOfSeq: 6, link: 'b'.repeat(64) }])
     } finally {
       await manager.dispose()
     }

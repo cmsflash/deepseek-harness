@@ -1,38 +1,27 @@
-/** Shared Session history pagination, step detail, address validation and wire conversion. */
+/** Shared Session history address validation and chain-link conversion. */
 
 import { brandString } from '@deepseek-ai/dsh-brand'
-import {
-  isAppendSurfaceEvent,
-  SessionLogOffset,
-} from '@deepseek-ai/dsh-session'
 import type { SessionLogChain } from '@deepseek-ai/dsh-session-persistence'
 import type {
   SessionEvent,
   SessionHeader,
   SessionId,
   SessionLogOffset as SessionLogOffsetType,
-  SessionSeqCursor,
 } from '@deepseek-ai/dsh-session'
 import type { SessionObservation } from '@deepseek-ai/dsh-session-query'
 import type {} from '@deepseek-ai/dsh-subagent'
-import type { TurnTokenUsage } from '@deepseek-ai/dsh-token-meter/turn-usage'
 import { RemoteError } from '@deepseek-ai/dsh-typert-protocol'
-import { collapseSteps } from './step-collapse.ts'
+import type { TurnTokenUsage } from '@deepseek-ai/dsh-token-meter/turn-usage'
+import { DEFAULT_MAX_MESSAGES, entryFor } from './history-shared/paging.ts'
 import type {
   SessionAddress,
   SessionChainLink,
   SessionEventEntry,
   SessionExpandStepsRequest,
   SessionHistoryRecord,
+  SessionLineEntry,
   SessionPageRequest,
-  SessionStepDetail,
-  SessionWireEvent,
-  StepDigest,
 } from './types.ts'
-
-/** Message budget applied when a history request omits `maxMessages`. */
-export const DEFAULT_MAX_MESSAGES = 50
-const MESSAGE_TYPES = new Set(['user/message', 'assistant/message'])
 
 /**
  * Reject an invalid message budget or turn window.
@@ -171,71 +160,6 @@ export function rejectNotFound(address: SessionAddress): never {
 }
 
 /**
- * Cut one message-aligned backwards page from a contiguous event prefix.
- * @param events - contiguous events starting at seq 0.
- * @param beforeSeq - exclusive upper offset of an older page.
- * @param maxMessages - message budget.
- * @param throughSeq - inclusive log cut.
- * @param turnWindow - optional turn-boundary stop rule.
- * @returns the page events and whether older events remain.
- */
-export function paginate(
-  events: readonly SessionEvent[],
-  beforeSeq: SessionLogOffsetType | undefined,
-  maxMessages: number,
-  throughSeq: SessionSeqCursor,
-  turnWindow?: SessionPageRequest['turnWindow'],
-): { readonly events: SessionEvent[]; readonly hasMore: boolean } {
-  const end = SessionLogOffset(Math.min(throughSeq + 1, beforeSeq ?? throughSeq + 1))
-  let count = 0
-  let turns = 0
-  let cut = SessionLogOffset(0)
-  for (let index = end - 1; index >= 0; index--) {
-    const event = events[index] as SessionEvent
-    if (turnWindow !== undefined && event.type === 'turn/start') {
-      turns++
-      if (count >= turnWindow.minMessages && turns >= turnWindow.minTurns) {
-        cut = SessionLogOffset(index)
-        break
-      }
-    }
-    if (!MESSAGE_TYPES.has(event.type) || !isAppendSurfaceEvent(event)) continue
-    count++
-    const sources = event.sourceEventSeqs
-    let groupStart = event.seq
-    if (sources !== undefined) {
-      for (const source of sources) {
-        if (source < groupStart) groupStart = source
-      }
-    }
-    if (count >= maxMessages) {
-      cut = SessionLogOffset(groupStart)
-      break
-    }
-  }
-  return { events: events.slice(cut, end), hasMore: cut > 0 }
-}
-
-/**
- * Convert a committed event to its wire entry.
- * @param event - committed Session event.
- * @param turnUsage - whole-turn accounting for a `turn/end`; reads that do not compute it omit the field.
- * @param link - the event's Session log chain link, when the Host keeps a chain that covers it.
- * @returns the wire event entry.
- */
-export function entryFor(
-  event: SessionEvent, turnUsage?: TurnTokenUsage | null, link?: SessionChainLink,
-): SessionEventEntry {
-  return {
-    type: 'event',
-    // Session.append validates and freezes event data as JSON before publication.
-    event: event as unknown as SessionWireEvent,
-    ...event.type === 'turn/end' && turnUsage !== undefined ? { turnUsage } : {},
-    ...link === undefined ? {} : { link },
-  }
-}
-
-/**
  * Brand the observed log's chain link of one event position for the wire.
  * @param chain - the observed Session log chain, when the Host keeps one.
  * @param seq - event position the record stands for.
@@ -247,69 +171,74 @@ export function chainLink(chain: SessionLogChain | undefined, seq: number): Sess
 }
 
 /**
- * Encode one bounded logical page without changing its pagination cut.
- * @param events - page events.
- * @param usage - complete-turn accounting keyed by each served end sequence.
- * @param chain - the observed log's chain, whose link each record carries at its event.
- * @returns the wire records.
+ * Bind a chain to the position-to-link lookup shared history code takes.
+ * @param chain - the observed Session log chain, when the Host keeps one.
+ * @returns the lookup, or `undefined` without a chain.
  */
-export function pageRecords(
+export function linkAtOf(
+  chain: SessionLogChain | undefined,
+): ((seq: number) => SessionChainLink | undefined) | undefined {
+  if (chain === undefined) return undefined
+  return (seq) => {
+    const link = chain.linkAt(seq)
+    return link === undefined ? undefined : brandString<SessionChainLink>(link)
+  }
+}
+
+const WIRE_LINE_DECODER = new TextDecoder('utf-8', { fatal: true })
+
+/**
+ * Encode one event whose stored line the chain checked as a wire line entry, or
+ * as its event record when the stored bytes are not UTF-8.
+ * @param event - the event the line stands for.
+ * @param bytes - the checked stored line without its newline.
+ * @param link - the event's Session log chain link.
+ * @param usage - whole-turn accounting on a `turn/end`; `undefined` omits the field.
+ * @returns the line entry, or the event entry when the bytes cannot be sent as text.
+ */
+export function lineEntry(
+  event: SessionEvent,
+  bytes: Uint8Array,
+  link: SessionChainLink,
+  usage: TurnTokenUsage | null | undefined,
+): SessionLineEntry | SessionEventEntry {
+  let line: string | undefined
+  try {
+    line = WIRE_LINE_DECODER.decode(bytes)
+  } catch {
+    // Stored JSONL lines are UTF-8 text (JSON.stringify escapes lone surrogates), so a
+    // failed decode names bytes that were never a stored line of the log format.
+  }
+  if (line === undefined) return entryFor(event, usage, link)
+  return {
+    type: 'line',
+    seq: event.seq,
+    line,
+    link,
+    ...event.type === 'turn/end' && usage !== undefined ? { turnUsage: usage } : {},
+  }
+}
+
+/**
+ * Encode one exact interval's events as wire records, serving each event as its
+ * stored line when the chain checks the backend encoding, and as an event
+ * record otherwise.
+ * @param events - the interval's events, ascending by seq.
+ * @param usage - whole-turn accounting keyed by each served end sequence.
+ * @param chain - the observed Session log chain, when the Host keeps one.
+ * @returns one record per event, in event order.
+ */
+export function lineRecords(
   events: readonly SessionEvent[],
-  usage?: ReadonlyMap<number, TurnTokenUsage | null>,
-  chain?: SessionLogChain,
-): SessionHistoryRecord[] {
-  return events.map(event => entryFor(event, usage?.get(event.seq), chainLink(chain, event.seq)))
-}
-
-/**
- * Encode one paginated range at the requested step detail. Under `collapsed`,
- * elidable step interiors leave the records and return as digests; retention is
- * decided over `scope`, the whole log through the cut, so a turn split across
- * pages keeps the same steps whole on each. A page that would keep nothing (a
- * one-message page inside one elidable step) is served whole instead, so every
- * page carries at least one record.
- * @param page - the contiguous page events.
- * @param scope - every event through the cut.
- * @param detail - requested step detail; omitted means `full`.
- * @param usage - complete-turn accounting keyed by each served end sequence.
- * @param chain - the observed log's chain, whose link each record carries at the last event it stands for.
- * @returns the page records, plus digests when steps were elided.
- */
-export function detailPage(
-  page: readonly SessionEvent[],
-  scope: readonly SessionEvent[],
-  detail: SessionStepDetail | undefined,
   usage: ReadonlyMap<number, TurnTokenUsage | null>,
-  chain?: SessionLogChain,
-): { readonly records: SessionHistoryRecord[]; readonly digests?: readonly StepDigest[] } {
-  if (detail !== 'collapsed') return { records: pageRecords(page, usage, chain) }
-  const collapsed = collapseSteps(page, scope)
-  if (collapsed.digests.length === 0 || collapsed.events.length === 0) return { records: pageRecords(page, usage, chain) }
-  return { records: coveringRecords(page, collapsed.events, usage, chain), digests: collapsed.digests }
-}
-
-/**
- * Encode the kept events of a collapsed page so their inclusive ranges partition
- * the page's seq range: each record stands for the withheld events before it,
- * and the last record also for those after it.
- * @param page - the complete contiguous page the kept events were drawn from.
- * @param kept - the events the collapsed page serves, ascending by seq; non-empty.
- * @param usage - complete-turn accounting keyed by each served end sequence.
- * @param chain - the observed log's chain, whose link each record carries at the last event it stands for.
- * @returns records whose coverage joins end to end from the page's first seq to its last.
- */
-function coveringRecords(
-  page: readonly SessionEvent[],
-  kept: readonly SessionEvent[],
-  usage: ReadonlyMap<number, TurnTokenUsage | null>,
-  chain?: SessionLogChain,
-): SessionHistoryRecord[] {
-  const pageStart = (page[0] as SessionEvent).seq
-  const pageEnd = (page.at(-1) as SessionEvent).seq
-  return kept.map((event, index) => {
-    const from = index === 0 ? pageStart : (kept[index - 1] as SessionEvent).seq + 1
-    const to = index === kept.length - 1 ? pageEnd : event.seq
-    const record = entryFor(event, usage.get(event.seq), chainLink(chain, to))
-    return from === event.seq && to === event.seq ? record : { ...record, covers: { from, to } }
+  chain: SessionLogChain | undefined,
+): (SessionHistoryRecord | SessionLineEntry)[] {
+  return events.map((event) => {
+    const bytes = chain?.storedLine?.(event)
+    const link = chainLink(chain, event.seq)
+    if (bytes === undefined || link === undefined) {
+      return entryFor(event, usage.get(event.seq), link)
+    }
+    return lineEntry(event, bytes, link, usage.get(event.seq))
   })
 }

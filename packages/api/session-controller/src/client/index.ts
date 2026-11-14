@@ -36,6 +36,7 @@ export type {
 } from './sessions/manager.ts'
 export type { Session } from './sessions/session.ts'
 export type {
+  ProjectionControlCheckpoint,
   ProjectionsBaseline,
   ProjectionValueStore,
   SessionProjectionMap,
@@ -52,6 +53,13 @@ export type {
 export type {
   ISessions, SessionReference, SessionRetainInfo, SessionRetainOptions, SessionTarget,
 } from './contract/sessions.ts'
+export type {
+  LocalHistoryPage,
+  LocalHistoryRecord,
+  LocalHistoryWindow,
+  SessionHistorySource,
+  SessionHistorySourceOptions,
+} from './contract/history-source.ts'
 export { MutableSessionEventSource } from './contract/events.ts'
 export type {
   AssistantLiveChunkEvent,
@@ -128,13 +136,15 @@ export function apply(ctx: Context): void {
 
   const control = createSessionControlStream(remotes, {
     accept: (frame) => { sessions.handleControlFrame(frame) },
+    known: () => sessions.controlKnown(),
     failed: (error) => { console.error('[session-controller] control stream failed:', error) },
   })
   const connected = (): void => {
     if (connection.generation.getSnapshot() === undefined) return
-    // A ready control baseline may arrive before Cordis delivers connection/reset.
+    // The Gateway reopens the control stream on the new socket by itself and
+    // its baseline carries what changed, so restarting it here would open the
+    // generation's second stream.
     sessions.handleConnected()
-    control.restart()
     control.start()
   }
   ctx.effect(() => connection.generation.subscribe(connected), 'session-controller.client.generation')

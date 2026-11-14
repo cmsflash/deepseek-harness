@@ -335,6 +335,29 @@ describe('RemoteJournalStream', () => {
     await fixture.journal.dispose()
   })
 
+  it('pages back from the head the domain kept after dropping older entries', async () => {
+    const fixture = journalFixture(
+      [{ frames: [opened(5, page('tail', [2, 3, 4, 5], true))], hold: true }],
+      [page('reread', [2, 3], true)],
+    )
+    const empty = journalFixture([{ frames: [opened(-1, page('empty', []))], hold: true }], [page('older', [0])])
+
+    await fixture.journal.open({})
+    fixture.journal.dropBefore(1)
+    fixture.journal.dropBefore(4)
+    await fixture.journal.prepend({ before: 4 })
+    await empty.journal.open({})
+    empty.journal.dropBefore(3)
+    await empty.journal.prepend({})
+
+    expect(fixture.changes.at(-1)).toEqual({
+      type: 'prepend', page: page('reread', [2, 3], true), entries: entries(2, 3), hasMore: true,
+    })
+    expect(empty.changes.at(-1)).toEqual({ type: 'prepend', page: page('older', [0]), entries: entries(0), hasMore: false })
+    await fixture.journal.dispose()
+    await empty.journal.dispose()
+  })
+
   it('exposes its shared cancellation signal', async () => {
     const fixture = journalFixture(
       [{ frames: [opened(-1, page('empty', []))], hold: true }],
@@ -1254,5 +1277,117 @@ describe('RemoteJournalStream', () => {
     await fixture.journal.dispose()
     await expect(fixture.journal.prepend({})).rejects.toThrow('is not open')
     expect(() => fixture.journal.heldCursor()).toThrow('is not open')
+  })
+
+  it('opens from a local page, publishes it before any remote frame, and resolves without one', async () => {
+    const remote = Promise.withResolvers<ScriptedFrame>()
+    const fixture = journalFixture([{ frames: [remote.promise], hold: true }], [], STREAM_FACTORY, 1)
+    const localPage = page('local', [0, 1, 2], true)
+
+    await fixture.journal.open({}, { page: localPage, cursor: 2 })
+
+    expect(fixture.calls).toEqual(['follow'])
+    expect(fixture.changes).toEqual([{
+      type: 'replace', page: localPage, entries: entries(0, 1, 2), hasMore: true, local: true,
+    }])
+    expect(fixture.resumes).toEqual([{ after: 2, entries: entries(2) }])
+    expect(fixture.journal.heldCursor()).toBe(2)
+    expect(fixture.failed).not.toHaveBeenCalled()
+    // Teardown releases the still-pending remote frame, so disposal completes.
+    const closing = fixture.journal.dispose()
+    remote.reject(new Error('teardown'))
+    await closing
+  })
+
+  it('continues a locally opened window from a first remote resume after its cursor', async () => {
+    const remote = Promise.withResolvers<ScriptedFrame>()
+    const fixture = journalFixture([{ frames: [remote.promise], hold: true }], [], STREAM_FACTORY, 1)
+    await fixture.journal.open({}, { page: page('local', [0, 1, 2]), cursor: 2 })
+
+    remote.resolve(resumed(2, 4, page('resumed', [3, 4])))
+    await vi.waitFor(() => { expect(fixture.changes).toHaveLength(2) })
+
+    expect(fixture.changes[1]).toEqual({ type: 'resume', page: page('resumed', [3, 4]), entries: entries(3, 4) })
+    expect(fixture.journal.heldCursor()).toBe(4)
+    expect(fixture.failed).not.toHaveBeenCalled()
+    await fixture.journal.dispose()
+  })
+
+  it('replaces a locally opened window when the first remote opening is a snapshot', async () => {
+    const remote = Promise.withResolvers<ScriptedFrame>()
+    const fixture = journalFixture([{ frames: [remote.promise], hold: true }], [], STREAM_FACTORY, 1)
+    await fixture.journal.open({}, { page: page('local', [0, 1]), cursor: 1 })
+
+    remote.resolve(opened(3, page('remote', [0, 1, 2, 3])))
+    await vi.waitFor(() => { expect(fixture.changes).toHaveLength(2) })
+
+    expect(fixture.changes[1]).toEqual({
+      type: 'replace', page: page('remote', [0, 1, 2, 3]), entries: entries(0, 1, 2, 3), hasMore: false,
+    })
+    expect(fixture.journal.heldCursor()).toBe(3)
+    expect(fixture.failed).not.toHaveBeenCalled()
+    await fixture.journal.dispose()
+  })
+
+  it('reports a locally opened window resumed after a cursor it was not offered', async () => {
+    const remote = Promise.withResolvers<ScriptedFrame>()
+    const fixture = journalFixture([{ frames: [remote.promise], hold: true }], [], STREAM_FACTORY, 1)
+    await fixture.journal.open({}, { page: page('local', [0, 1]), cursor: 1 })
+
+    remote.resolve(resumed(0, 2, page('resumed', [2])))
+    await vi.waitFor(() => { expect(fixture.failed).toHaveBeenCalledOnce() })
+    expect(fixture.failed.mock.calls[0]?.[0]).toMatchObject({
+      message: 'fixture journal resumed after a cursor it was not offered',
+    })
+    expect(fixture.changes).toHaveLength(1)
+    await fixture.journal.dispose()
+  })
+
+  it('rejects a local page that does not end at its cursor, like a snapshot page', async () => {
+    const fixture = journalFixture([{ frames: [opened(9, page('remote', []))], hold: true }], [], STREAM_FACTORY, 1)
+
+    await expect(fixture.journal.open({}, { page: page('short', [0, 1]), cursor: 3 })).rejects.toThrow(
+      'page did not end at its requested cursor',
+    )
+    expect(fixture.changes).toEqual([])
+  })
+
+  it('adopts a held window without publishing, resumes from its newest entry, and keeps prepend continuous', async () => {
+    const remote = Promise.withResolvers<ScriptedFrame>()
+    const fixture = journalFixture(
+      [{ frames: [remote.promise], hold: true }],
+      [page('older', [0, 1, 2, 3])],
+      STREAM_FACTORY,
+      1,
+    )
+
+    fixture.journal.adopt({}, { first: 4, last: 6, newest: { seq: 6 } })
+
+    expect(fixture.changes).toEqual([])
+    expect(fixture.resumes).toEqual([{ after: 6, entries: entries(6) }])
+
+    await fixture.journal.prepend({ before: 4 })
+    expect(fixture.changes).toEqual([{
+      type: 'prepend', page: page('older', [0, 1, 2, 3]), entries: entries(0, 1, 2, 3), hasMore: false,
+    }])
+
+    remote.resolve(resumed(6, 8, page('resumed', [7, 8])))
+    await vi.waitFor(() => { expect(fixture.changes).toHaveLength(2) })
+    expect(fixture.changes[1]).toEqual({ type: 'resume', page: page('resumed', [7, 8]), entries: entries(7, 8) })
+    expect(fixture.journal.heldCursor()).toBe(8)
+    expect(fixture.failed).not.toHaveBeenCalled()
+    await fixture.journal.dispose()
+  })
+
+  it('guards adopt and the local open against a second opening', async () => {
+    const fixture = journalFixture([{ frames: [opened(0, page('initial', [0]))], hold: true }], [], STREAM_FACTORY, 1)
+    await fixture.journal.open({})
+    await expect(fixture.journal.open({}, { page: page('local', []), cursor: -1 })).rejects.toThrow('already opened')
+    await fixture.journal.dispose()
+
+    const adopter = journalFixture([{ frames: [opened(0, page('initial', [0]))], hold: true }], [], STREAM_FACTORY, 1)
+    await adopter.journal.open({})
+    expect(() => { adopter.journal.adopt({}, { first: 0, last: 0, newest: { seq: 0 } }) }).toThrow('already opened')
+    await adopter.journal.dispose()
   })
 })

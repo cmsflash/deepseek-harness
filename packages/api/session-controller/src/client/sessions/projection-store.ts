@@ -15,6 +15,7 @@
 import type { SessionProjectionMap } from '@deepseek-ai/dsh-session-projection/types'
 import type { SessionSeqCursor } from '@deepseek-ai/dsh-session/types'
 import type { ObservableSnapshot } from '@deepseek-ai/dsh-client-store'
+import type { SessionChainLink } from '../../types.ts'
 import { Notifier } from './notifier.ts'
 
 // The single projection type table, typed end to end (host unit, wire block,
@@ -54,6 +55,16 @@ export interface ProjectionsBaseline {
   asOfSeq: SessionSeqCursor
   /** Whole current values by key; a registered key absent here means the capability is absent. */
   values: Readonly<Record<string, unknown>>
+  /** Session log chain link at `asOfSeq`, when the Host keeps a chain for the log. */
+  link?: SessionChainLink
+}
+
+/** Linked cut of the last control baseline that seeded a store. */
+export interface ProjectionControlCheckpoint {
+  /** The baseline's consistent-cut seq. */
+  readonly asOfSeq: SessionSeqCursor
+  /** Session log chain link the Host reported at that seq. */
+  readonly link: SessionChainLink
 }
 
 /**
@@ -63,11 +74,13 @@ export interface ProjectionsBaseline {
  * `cached` row was viewed from the persisted projection checkpoint by a
  * header-only listing without a Session: its origin cannot vouch that its
  * stored seq is comparable with the log the client later opens, so it carries
- * none and yields to every sequenced write.
+ * none and yields to every sequenced write. A cached value that arrives while a
+ * sequenced row holds the same key stays underneath it as a hint, so it is
+ * still readable once the Host stops vouching for that sequenced value.
  */
 type Row =
   | { kind: 'cached'; value: unknown }
-  | { kind: 'sequenced'; value: unknown; seq: SessionSeqCursor }
+  | { kind: 'sequenced'; value: unknown; seq: SessionSeqCursor; hint?: unknown }
 
 /** Per-key notification channel: the bare face plus its batching notifier. */
 interface Channel {
@@ -81,10 +94,18 @@ interface Channel {
  * updates one row) compare seqs among themselves: a lower-or-equal seq within
  * the Host generation loses, so a replayed frame cannot regress a value and a
  * stale baseline cannot overwrite a newer frame. Cached writes (the session
- * list's zero-I/O block) only fill keys no sequenced row holds, and a baseline
- * discards every cached row before it seeds, regardless of seq: the connected
- * Session is the truth and a cached value never outranks it. A key the store
- * has never seen reads `undefined` (capability absent). Faces are identity-stable
+ * list's zero-I/O block) only fill keys no sequenced row holds and stay
+ * underneath one otherwise, while a baseline discards every cached row before
+ * it seeds, regardless of seq: the connected
+ * Session is the truth and a cached value never outranks it. A generation
+ * change marks the shown values unconfirmed instead of discarding them, and the
+ * first cached write such a store receives replaces them, so a Host that
+ * restarted keeps showing what it sent before until something newer describes
+ * the Session. A key the store
+ * has never seen reads `undefined` (capability absent). A control baseline
+ * also records its cut and Session log chain link, which the manager reports on
+ * the next generation so the Host omits the Sessions whose values the Client
+ * still holds. Faces are identity-stable
  * per key (create-on-demand, cached) so the React side binds each exactly
  * once; the store-level channel (`subscribeAny`) serves coarse consumers (the
  * manager's list projection reads the `title` key).
@@ -92,6 +113,8 @@ interface Channel {
 export class ProjectionValueStore {
   private readonly rows = new Map<string, Row>()
   private readonly channels = new Map<string, Channel>()
+  private controlCheckpointValue: ProjectionControlCheckpoint | undefined
+  private awaitingGenerationValue = false
   private valuesCache: Readonly<Partial<SessionProjectionMap>> | undefined
   /** Coarse any-key channel (no snapshot cache to rebuild: reads hit rows directly). */
   private readonly anyNotifier = new Notifier(() => {})
@@ -141,6 +164,15 @@ export class ProjectionValueStore {
   }
 
   /**
+   * Read the cut of the control baseline that last seeded this store.
+   * @returns the cut with the Host's log link, or `undefined` when no control
+   *   baseline seeded the current values.
+   */
+  controlCheckpoint(): ProjectionControlCheckpoint | undefined {
+    return this.controlCheckpointValue
+  }
+
+  /**
    * Subscribe to any-key changes (microtask-batched) — the manager's list
    * rebuild channel.
    * @param listener - change callback.
@@ -161,21 +193,45 @@ export class ProjectionValueStore {
     // higher seq wins among sequenced rows; replays and stale frames drop. A
     // cached row has no comparable seq and always yields.
     if (row?.kind === 'sequenced' && seq <= row.seq) return
-    this.rows.set(key, { kind: 'sequenced', value, seq })
+    const hint = row?.kind === 'cached' ? row.value : row?.hint
+    this.rows.set(key, hint === undefined
+      ? { kind: 'sequenced', value, seq }
+      : { kind: 'sequenced', value, seq, hint })
+    this.awaitingGenerationValue = false
     this.changed(key)
   }
 
   /**
-   * Fill keys from a Host block labeled `cached`: a zero-I/O
-   * view of the persisted checkpoint. A cached value lands only where no
-   * sequenced row exists: a connected Session has already answered for such
-   * a key, and the list's view of the persisted checkpoint cannot be newer
-   * than it.
+   * Fill keys from a Host block labeled `cached`: a zero-I/O view of the
+   * persisted checkpoint. While a value of the current Host generation still
+   * confirms the Session, such a view never outranks a sequenced value: a key
+   * the Host already answered for keeps its value and stores the view as a hint
+   * underneath. When nothing has confirmed the generation yet, the view is the
+   * newest statement about the Session, so it replaces the values an earlier
+   * generation sequenced for the keys it carries and every earlier view.
    * @param values - whole values by key viewed from the persisted checkpoint.
    */
   applyCached(values: Readonly<Record<string, unknown>>): void {
+    if (this.awaitingGenerationValue) {
+      this.awaitingGenerationValue = false
+      this.controlCheckpointValue = undefined
+      for (const [key, row] of this.rows) {
+        if (row.kind !== 'cached' || Object.hasOwn(values, key)) continue
+        this.rows.delete(key)
+        this.changed(key)
+      }
+      for (const key of Object.keys(values)) {
+        this.rows.set(key, { kind: 'cached', value: values[key] })
+        this.changed(key)
+      }
+      return
+    }
     for (const key of Object.keys(values)) {
-      if (this.rows.get(key)?.kind === 'sequenced') continue
+      const row = this.rows.get(key)
+      if (row?.kind === 'sequenced') {
+        this.rows.set(key, { ...row, hint: values[key] })
+        continue
+      }
       this.rows.set(key, { kind: 'cached', value: values[key] })
       this.changed(key)
     }
@@ -192,6 +248,8 @@ export class ProjectionValueStore {
    * @param baseline - the response's projections block.
    */
   seed(baseline: ProjectionsBaseline): void {
+    this.controlCheckpointValue = undefined
+    this.awaitingGenerationValue = false
     for (const [key, row] of this.rows) {
       if (row.kind !== 'cached') continue
       this.rows.delete(key)
@@ -213,10 +271,37 @@ export class ProjectionValueStore {
 
   /** Discard one Host generation's values and watermarks while preserving subscribed faces. */
   clear(): void {
+    this.controlCheckpointValue = undefined
+    this.awaitingGenerationValue = false
     for (const key of this.rows.keys()) {
       this.rows.delete(key)
       this.changed(key)
     }
+  }
+
+  /**
+   * Seed from one control baseline and keep its cut, so the next generation
+   * can report the values it already holds.
+   * @param baseline - the baseline's block for this Session.
+   */
+  seedControl(baseline: ProjectionsBaseline): void {
+    this.seed(baseline)
+    if (baseline.link === undefined) return
+    this.controlCheckpointValue = { asOfSeq: baseline.asOfSeq, link: baseline.link }
+  }
+
+  /**
+   * Record that a new Host generation began. The values now shown come from the
+   * previous one until a source of the new generation confirms them: a seeded
+   * block, a live frame, or a retained identity.
+   */
+  beginGeneration(): void {
+    this.awaitingGenerationValue = true
+  }
+
+  /** Keep the shown values as the current generation's: the Host vouched for their cut. */
+  confirmGeneration(): void {
+    this.awaitingGenerationValue = false
   }
 
   private changed(key: string): void {

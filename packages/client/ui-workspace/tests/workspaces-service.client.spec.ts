@@ -163,6 +163,7 @@ class FakeSessions implements ISessions {
   declare readonly retainInfo: ISessions['retainInfo']
   declare readonly searchResultLimit: ISessions['searchResultLimit']
   declare readonly setStepDetail: ISessions['setStepDetail']
+  declare readonly registerHistorySource: ISessions['registerHistorySource']
   declare readonly refresh: ISessions['refresh']
   declare readonly search: ISessions['search']
   declare readonly scope: ISessions['scope']

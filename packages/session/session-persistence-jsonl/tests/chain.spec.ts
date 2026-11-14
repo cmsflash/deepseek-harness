@@ -7,12 +7,12 @@ import { dirname, join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import { createMessage, createUserMessage, ToolCallId } from '@deepseek-ai/dsh-llm'
-import SessionStore, { interruptedTurnClosers, SessionSeq } from '@deepseek-ai/dsh-session'
+import SessionStore, { interruptedTurnClosers, SessionId, SessionSeq } from '@deepseek-ai/dsh-session'
 import type { SessionEvent, SessionHeader } from '@deepseek-ai/dsh-session'
 import type { SessionPersistence } from '@deepseek-ai/dsh-session-persistence'
 import { SessionHandleClosedError } from '@deepseek-ai/dsh-session-persistence'
 import * as JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
-import { logPath, toHeaderLine } from '../src/format.ts'
+import { logPath, generationLogPath, toHeaderLine } from '../src/format.ts'
 import { compressZstdFrame, decompressZstdFrame, decompressZstdPrefix, scanZstdFrames } from '../src/zstd.ts'
 import type { JsonlSessionHandle } from '../src/storage.ts'
 import { meta, oneTurnLog } from '../../session-persistence/tests/contract.ts'
@@ -578,6 +578,255 @@ describe('JsonlSessionPersistence: the Session log chain', () => {
       expect(read.chain ? chainLinks(read.chain) : []).toEqual(oracle(await readFile(path)))
     } finally {
       await reader.close()
+    }
+  })
+})
+
+/** Rows that are exactly the encoder's own bytes: one canonical hand-written log. */
+function canonicalLines(header: SessionHeader): { readonly headerText: string; readonly rows: string[] } {
+  return {
+    headerText: JSON.stringify(toHeaderLine(header)),
+    rows: [
+      JSON.stringify({ type: 'turn/start', seq: 0, time: 1, data: { turn: 1 } }),
+      JSON.stringify({
+        type: 'user/message', seq: 1, time: 2, surfaceOp: 'append',
+        data: createUserMessage({ content: [{ type: 'text', text: 'hand written' }], source: { kind: 'user' } }),
+      }),
+      JSON.stringify({ type: 'step/start', seq: 2, time: 3, data: { turn: 1, step: 1 } }),
+      JSON.stringify({ type: 'step/end', seq: 3, time: 4, data: { turn: 1, step: 1 } }),
+      JSON.stringify({ type: 'turn/end', seq: 4, time: 5, data: { turn: 1, reason: { kind: 'completed' } } }),
+    ],
+  }
+}
+
+/** The committed lines of a plaintext log, without their newlines. */
+function plaintextLines(plaintext: Buffer): Buffer[] {
+  const lines: Buffer[] = []
+  let start = 0
+  for (let newline = plaintext.indexOf(0x0A); newline !== -1; newline = plaintext.indexOf(0x0A, start)) {
+    lines.push(plaintext.subarray(start, newline))
+    start = newline + 1
+  }
+  return lines
+}
+
+/**
+ * One stored v3 generation: an interrupted first turn, an inbox splice, and a
+ * completed second turn, as the migration tests' restart fixture writes it.
+ */
+async function writeV3Log(root: string, id: SessionId, compression: 'none' | 'zstd'): Promise<string> {
+  const path = generationLogPath(root, undefined, id, 3, compression)
+  const message = { id: 'next', role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'continue' }] }
+  const rows = [
+    { type: 'turn/start', data: { turn: 1 } },
+    { type: 'step/start', data: { turn: 1, step: 1 } },
+    { type: 'step/end', data: { turn: 1, step: 1 } },
+    { type: 'agent/inbox/spliced', data: { target: 'next-turn', inserted: [message] } },
+    { type: 'turn/start', data: { turn: 2 } },
+    { type: 'user/message', data: message, surfaceOp: 'append' },
+    { type: 'session/title', data: { title: 'continue', source: { kind: 'fallback' }, messageSeqs: [5] } },
+    { type: 'turn/end', data: { turn: 2, reason: { kind: 'completed' } } },
+  ].map((event, seq) => ({ ...event, seq, time: seq + 10 }))
+  const header = { type: 'session', version: 3, id, createdAt: 1, isSeeded: false, delegationDepth: 0 }
+  const first = `${JSON.stringify(header)}\n`
+  const body = rows.map(row => `${JSON.stringify(row)}\n`).join('')
+  await mkdir(dirname(path), { recursive: true })
+  await writeFile(path, compression === 'none' ? first + body
+    : Buffer.concat([await compressZstdFrame(first), await compressZstdFrame(body)]))
+  return path
+}
+
+describe('JsonlSessionPersistence: stored lines served from the chain', () => {
+  it('keeps the stored header line and answers every stored line of a hand-written plaintext log', async () => {
+    const root = await freshRoot()
+    const ctx = await mount(root, 'none')
+    const header = meta('stored-line-plain', '/proj')
+    const { headerText, rows } = canonicalLines(header)
+    const path = logPath(root, header.cwd, header.id, 'none')
+    await mkdir(dirname(path), { recursive: true })
+    await writeFile(path, `${headerText}\n${rows.join('\n')}\n`)
+
+    const reader = await ctx.sessionPersistence.open(header.id, 'read')
+    try {
+      const read = await reader.read()
+      const chain = read.chain
+      if (chain === undefined) throw new Error('stored chain missing')
+      const storedLines = plaintextLines(await readFile(path))
+      expect(chain.headerLine).toBeDefined()
+      expect(Array.from(chain.headerLine ?? [])).toEqual(Array.from(storedLines[0] as Buffer))
+      for (const event of read.events) {
+        expect(Array.from(chain.storedLine?.(event) ?? [])).toEqual(Array.from(storedLines[event.seq + 1] as Buffer))
+      }
+      const refused: SessionEvent = { type: 'turn/start', seq: SessionSeq(4), time: 9, data: { turn: 9 } }
+      expect(chain.storedLine?.({ ...refused, seq: -1 as SessionSeq })).toBeUndefined()
+      expect(chain.storedLine?.({ ...refused, seq: SessionSeq(5) })).toBeUndefined()
+      expect(chain.storedLine?.(refusedEvent(4))).toBeUndefined()
+    } finally {
+      await reader.close()
+    }
+  })
+
+  it('answers the same stored lines when the log is stored as Zstandard frames', async () => {
+    const root = await freshRoot()
+    const ctx = await mount(root, 'zstd')
+    const header = meta('stored-line-zstd', '/proj')
+    const { headerText, rows } = canonicalLines(header)
+    const path = logPath(root, header.cwd, header.id, 'zstd')
+    await mkdir(dirname(path), { recursive: true })
+    await writeFile(path, Buffer.concat([
+      await compressZstdFrame(`${headerText}\n`),
+      await compressZstdFrame(`${rows.join('\n')}\n`),
+    ]))
+
+    const reader = await ctx.sessionPersistence.open(header.id, 'read')
+    try {
+      const read = await reader.read()
+      const chain = read.chain
+      if (chain === undefined) throw new Error('stored chain missing')
+      const storedLines = plaintextLines(await decodeCompleteFrames(await readFile(path)))
+      expect(Array.from(chain.headerLine ?? [])).toEqual(Array.from(storedLines[0] as Buffer))
+      for (const event of read.events) {
+        expect(Array.from(chain.storedLine?.(event) ?? [])).toEqual(Array.from(storedLines[event.seq + 1] as Buffer))
+      }
+    } finally {
+      await reader.close()
+    }
+  })
+
+  it('refuses only the stored line whose bytes are not the encoder output', async () => {
+    const root = await freshRoot()
+    const ctx = await mount(root, 'none')
+    const header = meta('stored-line-spaced', '/proj')
+    const { headerText, rows } = canonicalLines(header)
+    const spaced = rows.map((row, index) => index === 2 ? row.replaceAll('":', '": ') : row)
+    const path = logPath(root, header.cwd, header.id, 'none')
+    await mkdir(dirname(path), { recursive: true })
+    await writeFile(path, `${headerText}\n${spaced.join('\n')}\n`)
+
+    const reader = await ctx.sessionPersistence.open(header.id, 'read')
+    try {
+      const read = await reader.read()
+      const chain = read.chain
+      if (chain === undefined) throw new Error('stored chain missing')
+      const storedLines = plaintextLines(await readFile(path))
+      for (const event of read.events) {
+        const line = chain.storedLine?.(event)
+        if (event.seq === 2) {
+          expect(line).toBeUndefined()
+          expect(chain.linkAt(2)).toBeDefined()
+        } else {
+          expect(Array.from(line ?? [])).toEqual(Array.from(storedLines[event.seq + 1] as Buffer))
+        }
+      }
+    } finally {
+      await reader.close()
+    }
+  })
+
+  it('answers the interrupted closers\' encoded lines on an extended chain from a cold read', async () => {
+    const root = await freshRoot()
+    const ctx = await mount(root, 'none')
+    const header = meta('stored-closers', '/work')
+    const stored: SessionEvent[] = [
+      { type: 'turn/start', seq: SessionSeq(0), time: 1, data: { turn: 1 } },
+      { type: 'step/start', seq: SessionSeq(1), time: 2, data: { turn: 1, step: 1 } },
+      {
+        type: 'assistant/message',
+        seq: SessionSeq(2),
+        time: 3,
+        surfaceOp: 'append',
+        data: {
+          turn: 1,
+          step: 1,
+          stream: [],
+          message: createMessage({
+            role: 'assistant',
+            source: { kind: 'model', provider: 'mock', model: 'mock' },
+            content: [{ type: 'tool-call', id: ToolCallId('call-1'), name: 'read', arguments: '{}' }],
+          }),
+        },
+      },
+      { type: 'tool/call', seq: SessionSeq(3), time: 4, data: { turn: 1, step: 1, callId: ToolCallId('call-1'), name: 'read', arguments: '{}' } },
+    ]
+    await writeLog(ctx.sessionPersistence, header, stored)
+
+    const reader = await ctx.sessionPersistence.open(header.id, 'read')
+    const read = await reader.read()
+    await reader.close()
+    const closers = interruptedTurnClosers(read.events)
+    const chain = read.chain
+    if (chain === undefined) throw new Error('stored chain missing')
+    const extended = chain.extend?.(closers)
+    if (extended === undefined) throw new Error('cold chain did not extend')
+
+    const writer = await ctx.sessionPersistence.open(header.id, 'write')
+    try {
+      await writer.append(closers)
+      await writer.flush()
+    } finally {
+      await writer.close()
+    }
+    const path = logPath(root, header.cwd, header.id, 'none')
+    const storedLines = plaintextLines(await readFile(path))
+    const baseCount = storedLines.length - closers.length
+    for (const [index, closer] of closers.entries()) {
+      expect(Array.from(extended.storedLine?.(closer) ?? [])).toEqual(Array.from(storedLines[baseCount + index] as Buffer))
+    }
+    for (const event of read.events) {
+      expect(Array.from(extended.storedLine?.(event) ?? [])).toEqual(Array.from(storedLines[event.seq + 1] as Buffer))
+    }
+    expect(extended.storedLine?.(refusedEvent(closers.length))).toBeUndefined()
+    expect(extended.storedLine?.(refusedEvent(closers.length + 2))).toBeUndefined()
+    expect(extended.storedLine?.({ ...(read.events[0] as SessionEvent), seq: SessionSeq(99) })).toBeUndefined()
+    expect(extended.storedLine?.({ ...(closers[0] as SessionEvent), time: 999 })).toBeUndefined()
+  })
+
+  it('chains the read-migrated log and its published successor link for link', async () => {
+    const root = await freshRoot()
+    const id = SessionId('chain-v3')
+    await writeV3Log(root, id, 'none')
+
+    const preparedCtx = await mount(root, 'none')
+    const preparedReader = await preparedCtx.sessionPersistence.open(id, 'read')
+    let preparedChain: { readonly length: number; linkAt(seq: number): string | undefined; readonly headerLine?: Uint8Array } | undefined
+    let preparedCount = 0
+    try {
+      const read = await preparedReader.read()
+      if (read.chain === undefined) throw new Error('migrated read has no chain')
+      preparedCount = read.events.length
+      expect(read.chain.length).toBe(preparedCount)
+      preparedChain = read.chain
+    } finally {
+      await preparedReader.close()
+    }
+
+    const writer = await preparedCtx.sessionPersistence.open(id, 'write')
+    try {
+      expect((await writer.read()).events).toHaveLength(preparedCount)
+    } finally {
+      await writer.close()
+    }
+
+    const successorPath = generationLogPath(root, undefined, id, 4, 'none')
+    const successor = await readFile(successorPath)
+    const storedLines = plaintextLines(successor)
+    const durable = oracle(successor)
+    if (preparedChain === undefined) throw new Error('prepared chain missing')
+    expect(chainLinks(preparedChain)).toEqual(durable)
+
+    const freshCtx = await mount(root, 'none')
+    const freshReader = await freshCtx.sessionPersistence.open(id, 'read')
+    try {
+      const read = await freshReader.read()
+      if (read.chain === undefined) throw new Error('published read has no chain')
+      expect(chainLinks(read.chain)).toEqual(durable)
+      expect(Array.from(read.chain.headerLine ?? [])).toEqual(Array.from(storedLines[0] as Buffer))
+      expect(Array.from(read.chain.headerLine ?? [])).toEqual(Array.from(preparedChain.headerLine ?? []))
+      for (const event of read.events) {
+        expect(Array.from(read.chain.storedLine?.(event) ?? [])).toEqual(Array.from(storedLines[event.seq + 1] as Buffer))
+      }
+    } finally {
+      await freshReader.close()
     }
   })
 })

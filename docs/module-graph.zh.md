@@ -155,6 +155,7 @@ flowchart TD
     pkg_client_connection["client-connection"]
     pkg_client_file_upload["client-file-upload"]
     pkg_client_hmr["client-hmr"]
+    pkg_client_local_copy["client-local-copy"]
     pkg_client_locale["client-locale"]
     pkg_client_modules["client-modules"]
     pkg_client_product_analytics["client-product-analytics"]
@@ -1537,6 +1538,7 @@ flowchart TD
 | [`sdk-minimal`](../packages/bundle/sdk-minimal) | `bundle` | — |
 | [`client-file-upload`](../packages/client/file-upload) | `client` | — |
 | [`client-hmr`](../packages/client/hmr) | `client` | — |
+| [`client-local-copy`](../packages/client/local-copy) | `client` | — |
 | [`client-locale`](../packages/client/locale) | `client` | — |
 | [`client-modules`](../packages/client/modules) | `client` | — |
 | [`client-product-analytics`](../packages/client/product-analytics) | `client` | — |

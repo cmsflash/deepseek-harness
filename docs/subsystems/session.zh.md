@@ -1094,7 +1094,10 @@ workspaceDesktop(): { name: string; available: boolean; fileManager: 'finder' | 
 
 /**
  * Follow one Session log from a snapshot, or from the end of a window the caller already holds.
- * @param request - durable address, opening window, and an optional resume point naming the newest held event and its chain link.
+ * @param request - durable address, opening window, optional stored lines, and an optional resume
+ *   point naming the newest held event and its chain link. With `lines`, records of a `resumed`
+ *   opening and live event frames are stored lines wherever the Host checks them against its
+ *   Session log chain.
  * @param signal - cancellation owned by the Remote stream carrier.
  * @returns a complete opening snapshot, or a `resumed` opening holding only the
  *   events after the resume point, followed by gap-free durable event frames and
@@ -1112,10 +1115,13 @@ workspaceDesktop(): { name: string; available: boolean; fileManager: 'finder' | 
 
 /**
  * Stream a complete live-control baseline followed by replacement frames.
+ * @param request - Sessions the Client already holds.
  * @param signal - cancellation owned by the Remote stream carrier.
- * @returns one complete baseline followed by live replacement frames.
+ * @returns one complete baseline, holding the Sessions the caller's checkpoints
+ *   do not cover and listing the retained ones by identity, followed by live
+ *   replacement frames.
  */
-@Remote({ mode: 'stream' }) async *control(signal: AbortSignal): AsyncIterable<SessionControlFrame>
+@Remote({ mode: 'stream' }) async *control(request: SessionControlRequest, signal: AbortSignal): AsyncIterable<SessionControlFrame>
 ```
 
 Types: [SessionId](core.zh.md) · [SessionSearchRequest](session-query.zh.md)

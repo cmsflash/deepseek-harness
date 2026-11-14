@@ -3,7 +3,8 @@ import { SessionId, type SessionHeader } from '@deepseek-ai/dsh-session'
 import { SessionFormatUnsupportedError, SessionPersistenceCorruptionError } from '@deepseek-ai/dsh-session-persistence'
 import * as JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { appendFile, mkdir, mkdtemp, open, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import type { FileHandle } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { generationLogPath } from '../src/format.ts'
@@ -11,6 +12,10 @@ import { prepareCatalogFacts } from '../src/catalog-migration.ts'
 import { compressZstdFrame } from '../src/zstd.ts'
 
 const roots: string[] = []
+const FileHandlePrototype = await (async () => {
+  const handle = await open(import.meta.filename, 'r')
+  try { return Object.getPrototypeOf(handle) as Pick<FileHandle, 'read'> } finally { await handle.close() }
+})()
 const contexts: Context[] = []
 
 afterEach(async () => {
@@ -100,6 +105,35 @@ describe.each(['none', 'zstd'] as const)('historical catalog publication (%s)', 
     expect((await f.ctx.sessionPersistence.list()).find(row => row.header.id === f.parent)?.revision).toBe(added)
     await f.write('child', [f.descriptor, { type: 'feedback/record', seq: 1, time: 3, data: {} }], true)
     expect(await revision()).not.toBe(added)
+  })
+
+  it('keeps historical revisions across unrelated Session writes and re-reads only changed headers', async () => {
+    const f = await fixture()
+    await f.write('child', [f.descriptor], true)
+    const unrelated = await f.write('unrelated', [], false, 4)
+    const revision = async () => (await f.ctx.sessionPersistence.stat(f.parent))!.revision
+    const first = await revision()
+    const opened = vi.spyOn(FileHandlePrototype, 'read')
+    await appendFile(unrelated, compression === 'none'
+      ? JSON.stringify({ type: 'feedback/record', seq: 0, time: 3, data: {} }) + '\n'
+      : await compressZstdFrame(JSON.stringify({ type: 'feedback/record', seq: 0, time: 3, data: {} }) + '\n'))
+    expect(await revision()).toBe(first)
+    expect((await f.ctx.sessionPersistence.list()).find(row => row.header.id === f.parent)?.revision).toBe(first)
+    const reads = opened.mock.contexts.length
+    expect(await revision()).toBe(first)
+    // Only the parent's own header; the three listed members keep their memoized headers.
+    expect(opened.mock.contexts.length - reads).toBe(1)
+  })
+
+  it('invalidates historical revisions when a member header is unreadable and then changes', async () => {
+    const f = await fixture()
+    const path = generationLogPath(f.root, undefined, SessionId('pending'), 4, compression)
+    await mkdir(dirname(path), { recursive: true })
+    await writeFile(path, '')
+    const revision = async () => (await f.ctx.sessionPersistence.stat(f.parent))!.revision
+    const unreadable = await revision()
+    await f.write('pending', [f.descriptor], true, 4)
+    expect(await revision()).not.toBe(unreadable)
   })
 
   it('reports malformed native catalog data without migration terminology', async () => {

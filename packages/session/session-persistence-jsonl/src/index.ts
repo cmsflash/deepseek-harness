@@ -38,7 +38,7 @@ import { SessionWriteLease } from './lease.ts'
 import { SESSION_FORMAT_VERSION, SessionId as makeSessionId, SessionLogOffset } from '@deepseek-ai/dsh-session'
 import type { SessionEvent, SessionId, SessionHeader, SessionLogOffset as SessionLogOffsetType } from '@deepseek-ai/dsh-session'
 import {
-  assertNoRetiredHeaderFields, encodeHeaderLine, encodeSegment, generationLogFilename, generationLogPath,
+  assertNoRetiredHeaderFields, encodeEventLine, encodeHeaderLine, encodeSegment, generationLogFilename, generationLogPath,
   logPath, logSuffix, parseGenerationLogFilename, projectDir, scanLog, sessionDir, SessionLogScanner,
   type JsonlCompression,
 } from './format.ts'
@@ -53,6 +53,7 @@ import {
   JsonlGenerationUnsupportedMigrationError,
   prepareJsonlMigration,
   readStableJsonlFile,
+  stringifyJson,
   type JsonlGenerationFormatAdapter,
   type JsonlPhysicalIdentity,
   type PreparedJsonlMigration,
@@ -159,11 +160,12 @@ interface StoredLogBase extends FrozenStoredEvents {
   readonly inheritedEventCount: SessionLogOffsetType
   readonly revision: PersistenceRevision
   /**
-   * Links over the current generation's stored lines, indexed by seq; the
-   * compacted builder from the scanner, shared while the memo or read handles
-   * hold this log.
+   * Links over the stored lines, indexed by seq: for current logs the
+   * compacted builder from the scanner, and for prepared historical logs the
+   * chain the successor publication writes; shared while the memo or read
+   * handles hold this log.
    */
-  readonly chain?: SessionLogChainBuilder
+  readonly chain: SessionLogChainBuilder
 }
 
 /** A decoded current generation that is already durable. */
@@ -228,6 +230,72 @@ interface MigrationPreparation {
   readonly promise: Promise<PreparedStoredLog>
   settled: boolean
   waiters: number
+}
+
+/** One selected generation with its physical identity and its header when one is readable. */
+interface ListedGeneration {
+  readonly selected: ResolvedJsonlGeneration
+  /** Absent when the file disappeared between the directory scan and its stat. */
+  readonly identity: JsonlPhysicalIdentity | undefined
+  /** Absent when the file has no complete header line or the catalog refuses it. */
+  readonly metadata: GenerationHeader | undefined
+}
+
+/** One readable listed generation. */
+type ListedArtifact = GenerationHeader & {
+  readonly path: string
+  readonly sourceVersion: number
+  readonly identity: JsonlPhysicalIdentity
+}
+
+/**
+ * Keep the listed generations whose header is readable.
+ * @param generations - one complete listing.
+ * @returns the readable generations in listing order.
+ * @throws when two readable headers carry the same Session id.
+ */
+function artifactsOf(generations: readonly ListedGeneration[]): ListedArtifact[] {
+  const artifacts: ListedArtifact[] = []
+  const ids = new Set<SessionId>()
+  for (const { selected, identity, metadata } of generations) {
+    if (identity === undefined || metadata === undefined) continue
+    if (ids.has(metadata.header.id)) {
+      throw new Error(`duplicate JSONL session id "${metadata.header.id}" appears in multiple project directories`)
+    }
+    ids.add(metadata.header.id)
+    artifacts.push({ ...metadata, path: selected.sourcePath, sourceVersion: selected.sourceVersion, identity })
+  }
+  return artifacts
+}
+
+/**
+ * Build the corpus part of historical log revisions from one listing. A
+ * historical log's migrated events depend on which generations are selected,
+ * on the contents of its direct children, and on members whose header cannot
+ * be read to rule them out as children; appends to other readable Sessions
+ * leave its revision unchanged.
+ * @param generations - one complete listing.
+ * @returns the hex digest over those inputs for a given historical Session id.
+ */
+function historicalCorpusRevisions(generations: readonly ListedGeneration[]): (id: SessionId) => string {
+  const membership = createHash('sha256')
+  const children = new Map<string, string[]>()
+  const sorted = [...generations].sort(({ selected: { sourcePath: left } }, { selected: { sourcePath: right } }) =>
+    Number(left > right) - Number(left < right))
+  for (const { selected: { sourcePath: path }, identity, metadata } of sorted) {
+    const parent = metadata?.header.origin === 'subagent' ? metadata.header.parentSession : undefined
+    if (identity !== undefined && parent !== undefined) {
+      const rows = children.get(parent) ?? []
+      rows.push(JSON.stringify([path, fileRevision(identity)]))
+      children.set(parent, rows)
+    }
+    membership.update(JSON.stringify([
+      path,
+      identity === undefined ? 'missing' : metadata === undefined ? fileRevision(identity) : 'present',
+    ]))
+  }
+  const base = membership.digest('hex')
+  return id => createHash('sha256').update(base).update(JSON.stringify(children.get(id) ?? [])).digest('hex')
 }
 
 /** Build the stat-derived best-effort change token shared by full and lightweight reads. */
@@ -344,6 +412,14 @@ class JsonlSessionPersistence extends SessionPersistence {
    * revision guard.
    */
   private readonly coldLogMemo = new Map<SessionId, StoredLog>()
+  /**
+   * Header-read outcome per selected generation path, valid while the file's
+   * stat revision is unchanged; pruned to the paths of the latest listing.
+   */
+  private readonly headerMemo = new Map<string, {
+    readonly revision: PersistenceRevision
+    readonly metadata: GenerationHeader | undefined
+  }>()
   /** One joinable decode/migration operation per selected historical Session file revision. */
   private readonly migrationPreparations = new Map<SessionId, MigrationPreparation>()
 
@@ -482,7 +558,7 @@ class JsonlSessionPersistence extends SessionPersistence {
         tornTruncateTo: stored.tornTruncateTo,
         recoveredTail: stored.recoveredTail,
         inheritedEventCount: stored.inheritedEventCount,
-        ...(stored.chain === undefined ? {} : { chain: stored.chain.copy() }),
+        chain: stored.chain.copy(),
         primed: stored,
       }, lease))
     } catch (error) {
@@ -552,7 +628,7 @@ class JsonlSessionPersistence extends SessionPersistence {
       return {
         ...metadata,
         revision: selected.sourceVersion < SESSION_FORMAT_VERSION
-          ? SessionPersistenceRevision(`${fileRevision(identity)}:${await this.historicalCorpusRevision(options?.signal)}`)
+          ? SessionPersistenceRevision(`${fileRevision(identity)}:${historicalCorpusRevisions(await this.listGenerationHeaders(options?.signal))(id)}`)
           : fileRevision(identity),
         sizeBytes: Number(identity.size),
         location: { kind: 'jsonl', path: selected.sourcePath },
@@ -580,7 +656,7 @@ class JsonlSessionPersistence extends SessionPersistence {
     const pending = [...this.tracker.pendingEntries()]
     const artifacts = await this.listArtifacts(signal)
     const corpusRevision = artifacts.some(artifact => artifact.sourceVersion < SESSION_FORMAT_VERSION)
-      ? await this.historicalCorpusRevision(signal) : undefined
+      ? historicalCorpusRevisions(await this.listGenerationHeaders(signal)) : undefined
     const statted = settledValues(await settleLimited(this.listLimit, artifacts, async (artifact) => {
       signal?.throwIfAborted()
       try {
@@ -600,8 +676,8 @@ class JsonlSessionPersistence extends SessionPersistence {
       snapshots.push({
         header: artifact.header,
         formatStatus: artifact.formatStatus,
-        revision: artifact.sourceVersion < SESSION_FORMAT_VERSION
-          ? SessionPersistenceRevision(`${fileRevision(identity)}:${corpusRevision}`)
+        revision: corpusRevision !== undefined && artifact.sourceVersion < SESSION_FORMAT_VERSION
+          ? SessionPersistenceRevision(`${fileRevision(identity)}:${corpusRevision(artifact.header.id)}`)
           : fileRevision(identity),
         sizeBytes: Number(identity.size),
         location: { kind: 'jsonl', path: artifact.path },
@@ -779,8 +855,24 @@ class JsonlSessionPersistence extends SessionPersistence {
     assertStoredId(id, meta)
     const events = prepared.artifact.events as SessionEvent[]
     validateStoredEvents(meta, events, { kind: 'jsonl', path: selected.sourcePath })
-    // A historical preparation carries no chain: its links are not the current
-    // generation's, and the published successor gains them on the next read.
+    // The prepared chain covers the exact header line and event rows the
+    // successor publication writes, so the published log reads with the same
+    // links without waiting for a second read.
+    const chain = SessionLogChainBuilder.start(Buffer.from(
+      stringifyJson(
+        this.generationFormat.encodeHeader(prepared.artifact.header, prepared.artifact.inheritedEventCount),
+        'migrated session header',
+      ),
+      'utf8',
+    ))
+    for (const event of events) chain.append(event.seq, encodeEventLine(event))
+    /* v8 ignore next -- a migrated artifact restored contiguous event seqs. */
+    if (chain.length !== events.length) {
+      throw new Error(
+        `session "${id}": migrated chain covers ${chain.length} of ${events.length} events (raw log: ${selected.sourcePath})`,
+      )
+    }
+    chain.compact()
     const { eventState, events: frozen } = freezeStoredEvents(events)
     const stored: PreparedStoredLog = {
       status: 'prepared',
@@ -788,6 +880,7 @@ class JsonlSessionPersistence extends SessionPersistence {
       meta,
       eventState,
       events: frozen,
+      chain,
       tornTruncateTo: undefined,
       recoveredTail: [],
       inheritedEventCount: SessionLogOffset(prepared.artifact.inheritedEventCount),
@@ -818,6 +911,7 @@ class JsonlSessionPersistence extends SessionPersistence {
       recoveredTail: stored.recoveredTail,
       inheritedEventCount: stored.inheritedEventCount,
       revision: fileRevision(identity),
+      chain: stored.chain,
     }
     this.memoizeStoredLog(id, published)
     return published
@@ -1182,56 +1276,57 @@ class JsonlSessionPersistence extends SessionPersistence {
     return results
   }
 
-  /** Historical logical events depend on the corpus, including members with unreadable headers. */
-  private async historicalCorpusRevision(signal?: AbortSignal): Promise<string> {
-    const paths = (await this.listGenerations(signal)).map(source => source.sourcePath).sort()
-    const entries = settledValues(await settleLimited(this.listLimit, paths, async (path) => {
-      signal?.throwIfAborted()
-      try {
-        return { path, revision: fileRevision(await stat(path, { bigint: true })) }
-      } catch (error: unknown) {
-        if (!isENOENT(error)) throw error
-        return { path, revision: 'missing' }
-      }
-    }))
-    const hash = createHash('sha256')
-    for (const { path, revision } of entries) hash.update(JSON.stringify([path, revision]))
-    signal?.throwIfAborted()
-    return hash.digest('hex')
-  }
-
-  private async listArtifacts(
-    signal?: AbortSignal,
-  ): Promise<Array<GenerationHeader & { path: string; sourceVersion: number }>> {
+  /**
+   * Stat every selected generation and read the header of each whose stat
+   * revision the header memo does not already hold. A header read that the
+   * catalog refuses, or that finds no complete header line, lists the member
+   * with no metadata.
+   * @param signal - optional cancellation for directory, stat, and header reads.
+   * @returns every selected generation in traversal order; `identity` is absent when the file disappeared after the directory scan.
+   */
+  private async listGenerationHeaders(signal?: AbortSignal): Promise<ListedGeneration[]> {
     signal?.throwIfAborted()
     await this.ensureRootEncoding()
     signal?.throwIfAborted()
     const generations = await this.listGenerations(signal)
-    const headers = await settleLimited(this.listLimit, generations, async (selected) => {
+    const outcomes = await settleLimited(this.listLimit, generations, async (selected): Promise<ListedGeneration> => {
       signal?.throwIfAborted()
+      let identity: JsonlPhysicalIdentity
       try {
-        return { selected, metadata: await this.readGenerationHeader(selected, undefined, signal) }
+        identity = await stat(selected.sourcePath, { bigint: true })
       } catch (error: unknown) {
-        if (error instanceof SessionFormatUnsupportedError || error instanceof SessionPersistenceCorruptionError) {
-          return { selected, metadata: undefined }
-        }
-        throw error
+        signal?.throwIfAborted()
+        if (!isENOENT(error)) throw error
+        return { selected, identity: undefined, metadata: undefined }
       }
+      const revision = fileRevision(identity)
+      const memoized = this.headerMemo.get(selected.sourcePath)
+      if (memoized?.revision === revision) return { selected, identity, metadata: memoized.metadata }
+      let metadata: GenerationHeader | undefined
+      try {
+        metadata = await this.readGenerationHeader(selected, undefined, signal)
+      } catch (error: unknown) {
+        if (!(error instanceof SessionFormatUnsupportedError || error instanceof SessionPersistenceCorruptionError)) throw error
+        metadata = undefined
+      }
+      this.headerMemo.set(selected.sourcePath, { revision, metadata })
+      return { selected, identity, metadata }
     })
-    const artifacts: Array<GenerationHeader & { path: string; sourceVersion: number }> = []
-    const ids = new Set<SessionId>()
-    for (const outcome of headers) {
+    const listed: ListedGeneration[] = []
+    for (const outcome of outcomes) {
       if (outcome.status === 'rejected') throw outcome.reason
-      const { selected, metadata } = outcome.value
-      if (metadata === undefined) continue
-      if (ids.has(metadata.header.id)) {
-        throw new Error(`duplicate JSONL session id "${metadata.header.id}" appears in multiple project directories`)
-      }
-      ids.add(metadata.header.id)
-      artifacts.push({ ...metadata, path: selected.sourcePath, sourceVersion: selected.sourceVersion })
+      listed.push(outcome.value)
+    }
+    const present = new Set(generations.map(selected => selected.sourcePath))
+    for (const path of this.headerMemo.keys()) {
+      if (!present.has(path)) this.headerMemo.delete(path)
     }
     signal?.throwIfAborted()
-    return artifacts
+    return listed
+  }
+
+  private async listArtifacts(signal?: AbortSignal): Promise<ListedArtifact[]> {
+    return artifactsOf(await this.listGenerationHeaders(signal))
   }
 
   /** Read and translate one selected generation header without inspecting its body. */

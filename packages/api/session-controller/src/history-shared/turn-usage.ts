@@ -1,6 +1,6 @@
 import { TurnUsageAccumulator } from '@deepseek-ai/dsh-token-meter/turn-usage'
 import type { TurnTokenUsage } from '@deepseek-ai/dsh-token-meter/turn-usage'
-import type { SessionEvent } from '@deepseek-ai/dsh-session'
+import type { SessionEvent } from '@deepseek-ai/dsh-session/types'
 
 /** Whole-turn accounting over one ordered history source. */
 export class HistoryTurnUsage {

@@ -116,7 +116,7 @@ function SettingsPanel({ rows, renderSlot, activeId, onSelect, onClose }: PanelP
  */
 export function SettingsRoot(props: SettingsRootComponentProps) {
   const {
-    wide, reconnect, useConnectionState, useSections, useOnboardingSteps, useSessions, renderSlot, t,
+    wide, reconnect, useConnectionState, useOffline, useSections, useOnboardingSteps, useSessions, renderSlot, t,
     useDesktopUpdate, openDesktopUpdate, useStore, actions, useShortcuts,
   } = props
   const { open, activeId } = useStore(state => state)
@@ -134,6 +134,7 @@ export function SettingsRoot(props: SettingsRootComponentProps) {
   const rows = useSections(s => s)
   const desktopUpdate = useDesktopUpdate(state => state)
   const connectionState = useConnectionState(state => state)
+  const offline = useOffline(state => state)
   const previousConnectionState = useRef(connectionState)
   const onboardingSteps = useOnboardingSteps(s => s)
   const onboardingActive = useSessions((state) => {
@@ -208,7 +209,9 @@ export function SettingsRoot(props: SettingsRootComponentProps) {
   }, [])
 
   let connectionIndicator: ConnectionIndicatorState | undefined
-  if (connectionState === 'connecting' || holdConnecting) {
+  if (offline) {
+    connectionIndicator = 'disconnected'
+  } else if (connectionState === 'connecting' || holdConnecting) {
     connectionIndicator = 'connecting'
   } else if (connectionState === 'disconnected') {
     connectionIndicator = 'disconnected'
@@ -238,10 +241,10 @@ export function SettingsRoot(props: SettingsRootComponentProps) {
         </Tooltip> })}
         <ConnectionIndicator
           state={wide && desktopUpdate.presentation?.phase !== 'installing' ? connectionIndicator : undefined}
-          disconnectedLabel={t('connection.error')}
+          disconnectedLabel={offline ? t('connection.offline') : t('connection.error')}
           connectingLabel={t('connection.connecting')}
           recoveredLabel={t('connection.connected')}
-          reconnectActionLabel={t('connection.reconnect')}
+          reconnectActionLabel={offline ? t('connection.offlineReconnect') : t('connection.reconnect')}
           restartActionLabel={t('connection.restart')}
           onReconnect={reconnect}
         />

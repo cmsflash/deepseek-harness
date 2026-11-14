@@ -95,6 +95,8 @@ function createSessionsBench(ctx: Context): SessionsBench {
         subagent: null,
         removed: false,
         openState: 'open',
+        unconfirmed: false,
+        incompleteCopy: false,
         openError: null,
         hasMore: false,
         loadingOlder: false,

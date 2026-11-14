@@ -614,7 +614,13 @@ function finishCurrentGenerationScan(
   return decoded
 }
 
-function stringifyJson(value: unknown, subject: string): string {
+/**
+ * Serialize one value exactly as a staged generation writes it, refusing values without a lossless JSON form.
+ * @param value - the encoded header or row value.
+ * @param subject - failure message location.
+ * @returns the stored JSON record text without its newline.
+ */
+export function stringifyJson(value: unknown, subject: string): string {
   let text: unknown
   try {
     text = JSON.stringify(value)

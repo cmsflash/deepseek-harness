@@ -135,6 +135,8 @@ describe('ui-settings-general shell', () => {
     const injected = injectedOf(c)
     expect(injected.hooks.connectionState).toBe(c.connection.state)
     expect(injected.hooks.connectionState.getSnapshot()).toBe('connected')
+    expect(injected.hooks.offline).toBe(c.ctx.remote.$offline)
+    expect(injected.hooks.offline.getSnapshot()).toBe(false)
     injected.reconnect()
     await c.mock.streams.opened('$events', 2)
     await vi.waitFor(() => { expect(c.connection.state.getSnapshot()).toBe('connected') })

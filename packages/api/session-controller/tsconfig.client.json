@@ -7,6 +7,7 @@
   },
   "include": [
     "src/client/**/*.ts",
+    "src/history-shared/**/*.ts",
     "src/types.ts",
     "src/remote-events.ts"
   ],
@@ -19,6 +20,8 @@
     { "path": "../../client/store" },
     { "path": "../../context/file-reference" },
     { "path": "../../core/session" },
+    { "path": "../../core/tool-executor-ptc" },
+    { "path": "../../core/tools" },
     { "path": "../../jobs/jobs" },
     { "path": "../../llm/llm" },
     { "path": "../../llm/token-meter" },

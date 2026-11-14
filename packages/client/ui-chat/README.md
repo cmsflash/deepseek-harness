@@ -25,6 +25,7 @@ File-mention providers receive the viewed Session ID with the closing-turn owner
 - [Grouped rendering](#grouped-rendering)
 - [Settled Step Collapse](#settled-step-collapse)
 - [Scroll ownership](#scroll-ownership)
+- [Offline notice](#offline-notice)
 - [Model Experience](#model-experience)
 - [Known Limitations and Deferred Work](#known-limitations-and-deferred-work)
 - [Dev Note](#dev-note)
@@ -193,6 +194,13 @@ Active-Turn highlighting is approximate: `readVisibleTurn` binary-searches the f
 The Chat view detects selection and context-menu gestures on business nodes marked with `data-text-interaction-source`. Both selection endpoints must resolve to the same source container. Displayed user content and settled Assistant text or reasoning participate; tools, injected context, streaming or interrupted Assistant text, and Markdown controls do not.
 
 `ctx.uiConversation.interactions` dispatches eligible gestures to plugin registrations and supplies their component to the Chat view. The action surface is absolutely positioned inside the existing Chat column, above the composer seat and its dock. Its wrapper preserves the component's outer stroke and shadow; components own internal scrolling. Scrolling the selection outside that visible region temporarily hides the surface; returning restores it. Chat owns viewport visibility, placement, outside pointer presses, Escape, new selections, source invalidation, and disposal; explicit dismissal preserves browser selection and layout changes do not reopen the surface. [Message quotes](../../session/message-quotes/README.md) owns quotation eligibility and insertion.
+
+-----
+
+<a id="offline-notice"></a>
+### Offline notice
+
+While `ctx.remote.$offline` is true, the Chat view shows a sticky one-line status notice above the transcript ("Offline. Showing the saved copy; new messages arrive when the Host is back.", `chat.offline`, localized in every shipped locale). While the Session snapshot's `incompleteCopy` is true (its unconfirmed window came from a partial local copy), the notice adds "The saved copy of this thread is incomplete." (`chat.offlineIncomplete`). The notice reads the injected `offline` hook and that snapshot field only; it does not change the transcript, composer or Session state.
 
 <a id="model-experience"></a>
 ## Model Experience

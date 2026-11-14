@@ -23,6 +23,22 @@ interface Delivery {
   readonly send: () => void
 }
 
+/** One followed item: a decoded event, or its stored line when the local copy asks follow for lines. */
+interface FollowItem {
+  readonly type: string
+  readonly event?: SessionEvent
+  readonly line?: string
+}
+
+/**
+ * The event one followed item carries. A stored line encodes the event's
+ * `type` and `data` as the decoded event carries them.
+ */
+function followedEvent(item: FollowItem): SessionEvent | undefined {
+  if (item.event !== undefined) return item.event
+  return item.type === 'line' && item.line !== undefined ? JSON.parse(item.line) as SessionEvent : undefined
+}
+
 /** Delay real Host frames while preserving FIFO within each logical stream. */
 class HistoryDeliveryGate {
   private readonly streams = new Map<string, string>()
@@ -48,10 +64,10 @@ class HistoryDeliveryGate {
           ? frame.value as { type: string; sessionId?: string; key?: string; value?: InboxState } : undefined
         const inbox = control?.type === 'projection' && control.sessionId === SESSION_ID && control.key === 'inbox'
           ? control.value : undefined
-        const follow = endpoint === 'session/follow' && frame.type === 'item'
-          ? frame.value as { type: string; event?: SessionEvent } : undefined
+        const event = endpoint === 'session/follow' && frame.type === 'item'
+          ? followedEvent(frame.value as FollowItem) : undefined
         this.buffered.push({ stream: frame.streamId, send: () => { socket.send(message) },
-          ...follow?.event === undefined ? {} : { event: follow.event }, ...inbox === undefined ? {} : { inbox } })
+          ...event === undefined ? {} : { event }, ...inbox === undefined ? {} : { inbox } })
       })
     })
   }

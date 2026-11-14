@@ -287,17 +287,17 @@ export default defineConfig({
         'packages/client/ui-workspace/src/client/rows/WorkspaceBrowser.tsx',
         'packages/client/ui-renderer/src/client/*',
         // Session object internals retain the runtime GUI debt exemption; the
-        // assistant-stream reconciler, Controller entry, transport, Agent scope,
-        // and adapters stay gated.
-        'packages/api/session-controller/src/client/sessions/!(assistant-stream).ts',
+        // assistant-stream reconciler, the local-copy memory modules, Controller
+        // entry, transport, Agent scope, and adapters stay gated.
+        'packages/api/session-controller/src/client/sessions/!(assistant-stream|warm-pool|window-budget|schedule|history-source-slot).ts',
         'packages/api/session-controller/src/client/ordered-baseline.ts',
         'packages/api/session-controller/src/client/time-zone.ts',
         // Keep the browser conversation tree under its existing GUI debt
         // exemption while gating the newly stateful Host half and vocabulary.
         'packages/client/ui-conversation/src/client/*',
         // Chat presentation and assembly retain the same GUI debt exemption;
-        // package wiring and the new approval-detail adapter remain gated.
-        'packages/client/ui-chat/src/client/chat/!(ApprovalCommand).{ts,tsx}',
+        // package wiring, the approval-detail adapter, and the row-seq lookup remain gated.
+        'packages/client/ui-chat/src/client/chat/!(ApprovalCommand|row-seq).{ts,tsx}',
         'packages/client/ui-chat/src/client/conversation-nodes/*',
         'packages/client/ui-chat/src/client/details/*',
         'packages/client/ui-chat/src/client/model/*',

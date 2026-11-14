@@ -1,8 +1,10 @@
 /** Client range access and type narrowing for aligned Session history records. */
 
+import type { JsonValue } from '@deepseek-ai/dsh-util-values'
 import type {
   SessionHistoryCoverage, SessionHistoryRecord,
 } from '../../types.ts'
+import type { LocalHistoryRecord } from '../contract/history-source.ts'
 import type { SessionEventLikeEntry } from '../contract/events.ts'
 
 /**
@@ -72,4 +74,40 @@ export function historyRecordLastSeq(record: SessionHistoryRecord): number {
 export function historyPageFirstSeq(records: readonly SessionHistoryRecord[]): number | undefined {
   const head = records[0]
   return head === undefined ? undefined : historyRecordFirstSeq(head)
+}
+
+/**
+ * Replace identical local request headers with one shared object.
+ * Records without a `headerKey`, and the first record carrying a key, keep
+ * their own header; every later record with the same key gets the held
+ * object, so one window holds each distinct header once.
+ * @param records - records the local copy served.
+ * @param shared - the Session's map from header key to the first header object it held.
+ * @returns the records to install, first occurrences unchanged.
+ */
+export function shareLocalHeaders(
+  records: readonly LocalHistoryRecord[],
+  shared: Map<string, JsonValue>,
+): readonly LocalHistoryRecord[] {
+  let sharedRecords: LocalHistoryRecord[] | undefined
+  for (const [index, record] of records.entries()) {
+    const key = record.headerKey
+    if (key === undefined) continue
+    const data = record.event.data
+    if (typeof data !== 'object' || data === null || Array.isArray(data)) continue
+    const header = data['header']
+    if (header === undefined) continue
+    const held = shared.get(key)
+    if (held === undefined) {
+      shared.set(key, header)
+      continue
+    }
+    if (held === header) continue
+    sharedRecords ??= [...records]
+    sharedRecords[index] = {
+      ...record,
+      event: { ...record.event, data: { ...data, header: held } },
+    }
+  }
+  return sharedRecords ?? records
 }

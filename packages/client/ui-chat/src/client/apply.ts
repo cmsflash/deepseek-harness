@@ -264,7 +264,7 @@ export function apply(ctx: Context): void {
         return {
           ...nodeSources(binding),
           fileDrag: ctx.fileDrag.actions,
-          hooks: { presentation, interactionIds: ctx.uiConversation.interactions },
+          hooks: { presentation, offline: ctx.remote.$offline, interactionIds: ctx.uiConversation.interactions },
           dispatchInteraction: gesture => ctx.uiConversation.interactions.dispatch(sessionId, gesture),
           fileMentions: (owner: TurnTailOwnerProps) => ctx.get('chatFileMentions')?.forClosing(owner, sessionId),
           // Files open in the right Sidebar, not in a desktop application: the
@@ -309,6 +309,7 @@ export function apply(ctx: Context): void {
             },
             read: () => chatScrollPositions.get(sessionId) ?? null,
           },
+          markViewed: (fromSeq, toSeq) => { session.markViewed(fromSeq, toSeq) },
           forkAt: (seq) => {
             const turn = [...chat.getSnapshot().timeline.turns.values()].find(turn => turn.end?.seq === seq)
             const messageId = turn?.data.get('turn-tail')?.closing?.finalNode.messageId

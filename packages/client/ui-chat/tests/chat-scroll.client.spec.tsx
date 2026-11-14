@@ -771,3 +771,137 @@ describe('Chat scroll collapse timing', () => {
     expect(h.scrollTo).toHaveBeenCalledTimes(2)
   })
 })
+
+describe('Chat scroll reader-range reporting', () => {
+  /** Rects for a scrollport of fixed bounds and one row box per anchor. */
+  function stubRects(scroller: HTMLElement, rows: readonly { element: HTMLElement; top: number }[]): void {
+    vi.spyOn(scroller, 'getBoundingClientRect').mockReturnValue(
+      { top: 0, bottom: 400, left: 0, right: 100, width: 100, height: 400, x: 0, y: 0, toJSON: () => '' },
+    )
+    for (const { element, top } of rows) {
+      vi.spyOn(element, 'getBoundingClientRect').mockReturnValue(
+        { top, bottom: top + 50, left: 0, right: 100, width: 100, height: 50, x: 0, y: top, toJSON: () => '' },
+      )
+    }
+  }
+
+  /** Append rows to the harness column after asserting the Chat column exists. */
+  function appendRows(view: { readonly container: HTMLElement }, ...rows: readonly HTMLElement[]): void {
+    const column = view.container.querySelector<HTMLElement>('[data-testid="column"]')
+    if (column === null) throw new Error('missing Chat column')
+    column.append(...rows)
+  }
+
+  function anchorRow(key: string, turn?: number): HTMLElement {
+    const row = document.createElement('div')
+    row.dataset.chatAnchorKey = key
+    if (turn !== undefined) row.dataset.chatTurn = String(turn)
+    return row
+  }
+
+  it('reports the first and last visible mapped rows once when the transcript opens', () => {
+    const markViewed = vi.fn()
+    const h = mountScroll(true, {
+      markViewed,
+      seqOfRow: key => (key.includes('n1') ? 10 : key.includes('n3') ? 30 : null),
+    })
+    const above = anchorRow('node:["above",null]')
+    const inView1 = anchorRow('node:["n1",null]')
+    const inView2 = anchorRow('node:["n3",null]')
+    const below = anchorRow('node:["below",null]')
+    appendRows(h.view, above, inView1, inView2, below)
+    stubRects(h.scroller, [
+      { element: above, top: -100 },
+      { element: inView1, top: 100 },
+      { element: inView2, top: 300 },
+      { element: below, top: 800 },
+    ])
+
+    // A reported scroll must move: a stationary one is a landing echo.
+    vi.advanceTimersByTime(1_000)
+    h.scroller.scrollTop = 120
+    fireEvent.scroll(h.scroller)
+
+    expect(markViewed).toHaveBeenCalledExactlyOnceWith(10, 30)
+  })
+
+  it('throttles one report a second and reports again on a later scroll', () => {
+    const markViewed = vi.fn()
+    const h = mountScroll(true, { markViewed, seqOfRow: () => 20 })
+    const row = anchorRow('node:["n1",null]')
+    appendRows(h.view, row)
+    stubRects(h.scroller, [{ element: row, top: 50 }])
+
+    vi.advanceTimersByTime(1_000)
+    h.scroller.scrollTop = 120
+    fireEvent.scroll(h.scroller)
+    vi.advanceTimersByTime(250)
+    h.scroller.scrollTop = 220
+    fireEvent.scroll(h.scroller)
+    expect(markViewed).toHaveBeenCalledTimes(1)
+
+    vi.advanceTimersByTime(1_100)
+    h.scroller.scrollTop = 320
+    fireEvent.scroll(h.scroller)
+    expect(markViewed).toHaveBeenCalledTimes(2)
+    expect(markViewed).toHaveBeenLastCalledWith(20, 20)
+  })
+
+  it('widens the fractional positions of synthetic rows to whole Session seqs', () => {
+    const markViewed = vi.fn()
+    const positions = new Map([['interrupted', -0.9], ['process', 8203.9], ['followup', 8210.1]])
+    const h = mountScroll(true, { markViewed, seqOfRow: key => positions.get(key) ?? null })
+    const rows = [...positions.keys()].map(key => anchorRow(key))
+    appendRows(h.view, ...rows)
+    stubRects(h.scroller, rows.map((element, index) => ({ element, top: 50 + index * 100 })))
+
+    vi.advanceTimersByTime(1_000)
+    h.scroller.scrollTop = 120
+    fireEvent.scroll(h.scroller)
+    expect(markViewed).toHaveBeenCalledExactlyOnceWith(0, 8211)
+
+    positions.set('interrupted', 8203.9)
+    vi.advanceTimersByTime(1_100)
+    h.scroller.scrollTop = 220
+    fireEvent.scroll(h.scroller)
+    expect(markViewed).toHaveBeenLastCalledWith(8203, 8211)
+  })
+
+  it('passes a row its Turn number and reports nothing before the transcript opens', () => {
+    const markViewed = vi.fn()
+    const seqOfRow = vi.fn((_key: string, turn: number | null) => (turn === null ? null : turn * 10))
+    const closed = mountScroll(true, { ready: false, markViewed, seqOfRow })
+    const early = anchorRow('["group",4]', 4)
+    appendRows(closed.view, early)
+    stubRects(closed.scroller, [{ element: early, top: 50 }])
+    vi.advanceTimersByTime(1_000)
+    fireEvent(closed.scroller, new Event('scrollend'))
+    expect(seqOfRow).not.toHaveBeenCalled()
+    closed.view.unmount()
+
+    const h = mountScroll(true, { markViewed, seqOfRow })
+    const grouped = anchorRow('["group",4]', 4)
+    const malformed = anchorRow('["group","x"]')
+    malformed.dataset.chatTurn = 'x'
+    appendRows(h.view, grouped, malformed)
+    stubRects(h.scroller, [{ element: grouped, top: 50 }, { element: malformed, top: 150 }])
+    vi.advanceTimersByTime(1_000)
+    h.scroller.scrollTop = 120
+    fireEvent.scroll(h.scroller)
+    expect(seqOfRow.mock.calls).toEqual([['["group",4]', 4], ['["group","x"]', null]])
+    expect(markViewed).toHaveBeenCalledExactlyOnceWith(40, 40)
+  })
+
+  it('reports nothing when no visible row maps to a seq', () => {
+    const markViewed = vi.fn()
+    const h = mountScroll(true, { markViewed, seqOfRow: () => null })
+    const row = anchorRow('node:["empty",null]')
+    appendRows(h.view, row)
+    stubRects(h.scroller, [{ element: row, top: 50 }])
+
+    vi.advanceTimersByTime(1_000)
+    h.scroller.scrollTop = 120
+    fireEvent.scroll(h.scroller)
+    expect(markViewed).not.toHaveBeenCalled()
+  })
+})

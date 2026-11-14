@@ -123,6 +123,8 @@ function sessionSnapshot(nodes: LegacyConversationSlice['nodes']): SessionSnapsh
     subagent: null,
     removed: false,
     openState: 'open',
+    unconfirmed: false,
+    incompleteCopy: false,
     openError: null,
     hasMore: false,
     loadingOlder: false,

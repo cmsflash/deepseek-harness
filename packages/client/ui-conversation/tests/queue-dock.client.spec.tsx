@@ -54,7 +54,7 @@ interface TestSnapshot extends SessionSnapshot {
 
 function snapshotWith(queue: UserMessage[], nextStep: UserMessage[] = []): TestSnapshot {
   return {
-    sessionId: SID, running: true, removed: false, openState: 'open', openError: null,
+    sessionId: SID, running: true, removed: false, openState: 'open', unconfirmed: false, incompleteCopy: false, openError: null,
     hasMore: false, loadingOlder: false, promptError: null, blank: false, subagent: null,
     stepDigests: new Map(), stepAccounts: new Map(), expandingTurns: new Set(),
     loadingStepDetail: false, stepDetailError: null,

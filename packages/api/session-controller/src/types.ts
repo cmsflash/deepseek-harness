@@ -79,6 +79,8 @@ export interface SessionProjectionBaseline {
   readonly asOfSeq: number
   /** Provider-validated values; omitted keys are absent capabilities at this cut. */
   readonly values: SessionProjectionValues
+  /** Session log chain link at `asOfSeq`, when the Host keeps a chain for the log. */
+  readonly link?: SessionChainLink
 }
 
 /** Typed known projections plus JSON-safe values contributed outside this compilation face. */
@@ -454,6 +456,23 @@ export interface SessionEventEntry {
   readonly link?: SessionChainLink
 }
 
+/**
+ * One durable event sent as its stored log line instead of a decoded
+ * {@link SessionEventEntry}. `session/follow` sends these only when the
+ * request sets `lines`, and only for events whose stored line the Host
+ * checked against its Session log chain.
+ */
+export interface SessionLineEntry {
+  readonly type: 'line'
+  readonly seq: number
+  /** The event's stored JSONL line without its newline; its UTF-8 bytes link to `link`. */
+  readonly line: string
+  /** Session log chain link of the event. */
+  readonly link: SessionChainLink
+  /** Whole-turn accounting on a `turn/end`, as on {@link SessionEventEntry}. */
+  readonly turnUsage?: TurnTokenUsage | null
+}
+
 /** Current logical Session metadata carried on the browser wire. */
 export interface SessionWireHeader {
   readonly version: number
@@ -615,6 +634,11 @@ export interface SessionFollowRequest extends Pick<SessionPageRequest, 'maxMessa
    * configured limit, and with a complete `snapshot` otherwise.
    */
   readonly resume?: SessionFollowResume
+  /**
+   * Send each record of a `resumed` opening and each live event frame as a
+   * {@link SessionLineEntry} when the Host can check its stored line; snapshot records stay decoded.
+   */
+  readonly lines?: true
 }
 
 /**
@@ -727,16 +751,54 @@ export type SessionFollowFrame =
     /** The request's `resume.afterSeq`. */
     readonly after: number
     readonly cursor: number
-    readonly records: readonly SessionHistoryRecord[]
+    readonly records: readonly (SessionHistoryRecord | SessionLineEntry)[]
     readonly projections: SessionProjectionBaseline
     readonly assistantStream?: SessionAssistantStreamBaseline
   }
   | SessionEventEntry
+  | SessionLineEntry
   | { readonly type: 'assistant-stream'; readonly frame: SessionAssistantStreamFrame }
 
 /** Complete live control baseline emitted once per control stream generation. */
 export interface SessionControlBaseline {
   readonly projections: Readonly<Record<SessionId, SessionProjectionBaseline>>
+  /** Known Sessions the baseline omits because their projections are unchanged at the same cut and link. */
+  readonly retained?: readonly SessionId[]
+}
+
+/** One Session whose control-baseline projections the Client holds at a linked cut. */
+export interface SessionControlKnown {
+  readonly sessionId: SessionId
+  readonly asOfSeq: number
+  readonly link: SessionChainLink
+}
+
+/** One `session/control` opening. */
+export interface SessionControlRequest {
+  /** Sessions the Client holds; the baseline omits those unchanged and lists them in `retained`. */
+  readonly known?: readonly SessionControlKnown[]
+}
+
+/** Path of the authenticated route that serves a Session's stored log lines, oldest first. */
+export const SESSION_LINES_PATH = '/api/session/lines'
+
+/** First line of a {@link SESSION_LINES_PATH} response body; the stored lines follow it, one per line. */
+export interface SessionLinesHead {
+  readonly type: 'dsh-session-lines'
+  readonly version: 1
+  readonly sessionId: SessionId
+  /** Seq of the first line sent: one past the highest checkpoint that matched, or 0. */
+  readonly start: number
+  /** Seq of the last line sent; `start - 1` when none was sent. */
+  readonly through: number
+  /** The Host's last seq when the lines were read. */
+  readonly cursor: number
+  /** Chain link at `through`; null when `through` is -1. */
+  readonly link: SessionChainLink | null
+  /** The stored header line, present only when `start` is 0. */
+  readonly header?: string
+  /** Chain link of the header line, present only when `start` is 0. */
+  readonly headerLink?: SessionChainLink
 }
 
 /** One finished projection value and its durable watermark. */

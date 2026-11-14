@@ -9,7 +9,8 @@ import { deadline, MAX_TIMER_DELAY_MS, timeoutOf } from '@deepseek-ai/dsh-timeou
 import { RemoteError } from '@deepseek-ai/dsh-typert-protocol'
 import type { JsonValue } from '@deepseek-ai/dsh-util-values'
 import type { HistoryController } from '../history/controller.ts'
-import { DEFAULT_MAX_MESSAGES, rejectNotFound } from '../history.ts'
+import { rejectNotFound } from '../history.ts'
+import { DEFAULT_MAX_MESSAGES } from '../history-shared/paging.ts'
 import type { SessionPendingInput, SessionQueuedItem, SessionState, SessionStateRequest, SessionWaitRequest, SessionWaitValue } from '../types.ts'
 
 import { StateListener } from './listener.ts'

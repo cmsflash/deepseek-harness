@@ -521,7 +521,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'ClientRemote',
-    declaration: 'export interface ClientRemote extends TypertClientRemote {\n    $stream<Item>(options: RemoteStreamOptions<Item>): RemoteStream<Item>;\n    readonly $host: RemoteHostFacts;\n}',
+    declaration: 'export interface ClientRemote extends TypertClientRemote {\n    $stream<Item>(options: RemoteStreamOptions<Item>): RemoteStream<Item>;\n    readonly $host: RemoteHostFacts;\n    readonly $offline: RemoteOfflineSnapshot;\n}',
   },
   {
     name: 'CommonKeyOf',
@@ -673,11 +673,11 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'ISession',
-    declaration: 'export interface ISession {\n    readonly sessionId: SessionId;\n    readonly projections: ProjectionsFace;\n    beginSubmission(input: BeginSubmissionInput): SubmissionHandle;\n    prompt(content: PromptContentPart[], mode: \'queue\' | \'steer\', signal?: AbortSignal, requestId?: SessionRequestId): Promise<RemoteResult<{\n        accepted: true;\n    }>>;\n    readAttachment(attachment: ImageAttachmentRef): Promise<RemoteResult<{\n        attachment: ImageAttachmentRef;\n        data: Uint8Array;\n    }>>;\n    updateQueue(itemId: MessageId, action: QueueAction): Promise<RemoteResult<{\n        accepted: true;\n    }>>;\n    cancel(): Promise<RemoteResult<{\n        accepted: true;\n    }>>;\n    rename(title: string): Promise<RemoteResult<{\n        title: string;\n        seq: SessionSeq;\n    }>>;\n    loadOlder(): Promise<void>;\n    loadThrough(seq: SessionSeq): Promise<void>;\n    setStepDetail(detail: SessionStepDetail): Promise<void>;\n    requireFullHistory(): Promise<void>;\n    expandTurn(turn: number): Promise<void>;\n    command(line: string): Promise<RemoteResult<{\n        matched: boolean;\n    }>>;\n}',
+    declaration: 'export interface ISession {\n    readonly sessionId: SessionId;\n    readonly projections: ProjectionsFace;\n    beginSubmission(input: BeginSubmissionInput): SubmissionHandle;\n    prompt(content: PromptContentPart[], mode: \'queue\' | \'steer\', signal?: AbortSignal, requestId?: SessionRequestId): Promise<RemoteResult<{\n        accepted: true;\n    }>>;\n    readAttachment(attachment: ImageAttachmentRef): Promise<RemoteResult<{\n        attachment: ImageAttachmentRef;\n        data: Uint8Array;\n    }>>;\n    updateQueue(itemId: MessageId, action: QueueAction): Promise<RemoteResult<{\n        accepted: true;\n    }>>;\n    cancel(): Promise<RemoteResult<{\n        accepted: true;\n    }>>;\n    rename(title: string): Promise<RemoteResult<{\n        title: string;\n        seq: SessionSeq;\n    }>>;\n    loadOlder(): Promise<void>;\n    loadThrough(seq: SessionSeq): Promise<void>;\n    setStepDetail(detail: SessionStepDetail): Promise<void>;\n    requireFullHistory(): Promise<void>;\n    expandTurn(turn: number): Promise<void>;\n    markViewed(fromSeq: SessionSeq, toSeq: SessionSeq): void;\n    command(line: string): Promise<RemoteResult<{\n        matched: boolean;\n    }>>;\n}',
   },
   {
     name: 'ISessions',
-    declaration: 'export interface ISessions {\n    readonly list: ObservableSnapshot<SessionListState>;\n    retain(target: SessionTarget, options: SessionRetainOptions): SessionReference;\n    using<T>(target: SessionTarget, options: SessionRetainOptions, operation: (reference: SessionReference) => T | Promise<T>): Promise<T>;\n    retainInfo(id: SessionId): ObservableSnapshot<SessionRetainInfo>;\n    readonly searchResultLimit: number;\n    create(opts?: {\n        workspaceId?: WorkspaceId;\n        cwd?: string;\n        sessionId?: SessionId;\n        agentPreset?: string;\n    }): Promise<SessionId>;\n    subagentAddress(id: SessionId): SubagentAddress | undefined;\n    refreshProjections(sessionId: SessionId): Promise<void>;\n    setStepDetail(detail: SessionStepDetail): Promise<void>;\n    refresh(): Promise<void>;\n    search(query: string, signal: AbortSignal): Promise<RemoteResult<{\n        items: SessionSearchResultItem[];\n        hasMore: boolean;\n    }>>;\n    fork(opts: {\n        sessionId: SessionId;\n        atSeq?: number;\n        increaseTitle?: boolean;\n        onCreated?: (childId: SessionId) => void;\n        allowMigration?: boolean;\n    }): Promise<SessionId>;\n    scope(id: SessionId): AgentContext | undefined;\n    scopeOf(ctx: Context): SessionId | undefined;\n    sessionOf(ctx: Context): SessionFace | undefined;\n    binding(id: SessionId): SessionBinding | undefined;\n}',
+    declaration: 'export interface ISessions {\n    readonly list: ObservableSnapshot<SessionListState>;\n    retain(target: SessionTarget, options: SessionRetainOptions): SessionReference;\n    using<T>(target: SessionTarget, options: SessionRetainOptions, operation: (reference: SessionReference) => T | Promise<T>): Promise<T>;\n    retainInfo(id: SessionId): ObservableSnapshot<SessionRetainInfo>;\n    readonly searchResultLimit: number;\n    create(opts?: {\n        workspaceId?: WorkspaceId;\n        cwd?: string;\n        sessionId?: SessionId;\n        agentPreset?: string;\n    }): Promise<SessionId>;\n    subagentAddress(id: SessionId): SubagentAddress | undefined;\n    refreshProjections(sessionId: SessionId): Promise<void>;\n    setStepDetail(detail: SessionStepDetail): Promise<void>;\n    registerHistorySource(source: SessionHistorySource, options: SessionHistorySourceOptions): () => void;\n    refresh(): Promise<void>;\n    search(query: string, signal: AbortSignal): Promise<RemoteResult<{\n        items: SessionSearchResultItem[];\n        hasMore: boolean;\n    }>>;\n    fork(opts: {\n        sessionId: SessionId;\n        atSeq?: number;\n        increaseTitle?: boolean;\n        onCreated?: (childId: SessionId) => void;\n        allowMigration?: boolean;\n    }): Promise<SessionId>;\n    scope(id: SessionId): AgentContext | undefined;\n    scopeOf(ctx: Context): SessionId | undefined;\n    sessionOf(ctx: Context): SessionFace | undefined;\n    binding(id: SessionId): SessionBinding | undefined;\n}',
   },
   {
     name: 'KeyedHooksSources',
@@ -742,6 +742,18 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'LocaleSnapshot',
     declaration: 'export interface LocaleSnapshot {\n    active: LocaleId;\n    locales: readonly LocaleDefinition[];\n    revision: number;\n}',
+  },
+  {
+    name: 'LocalHistoryPage',
+    declaration: 'export interface LocalHistoryPage {\n    readonly records: readonly LocalHistoryRecord[];\n    readonly hasMore: boolean;\n    readonly digests?: readonly StepDigest[];\n    readonly cursor: number;\n    readonly partial?: true;\n}',
+  },
+  {
+    name: 'LocalHistoryRecord',
+    declaration: 'export interface LocalHistoryRecord extends SessionHistoryRecord {\n    readonly bytes: number;\n    readonly stripped?: true;\n    readonly headerKey?: string;\n}',
+  },
+  {
+    name: 'LocalHistoryWindow',
+    declaration: 'export type LocalHistoryWindow = Pick<SessionPageRequest, \'maxMessages\' | \'turnWindow\' | \'stepDetail\'> & {\n    readonly full: boolean;\n};',
   },
   {
     name: 'MainPanelId',
@@ -852,6 +864,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface RemoteHostFacts {\n    readonly home: string | undefined;\n    readonly isLoopback: boolean;\n}',
   },
   {
+    name: 'RemoteOfflineSnapshot',
+    declaration: 'export interface RemoteOfflineSnapshot {\n    getSnapshot(): boolean;\n    subscribe(listener: () => void): () => void;\n}',
+  },
+  {
     name: 'RemoteStream',
     declaration: 'export class RemoteStream<Item> implements AsyncIterable<RemoteStreamItem<Item>> {\n    constructor(private readonly connection: Pick<ConnectionHandle, \'generation\'>, private readonly options: RemoteStreamOptions<Item>);\n    get signal(): AbortSignal;\n    restart(): void;\n    dispose(): Promise<void>;\n    [Symbol.asyncIterator](): AsyncIterator<RemoteStreamItem<Item>>;\n}',
   },
@@ -880,6 +896,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export type ScopeStandardProps<S extends SlotScope> = (S extends \'session\' ? SessionStandardProps : S extends \'session-maybe\' ? SessionMaybeStandardProps : object) & GlobalStandardProps;',
   },
   {
+    name: 'SessionAddress',
+    declaration: 'export type SessionAddress = {\n    readonly kind: \'session\';\n    readonly sessionId: SessionId;\n} | {\n    readonly kind: \'subagent\';\n    readonly parentSessionId: SessionId;\n    readonly childSessionId: SessionId;\n    readonly mode: \'one-shot\' | \'continuable\' | \'unknown\';\n};',
+  },
+  {
     name: 'SessionAreaProps',
     declaration: 'export interface SessionAreaProps {\n    readonly session?: SlotScopeTargetMap[keyof SlotScopeTargetMap & \'session\'] | undefined;\n    empty?: (() => ReactNode) | undefined;\n    children: ReactNode;\n}',
   },
@@ -892,12 +912,20 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface SessionBinding {\n    readonly sessionId: SessionId;\n    readonly session: SessionFace;\n    readonly eventSource: SessionEventSource;\n    readonly ctx: AgentContext;\n}',
   },
   {
+    name: 'SessionChainLink',
+    declaration: 'export type SessionChainLink = Branded<\'session-chain-link\'>;',
+  },
+  {
     name: 'SessionEventChange',
     declaration: 'export type SessionEventChange = {\n    readonly kind: \'replace\';\n    readonly entries: readonly SessionEventLikeEntry[];\n} | {\n    readonly kind: \'prepend\';\n    readonly entries: readonly SessionEventLikeEntry[];\n} | {\n    readonly kind: \'append\';\n    readonly entries: readonly SessionEventLikeEntry[];\n} | {\n    readonly kind: \'splice\';\n    readonly entries: readonly SessionEventLikeEntry[];\n} | {\n    readonly kind: \'settle-assistant\';\n    readonly attemptId: LlmAttemptId;\n    readonly entry?: SessionAssistantSettlementEntry;\n};',
   },
   {
+    name: 'SessionEventEntry',
+    declaration: 'export interface SessionEventEntry {\n    readonly type: \'event\';\n    readonly event: SessionWireEvent;\n    readonly turnUsage?: TurnTokenUsage | null;\n    readonly link?: SessionChainLink;\n}',
+  },
+  {
     name: 'SessionEventLikeEntry',
-    declaration: 'export type SessionEventLikeEntry = {\n    readonly type: \'event\';\n    readonly event: SessionEvent;\n    readonly covers?: SessionHistoryCoverage;\n    readonly turnUsage?: TurnTokenUsage | null;\n} | {\n    readonly type: \'transient\';\n    readonly event: AssistantLiveChunkEvent;\n};',
+    declaration: 'export type SessionEventLikeEntry = {\n    readonly type: \'event\';\n    readonly event: SessionEvent;\n    readonly covers?: SessionHistoryCoverage;\n    readonly turnUsage?: TurnTokenUsage | null;\n    readonly stripped?: true;\n} | {\n    readonly type: \'transient\';\n    readonly event: AssistantLiveChunkEvent;\n};',
   },
   {
     name: 'SessionEventSource',
@@ -916,6 +944,18 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface SessionHistoryCoverage {\n    readonly from: number;\n    readonly to: number;\n}',
   },
   {
+    name: 'SessionHistoryRecord',
+    declaration: 'export interface SessionHistoryRecord extends SessionEventEntry {\n    readonly covers?: SessionHistoryCoverage;\n}',
+  },
+  {
+    name: 'SessionHistorySource',
+    declaration: 'export interface SessionHistorySource {\n    opening(sessionId: SessionId, window: LocalHistoryWindow): Promise<LocalHistoryPage | undefined>;\n    page(sessionId: SessionId, request: LocalHistoryWindow & {\n        readonly beforeSeq?: number;\n        readonly throughSeq: number;\n    }): Promise<LocalHistoryPage | undefined>;\n    interval(sessionId: SessionId, request: {\n        readonly fromSeq: number;\n        readonly throughSeq: number;\n        readonly full: boolean;\n    }): Promise<readonly LocalHistoryRecord[] | undefined>;\n    elided(sessionId: SessionId, request: {\n        readonly turn: number;\n        readonly fromSeq?: number;\n        readonly throughSeq: number;\n        readonly full: boolean;\n    }): Promise<readonly LocalHistoryRecord[] | undefined>;\n    append(sessionId: SessionId, lines: readonly {\n        readonly seq: number;\n        readonly line: string;\n        readonly link: SessionChainLink;\n    }[]): void;\n    opened(sessionId: SessionId): void;\n    diverged(sessionId: SessionId): void;\n}',
+  },
+  {
+    name: 'SessionHistorySourceOptions',
+    declaration: 'export interface SessionHistorySourceOptions {\n    readonly memoryBudgetBytes: number;\n    readonly warmFollowGraceMs: number;\n    readonly readerLoadGraceMs: number;\n}',
+  },
+  {
     name: 'SessionIdOf',
     declaration: 'export type SessionIdOf = SessionStandardProps extends {\n    sessionId: infer S;\n} ? S : string;',
   },
@@ -930,6 +970,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'SessionMaybeStandardProps',
     declaration: 'export interface SessionMaybeStandardProps {\n}',
+  },
+  {
+    name: 'SessionPageRequest',
+    declaration: 'export interface SessionPageRequest {\n    readonly address: SessionAddress;\n    readonly throughSeq?: number;\n    readonly beforeSeq?: number;\n    readonly maxMessages?: number;\n    readonly turnWindow?: {\n        readonly minMessages: number;\n        readonly minTurns: number;\n    };\n    readonly fromSeq?: number;\n    readonly stepDetail?: SessionStepDetail;\n}',
   },
   {
     name: 'SessionProjectionSnapshot',
@@ -969,7 +1013,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'SessionSnapshot',
-    declaration: 'export interface SessionSnapshot {\n    readonly sessionId: SessionId;\n    readonly pendingSubmissions: readonly PendingSubmission[];\n    readonly running: boolean;\n    readonly subagent: {\n        readonly address: SubagentAddress;\n        readonly parentAvailable?: boolean;\n    } | null;\n    readonly removed: boolean;\n    readonly openState: OpenState;\n    readonly openError: RemoteFailure | null;\n    readonly hasMore: boolean;\n    readonly loadingOlder: boolean;\n    readonly stepDigests: StepDigestsByTurn;\n    readonly stepAccounts: StepDigestsByTurn;\n    readonly expandingTurns: ReadonlySet<number>;\n    readonly loadingStepDetail: boolean;\n    readonly stepDetailError: RemoteFailure | null;\n    readonly promptError: PromptError | null;\n    readonly blank: boolean;\n    readonly lastAgentError: string | null;\n    readonly promptAttempted: boolean;\n    readonly awaitingFirstTurn: boolean;\n}',
+    declaration: 'export interface SessionSnapshot {\n    readonly sessionId: SessionId;\n    readonly pendingSubmissions: readonly PendingSubmission[];\n    readonly running: boolean;\n    readonly subagent: {\n        readonly address: SubagentAddress;\n        readonly parentAvailable?: boolean;\n    } | null;\n    readonly removed: boolean;\n    readonly openState: OpenState;\n    readonly unconfirmed: boolean;\n    readonly incompleteCopy: boolean;\n    readonly openError: RemoteFailure | null;\n    readonly hasMore: boolean;\n    readonly loadingOlder: boolean;\n    readonly stepDigests: StepDigestsByTurn;\n    readonly stepAccounts: StepDigestsByTurn;\n    readonly expandingTurns: ReadonlySet<number>;\n    readonly loadingStepDetail: boolean;\n    readonly stepDetailError: RemoteFailure | null;\n    readonly promptError: PromptError | null;\n    readonly blank: boolean;\n    readonly lastAgentError: string | null;\n    readonly promptAttempted: boolean;\n    readonly awaitingFirstTurn: boolean;\n}',
   },
   {
     name: 'SessionStandardProps',
@@ -982,6 +1026,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'SessionTarget',
     declaration: 'export type SessionTarget = SessionId | SubagentAddress;',
+  },
+  {
+    name: 'SessionWireEvent',
+    declaration: 'export interface SessionWireEvent {\n    readonly type: string;\n    readonly seq: number;\n    readonly time: number;\n    readonly data: JsonValue;\n    readonly ignorable?: true;\n    readonly sourceEventSeqs?: JsonValue;\n    readonly surfaceOp?: JsonValue;\n}',
   },
   {
     name: 'SlotComponent',

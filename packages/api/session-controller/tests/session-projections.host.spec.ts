@@ -354,7 +354,7 @@ describe('session.history projections block', () => {
     // Constant unit: appending events must never broadcast an imageLimits projection.
     await new Promise(resolve => setTimeout(resolve, 0))
     const abort = new AbortController()
-    const iterator = gateway.control(abort.signal)[Symbol.asyncIterator]()
+    const iterator = gateway.control({}, abort.signal)[Symbol.asyncIterator]()
     await iterator.next()
     const next = iterator.next()
     seedMessages(session, 1)
@@ -407,7 +407,7 @@ describe('session.history projections block', () => {
     const proxy = await remote(ctx)
     await new Promise(resolve => setTimeout(resolve, 0))
     const abort = new AbortController()
-    const iterator = proxy.control(abort.signal)[Symbol.asyncIterator]()
+    const iterator = proxy.control({}, abort.signal)[Symbol.asyncIterator]()
     const baseline = await iterator.next()
     if (baseline.done || baseline.value.type !== 'baseline') {
       throw new Error('control stream ended before its baseline')
@@ -837,7 +837,7 @@ describe('Session control projection frames', () => {
     // fiber activates asynchronously; yield until it lands before appending.
     await new Promise(resolve => setTimeout(resolve, 0))
     const abort = new AbortController()
-    const stream = proxy.control(abort.signal)
+    const stream = proxy.control({}, abort.signal)
     const collected = collect(stream, 6, abort)
 
     const now = vi.spyOn(Date, 'now').mockReturnValue(100)

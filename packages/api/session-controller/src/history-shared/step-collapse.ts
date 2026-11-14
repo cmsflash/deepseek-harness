@@ -14,10 +14,11 @@
  * @module
  */
 
-import { isAppendSurfaceEvent, type SessionEvent } from '@deepseek-ai/dsh-session'
+import { isAppendSurfaceEvent } from '@deepseek-ai/dsh-session/surface'
+import type { SessionEvent } from '@deepseek-ai/dsh-session/types'
 import type {} from '@deepseek-ai/dsh-tool-executor-ptc/types'
 import { appliedFileDiffs, fileDiffLineDelta } from '@deepseek-ai/dsh-tools/presentation'
-import type { StepDigest } from './types.ts'
+import type { StepDigest } from '../types.ts'
 
 /** Step coordinate carried by every event logged inside a step window. */
 interface StepCoordinate {

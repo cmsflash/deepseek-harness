@@ -50,6 +50,8 @@ export type SettingsRootInjected = {
     desktopUpdate: HostObservable<DesktopUpdateView>
     /** Connection-owned state for the current Host connection. */
     connectionState: HostObservable<ConnectionState | undefined>
+    /** Whether the page is answering from its offline record because the Host is unreachable. */
+    offline: HostObservable<boolean>
     /** settings.section ledger projected into ordered nav rows. */
     sections: HostObservable<readonly SettingsSectionRow[]>
     /** settings.onboarding ledger projected into coordinator order. */

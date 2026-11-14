@@ -79,6 +79,7 @@
     "@deepseek-ai/dsh-typert-registry": "workspace:*",
     "@deepseek-ai/dsh-util-crypto": "workspace:*",
     "@types/ws": "^8.18.1",
+    "fake-indexeddb": "^6.2.4",
     "@deepseek-ai/cordis": "workspace:~",
     "zod": "4.4.3"
   }

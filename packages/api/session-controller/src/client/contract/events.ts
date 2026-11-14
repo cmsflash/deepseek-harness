@@ -30,6 +30,8 @@ export type SessionEventLikeEntry =
     readonly covers?: SessionHistoryCoverage
     /** Host whole-turn accounting on turn/end, or null when unavailable. */
     readonly turnUsage?: TurnTokenUsage | null
+    /** The recorded stream was cut to its first-token prefix; `requireFullHistory` restores it. */
+    readonly stripped?: true
   }
   | { readonly type: 'transient'; readonly event: AssistantLiveChunkEvent }
 

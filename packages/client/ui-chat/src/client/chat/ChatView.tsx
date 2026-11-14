@@ -15,6 +15,7 @@ import type { ChatFlowHookContext, ChatViewSlotProps, OpenFileOptions } from '..
 import type { ChatSnapshot } from '../contract/snapshot.ts'
 import { TurnNavigator } from './TurnNavigator.tsx'
 import { mergeTurnRailItems } from './turn-rail-items.ts'
+import { chatRowSeq } from './row-seq.ts'
 import { useTextInteraction } from './text-interaction.ts'
 import { useChatScroll } from './use-chat-scroll.ts'
 import { fileMediaUrl, resolveWorkspacePath, sessionFileAddress } from '@deepseek-ai/dsh-util-workspace-path'
@@ -60,14 +61,19 @@ const MOTION_TAIL_MS = 800
  */
 export function ChatView({
   useSession, useChat, useConversation, useSessions, renderSlot,
-  sessionId, openFile, openExternalLink, loadOlder, loadThrough, loadImage, inspectCall, chatScroll, forkAt, fileMentions,
-  usePresentation, useProjection, useInteractionIds, dispatchInteraction, t, fileDrag,
+  sessionId, openFile, openExternalLink, loadOlder, loadThrough, loadImage, inspectCall, chatScroll, forkAt, fileMentions, markViewed,
+  usePresentation, useOffline, useProjection, useInteractionIds, dispatchInteraction, t, fileDrag,
 }: ChatViewSlotProps) {
   const order = useChat(s => s.order)
   const groupedEntries = useConversation(snapshot => snapshot.views.grouped('chat')?.entries)
   const entries = useMemo<readonly RenderEntry[]>(() => groupedEntries
     ?? order.map(key => ({ kind: 'node', key: key as NodeKey })), [groupedEntries, order])
   const nodeStore = useChat(s => s.nodes)
+  const locations = useChat(s => s.locations)
+  const seqOfRow = useCallback(
+    (anchorKey: string, turn: number | null): number | null => chatRowSeq(anchorKey, turn, nodeStore, locations),
+    [nodeStore, locations],
+  )
   const deferCompletedTurns = usePresentation(policy => policy.collapseTiming === 'next-input')
   const transcriptView = usePresentation(policy => policy.mode)
   // The rail's items are accumulated in the Chat snapshot, so this selector is
@@ -93,6 +99,8 @@ export function ChatView({
       dialog: t('image.dialog'), close: t('image.close'),
     },
   }), [cwd, t, fileDrag, sessionId])
+  const offline = useOffline(isOffline => isOffline)
+  const incompleteCopy = useSession(s => s.incompleteCopy)
   const running = useSession(s => s.running)
   // Fold transitions run while a Turn is live, while an input is pending, and briefly after settling.
   const [motionTail, setMotionTail] = useState(false)
@@ -195,6 +203,8 @@ export function ChatView({
     submissionSteers: visibleSubmissions.at(-1)?.placement === 'steering',
     loadedTurns: turnNavigationItems,
     transcriptView,
+    markViewed,
+    seqOfRow,
   })
   const interactionSurfaceRef = useRef<HTMLDivElement>(null)
   const interactionIds = useInteractionIds(ids => ids)
@@ -203,6 +213,12 @@ export function ChatView({
 
   return (
     <div className={css.frame}>
+      {offline && (
+        <div className={css.offline} role="status">
+          <span>{t('chat.offline')}</span>
+          {incompleteCopy && <span className={css.offlineIncomplete}>{t('chat.offlineIncomplete')}</span>}
+        </div>
+      )}
       {scroll.initialized && (
         <TurnNavigator
           items={railItems}
