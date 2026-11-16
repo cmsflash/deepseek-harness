@@ -278,6 +278,7 @@ interface BenchOptions {
   readonly workspaces?: WorkspaceSnapshot
   readonly sessions?: SessionListState
   readonly configureSessions?: (sessions: FakeSessions) => void
+  readonly keepSpareBlank?: boolean
 }
 
 function bench(options: BenchOptions = {}) {
@@ -311,6 +312,7 @@ function bench(options: BenchOptions = {}) {
     sessions,
     view.actions,
     notify,
+    options.keepSpareBlank ?? false,
   )
   return { ctx, directoryPicker, sessions, uiWorkspace, workspaces, layout, selectPanel, view, notify, requestDraftInitialization }
 }
@@ -694,6 +696,121 @@ describe('UiWorkspaceService', () => {
       expect(b.sessions.create).toHaveBeenCalledExactlyOnceWith({ workspaceId: wid('a'), sessionId: sid('blank') })
     })
     await vi.waitFor(() => { expect(b.sessions.retain).toHaveBeenCalledWith(sid('blank'), expect.anything()) })
+  })
+
+  it('opens a listed blank before the Host confirms it, and the Session the Host returns instead', async () => {
+    const b = bench({
+      sessions: sessionState([summary('blank', { blank: true, cwd: '/w/a' })], 'pending'),
+      workspaces: workspaceState([workspace('a', [sid('blank')])]),
+    })
+    const confirmed = Promise.withResolvers<SessionId>()
+    b.sessions.create.mockReturnValue(confirmed.promise)
+    const reused = b.uiWorkspace.openWorkspace(wid('a'))
+    expect(b.sessions.retain).toHaveBeenCalledExactlyOnceWith(sid('blank'), { source: 'mainView' })
+    expect(b.selectPanel).toHaveBeenCalledWith(null)
+    confirmed.resolve(sid('blank'))
+    await reused
+    expect(b.sessions.retain).toHaveBeenCalledOnce()
+
+    const declined = Promise.withResolvers<SessionId>()
+    b.sessions.create.mockReturnValue(declined.promise)
+    const replaced = b.uiWorkspace.openWorkspace(wid('a'))
+    expect(b.sessions.retain).toHaveBeenLastCalledWith(sid('blank'), { source: 'mainView' })
+    declined.resolve(sid('other'))
+    await replaced
+    expect(b.sessions.retain).toHaveBeenLastCalledWith(sid('other'), { source: 'mainView' })
+    expect(b.sessions.retained.at(-2)?.release).toHaveBeenCalledOnce()
+  })
+
+  it('keeps a listed blank open and reports the failure when the Host refuses to confirm it', async () => {
+    const b = bench({
+      sessions: sessionState([summary('blank', { blank: true, cwd: '/w/a' })], 'pending'),
+      workspaces: workspaceState([workspace('a', [sid('blank')])]),
+    })
+    b.sessions.create.mockRejectedValue(new Error('offline'))
+    await expect(b.uiWorkspace.openWorkspace(wid('a'))).rejects.toThrow('offline')
+    expect(b.sessions.retain).toHaveBeenCalledExactlyOnceWith(sid('blank'), { source: 'mainView' })
+    expect(b.sessions.retained[0]?.release).not.toHaveBeenCalled()
+    expect(b.notify).toHaveBeenCalledExactlyOnceWith({ kind: 'createFailed', message: 'offline' })
+  })
+
+  it('waits for the Host before opening a listed blank whose draft it prepares', async () => {
+    const b = bench({
+      sessions: sessionState([summary('blank', { blank: true, cwd: '/w/a' })], 'pending'),
+      workspaces: workspaceState([workspace('a', [sid('blank')])]),
+    })
+    const confirmed = Promise.withResolvers<SessionId>()
+    b.sessions.create.mockReturnValue(confirmed.promise)
+    const prepare = vi.fn()
+    const opening = b.uiWorkspace.openWorkspace(wid('a'), prepare)
+    expect(b.sessions.retain).not.toHaveBeenCalled()
+    confirmed.resolve(sid('blank'))
+    await opening
+    expect(prepare).toHaveBeenCalledExactlyOnceWith(sid('blank'))
+  })
+
+  describe('spare blank', () => {
+    const main = summary('main', { cwd: '/w/a' })
+    const ready = workspaceState([workspace('a', [sid('main')]), workspace('b')])
+    /** Opens `main` before either list is ready, so startup restoration selects nothing. */
+    const opened = (): ReturnType<typeof bench> => {
+      const b = bench({ keepSpareBlank: true })
+      b.uiWorkspace.openSession(sid('main'))
+      return b
+    }
+
+    it('creates one blank in the main Session\'s Workspace and another only after that one starts', async () => {
+      const b = opened()
+      const created = Promise.withResolvers<SessionId>()
+      b.sessions.create.mockReturnValue(created.promise)
+      b.workspaces.list.set(ready)
+      expect(b.sessions.create).not.toHaveBeenCalled()
+      b.sessions.list.set(sessionState([main]))
+      expect(b.sessions.create).toHaveBeenCalledExactlyOnceWith({ workspaceId: wid('a') })
+      b.sessions.list.update(state => ({ ...state }))
+      expect(b.sessions.create).toHaveBeenCalledOnce()
+      created.resolve(sid('spare'))
+      await new Promise<void>((resolve) => { setTimeout(resolve) })
+      b.sessions.list.update(state => ({ ...state }))
+      expect(b.sessions.create).toHaveBeenCalledOnce()
+
+      b.sessions.list.set(sessionState([main, summary('spare', { blank: true, cwd: '/w/a' })]))
+      b.workspaces.list.set(workspaceState([workspace('a', [sid('main'), sid('spare')]), workspace('b')]))
+      expect(b.sessions.create).toHaveBeenCalledOnce()
+
+      b.sessions.list.set(sessionState([main, summary('spare', { cwd: '/w/a' })]))
+      expect(b.sessions.create).toHaveBeenCalledTimes(2)
+      expect(b.sessions.create).toHaveBeenLastCalledWith({ workspaceId: wid('a') })
+    })
+
+    it('creates none while the main Session is blank or outside every Workspace', () => {
+      const blank = opened()
+      blank.workspaces.list.set(ready)
+      blank.sessions.list.set(sessionState([summary('main', { blank: true, cwd: '/w/a' })]))
+      const ungrouped = opened()
+      ungrouped.workspaces.list.set(workspaceState([workspace('a')]))
+      ungrouped.sessions.list.set(sessionState([main]))
+      for (const b of [blank, ungrouped]) expect(b.sessions.create).not.toHaveBeenCalled()
+    })
+
+    it('does not retry a Workspace whose spare creation failed, and creates none after disposal', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+      const b = opened()
+      b.sessions.create.mockRejectedValue(new Error('refused'))
+      b.workspaces.list.set(ready)
+      b.sessions.list.set(sessionState([main]))
+      await vi.waitFor(() => { expect(warn).toHaveBeenCalledWith('spare blank Session creation failed:', expect.any(Error)) })
+      b.sessions.list.update(state => ({ ...state }))
+      expect(b.sessions.create).toHaveBeenCalledOnce()
+
+      const disposed = opened()
+      disposed.workspaces.list.set(ready)
+      const listeners = disposed.sessions.list.listenersSnapshot()
+      await disposed.ctx.fiber.dispose()
+      disposed.sessions.list.set(sessionState([main]))
+      for (const listener of listeners) listener()
+      expect(disposed.sessions.create).not.toHaveBeenCalled()
+    })
   })
 
   it('reuses any blank without a requested preset and only a matching blank with one', async () => {

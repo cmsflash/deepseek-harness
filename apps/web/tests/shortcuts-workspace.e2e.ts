@@ -231,6 +231,9 @@ it.skipIf(mode === 'record')('explains a first-turn fork refusal and retries fro
     await page.getByText('The first turn has not ended.', { exact: true }).waitFor()
     const selected = page.getByRole('treeitem', { selected: true })
     await selected.filter({ hasText: 'First turn' }).waitFor()
+    // The started Session's Workspace receives its spare blank.
+    await expect.poll(() => scaffold.ctx.agents.list().length).toBe(existing.size + 1)
+    for (const agent of scaffold.ctx.agents.list()) existing.add(agent.id)
     await page.keyboard.press('Meta+Slash')
     const reference = page.getByRole('dialog', { name: 'Keyboard shortcuts', exact: true })
     await reference.getByRole('button', { name: 'Edit shortcut for Fork session', exact: true }).click()

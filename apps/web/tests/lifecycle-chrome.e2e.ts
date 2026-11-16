@@ -415,9 +415,9 @@ describe('web e2e: lifecycle & chrome (workspace flow / reload / dark mode)', ()
     // Host: the session's durable header cwd is the folder the workspace
     // flow created and adopted (<workspaceCwd>/workspace) — the proof the
     // send went through workspace materialization rather than a bare
-    // default-cwd session.
+    // default-cwd session. The Workspace's spare blank shares that folder.
     const cwds = scaffold.ctx.sessions.list().map(session => session.header.cwd)
-    expect(cwds).toEqual([join(scaffold.workspaceCwd, 'workspace')])
+    expect(new Set(cwds)).toEqual(new Set([join(scaffold.workspaceCwd, 'workspace')]))
     const turnEnds = sessionEvents.filter(e => e.type === 'turn/end')
     expect(turnEnds).toHaveLength(1)
     expect((turnEnds[0] as SessionEvent & { data: { reason: { kind: string } } }).data.reason.kind).toBe('completed')

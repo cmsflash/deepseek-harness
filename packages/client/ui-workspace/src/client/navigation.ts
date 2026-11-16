@@ -45,6 +45,8 @@ export interface UiWorkspace {
   openSession(target: SessionTarget): void
   /**
    * Connect a Workspace and open its Session unless a later navigation supersedes it.
+   * Without `beforeOpen`, a listed reusable blank opens before the Host confirms it,
+   * and the Session the Host returns replaces it when they differ.
    * @param workspaceId - target Workspace.
    * @param beforeOpen - optional synchronous preparation for the selected Session,
    * skipped after supersession; a throw aborts the open and releases the retained reference.
@@ -175,6 +177,9 @@ class UiWorkspaceService extends Service implements UiWorkspace {
   )
   private mainReference: SessionReference | undefined
   private restorationNavigation: AbortSignal | undefined
+  /** The blank created ahead of use per Workspace, null while being created; another is created only after it starts. */
+  private readonly spares = new Map<WorkspaceId, SessionId | null>()
+  private readonly spareFailures = new Set<WorkspaceId>()
 
   /**
    * @param ctx - Client root Context.
@@ -183,6 +188,7 @@ class UiWorkspaceService extends Service implements UiWorkspace {
    * @param sessions - pure Session Controller.
    * @param view - the browser's viewing-store write set (one instance shared with its registration).
    * @param notify - show one notice through the Workspace notice channel.
+   * @param keepSpareBlank - whether the main Session's Workspace always holds a blank created ahead of use.
    */
   constructor(
     ctx: Context,
@@ -191,6 +197,7 @@ class UiWorkspaceService extends Service implements UiWorkspace {
     private readonly sessions: ISessions,
     private readonly view: Pick<WorkspaceViewStoreActions, 'pinSessionOrder'>,
     private readonly notify: (toast: RowToast) => void,
+    private readonly keepSpareBlank: boolean,
   ) {
     super(ctx, 'uiWorkspace')
     ctx.effect(() => {
@@ -233,20 +240,55 @@ class UiWorkspaceService extends Service implements UiWorkspace {
 
   /** Name the first reusable member blank; a requested preset also skips blanks listing another preset. */
   private createInWorkspace(workspace: WorkspaceView, options: Pick<StartSessionOptions, 'agentPreset'>): Promise<SessionId> {
+    const blank = this.reusableBlank(workspace, options)
+    return this.createNamed({
+      workspaceId: workspace.workspaceId,
+      ...(blank === undefined ? {} : { sessionId: blank }),
+      ...(options.agentPreset === undefined ? {} : { agentPreset: options.agentPreset }),
+    })
+  }
+
+  private reusableBlank(workspace: WorkspaceView, options: Pick<StartSessionOptions, 'agentPreset'>): SessionId | undefined {
     const archived = this.workspaces.list.getSnapshot().archivedSessionIds
     const sessions = this.sessions.list.getSnapshot()
-    const blank = sessions.ids.find((id) => {
+    return sessions.ids.find((id) => {
       const summary = sessions.byId[id]
       const listed = summary?.projectionValues?.agentPreset
       return summary !== undefined && summary.blank && summary.cwd === workspace.path
         && workspace.sessionIds.includes(id) && !archived.includes(id)
         && (options.agentPreset === undefined || typeof listed !== 'string' || listed === options.agentPreset)
     })
-    return this.createNamed({
-      workspaceId: workspace.workspaceId,
-      ...(blank === undefined ? {} : { sessionId: blank }),
-      ...(options.agentPreset === undefined ? {} : { agentPreset: options.agentPreset }),
-    })
+  }
+
+  /**
+   * Create a blank in the main Session's Workspace when it lists none, so the
+   * next New Session there opens without waiting for the Host. A Workspace
+   * whose creation failed is not retried.
+   */
+  private ensureSpareBlank(): void {
+    if (!this.keepSpareBlank || this.lifetime.signal.aborted) return
+    const current = this.mainReference?.sessionId
+    const workspaces = this.workspaces.list.getSnapshot()
+    const sessions = this.sessions.list.getSnapshot()
+    if (current === undefined || workspaces.phase !== 'ready' || sessions.phase !== 'ready') return
+    if (sessions.byId[current]?.blank !== false) return
+    const workspace = workspaces.items.find(item => item.sessionIds.includes(current))
+    if (workspace === undefined) return
+    const { workspaceId } = workspace
+    if (this.spareFailures.has(workspaceId) || this.connecting.has(workspaceId)) return
+    if (this.reusableBlank(workspace, {}) !== undefined) return
+    const spare = this.spares.get(workspaceId)
+    // The created blank joins the Workspace list after creation resolves; until it has started, it is the spare.
+    if (spare === null || (spare !== undefined && sessions.byId[spare]?.blank !== false)) return
+    this.spares.set(workspaceId, null)
+    void this.connectBlank(workspaceId, {}).then(
+      (sessionId) => { this.spares.set(workspaceId, sessionId) },
+      (reason: unknown) => {
+        this.spares.delete(workspaceId)
+        this.spareFailures.add(workspaceId)
+        console.warn('spare blank Session creation failed:', reason)
+      },
+    )
   }
 
   /**
@@ -307,6 +349,11 @@ class UiWorkspaceService extends Service implements UiWorkspace {
     beforeOpen: ((sessionId: SessionId) => void) | undefined,
     reuse: Pick<StartSessionOptions, 'agentPreset'>,
   ): Promise<void> {
+    const workspace = this.workspaces.list.getSnapshot().items.find(item => item.workspaceId === workspaceId)
+    // Draft preparation writes only to the Session the Host confirmed.
+    const listed = workspace === undefined || beforeOpen !== undefined ? undefined : this.reusableBlank(workspace, reuse)
+    // Revealing the Conversation supersedes pending navigation, so this request's own navigation begins after it.
+    if (listed !== undefined) this.replaceMain(listed, this.lifetime.signal, 'reveal')
     const navigation = AbortSignal.any([this.ctx.layout.beginNavigation(), this.lifetime.signal])
     let sessionId: SessionId
     try {
@@ -317,7 +364,7 @@ class UiWorkspaceService extends Service implements UiWorkspace {
       if (!navigation.aborted) this.notify({ kind: 'createFailed', message: creationFailureMessage(error) })
       throw error
     }
-    if (navigation.aborted) return
+    if (navigation.aborted || sessionId === listed) return
     this.replaceMain(sessionId, navigation, 'reveal', beforeOpen)
   }
 
@@ -433,6 +480,7 @@ class UiWorkspaceService extends Service implements UiWorkspace {
     const reconcile = (): void => {
       if (this.lifetime.signal.aborted) return
       if (this.clearArchivedCurrent()) return
+      this.ensureSpareBlank()
       if (initial !== 'waiting' || this.restorationNavigation?.aborted === true) return
       const workspace = this.workspaces.list.getSnapshot()
       const sessions = this.sessions.list.getSnapshot()
@@ -550,6 +598,7 @@ class UiWorkspaceService extends Service implements UiWorkspace {
     this.mainReference = reference
     previous?.release()
     if (panel === 'reveal') this.ctx.layout.selectPanel(null)
+    this.ensureSpareBlank()
   }
 
 }
