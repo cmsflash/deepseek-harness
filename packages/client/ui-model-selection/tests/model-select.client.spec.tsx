@@ -391,19 +391,17 @@ describe('ModelSelect reasoning effort', () => {
     const rejected = screen.getByRole('menuitemradio', { name: /DeepSeek-V4-Pro/ })
     fireEvent.mouseMove(rejected)
     fireEvent.click(rejected)
+    expect(screen.queryByRole('menu')).toBeNull()
     const toast = await screen.findByRole('alert')
     expect(document.activeElement).toBe(trigger)
     expect(toast.textContent).toBe(sessionInUse
       ? zh['error.sessionInUse']
       : '模型操作失败：session/model-unavailable: session already contains images')
-    // The selection failure does not render the in-menu load strip (no Retry).
-    expect(screen.queryByRole('button', { name: '重试' })).toBeNull()
-    fireEvent.keyDown(trigger, { key: 'Tab' })
-    expect(screen.queryByRole('searchbox')).toBeNull()
-    expect(document.activeElement).toBe(screen.getByRole('menuitemradio', { name: 'DeepSeek-V4-Flash' }))
+    expect(screen.queryByRole('menu')).toBeNull()
+    expect(trigger.title).toBe('DeepSeek-V4-Flash · High')
   })
 
-  it('spins on the trigger and the chosen model row until the selection settles, across pane changes', async () => {
+  it('closes on a pick, shows it at once, and spins on the trigger and the reopened row until the selection settles', async () => {
     const groups = [{
       id: 'deepseek-official',
       name: 'DeepSeek',
@@ -415,7 +413,7 @@ describe('ModelSelect reasoning effort', () => {
     const directory = createSnapshotStore<ModelDirectoryState>(state({ groups }))
     let settle!: () => void
     const select = vi.fn((selection: ModelSelection) => {
-      directory.set(state({ groups, status: 'selecting', pending: selection }))
+      directory.set(state({ groups, current: selection, status: 'selecting', pending: selection }))
       return new Promise<{ ok: true; value: undefined }>((resolve) => {
         settle = () => {
           directory.set(state({ groups, current: selection }))
@@ -432,26 +430,30 @@ describe('ModelSelect reasoning effort', () => {
     fireEvent.click(trigger)
     fireEvent.click(screen.getByRole('menuitem', { name: /模型/ }))
     fireEvent.click(screen.getByRole('menuitemradio', { name: /DeepSeek-V4-Pro/ }))
-    expect(spinners()).toHaveLength(2)
-    expect(screen.getByRole('menuitemradio', { name: /DeepSeek-V4-Pro/ }).querySelector('[data-state="ongoing"]')).not.toBeNull()
+    expect(screen.queryByRole('menu')).toBeNull()
+    expect(trigger.getAttribute('aria-expanded')).toBe('false')
+    expect(trigger.title).toBe('DeepSeek-V4-Pro')
+    await waitFor(() => { expect(document.activeElement).toBe(trigger) })
+    expect(spinners()).toHaveLength(1)
     expect(trigger.querySelector('[data-state="ongoing"]')).not.toBeNull()
     expect(trigger.getAttribute('aria-busy')).toBe('true')
 
-    // Leaving the pane unmounts the row; the trigger keeps the feedback.
-    fireEvent.keyDown(trigger, { key: 'Escape' })
-    expect(screen.queryByRole('menuitemradio')).toBeNull()
-    expect(spinners()).toHaveLength(1)
-    expect(trigger.querySelector('[data-state="ongoing"]')).not.toBeNull()
+    fireEvent.click(trigger)
+    fireEvent.click(screen.getByRole('menuitem', { name: /模型/ }))
+    expect(spinners()).toHaveLength(2)
+    expect(screen.getByRole('menuitemradio', { name: /DeepSeek-V4-Pro/ }).querySelector('[data-state="ongoing"]')).not.toBeNull()
 
+    // A menu the user reopened stays open when the Host accepts.
     await act(async () => { settle() })
     expect(spinners()).toHaveLength(0)
     expect(trigger.getAttribute('aria-busy')).toBe('false')
+    expect(screen.getByRole('menuitemradio', { name: /DeepSeek-V4-Pro/ }).getAttribute('aria-checked')).toBe('true')
   })
 
-  it('spins on the chosen effort row only', () => {
+  it('closes on an effort pick and spins on the chosen effort row only when reopened', () => {
     const directory = createSnapshotStore<ModelDirectoryState>(state())
     const select = vi.fn((selection: ModelSelection) => {
-      directory.set(state({ status: 'selecting', pending: selection }))
+      directory.set(state({ current: selection, status: 'selecting', pending: selection }))
       return new Promise<undefined>(() => {})
     })
     render(<ModelSelect effortFor={defaultEffortFor} rememberEffort={vi.fn()}
@@ -461,6 +463,10 @@ describe('ModelSelect reasoning effort', () => {
     fireEvent.click(screen.getByRole('button', { name: /选择模型|当前/ }))
     fireEvent.click(screen.getByRole('menuitem', { name: /推理等级/ }))
     fireEvent.click(screen.getByRole('menuitemradio', { name: /Max/ }))
+    expect(screen.queryByRole('menu')).toBeNull()
+    expect(screen.getByRole('button', { name: /当前/ }).title).toBe('DeepSeek-V4-Flash · Max')
+    fireEvent.click(screen.getByRole('button', { name: /当前/ }))
+    fireEvent.click(screen.getByRole('menuitem', { name: /推理等级/ }))
     expect(screen.getAllByRole('menuitemradio')
       .filter(row => row.querySelector('[data-state="ongoing"]') !== null)
       .map(row => row.textContent)).toEqual(['Max'])
@@ -591,7 +597,7 @@ describe('ModelSelect reasoning effort', () => {
     fireEvent.click(screen.getByRole('button', { name: /当前/ }))
     fireEvent.click(screen.getByRole('menuitem', { name: /推理等级/ }))
     fireEvent.click(screen.getByRole('menuitemradio', { name: /Off/ }))
-    await waitFor(() => { expect(screen.queryByRole('menuitemradio', { name: /Off/ })).toBeTruthy() })
+    await screen.findByRole('alert')
     expect(rememberEffort).not.toHaveBeenCalled()
   })
 

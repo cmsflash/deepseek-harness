@@ -17,7 +17,12 @@ import type { ModelCatalogDirectory } from './catalog.ts'
 
 /** Directory snapshot both entries render from. */
 export interface ModelDirectoryState {
-  /** Saved selection, retained even when its provider or model leaves the catalog. */
+  /**
+   * Displayed selection: the latest submitted selection from `select` until the
+   * Host rejects it or the Session projection next changes after it settled,
+   * otherwise the saved selection, retained even when its provider or model
+   * leaves the catalog.
+   */
   current: ModelSelection | null
   /** Saved effort caption retained when the selected model is unavailable. */
   retainedEffort?: string
@@ -29,7 +34,7 @@ export interface ModelDirectoryState {
   failures: readonly ModelCatalogFailure[]
   /** Lifecycle of the in-flight operation. */
   status: 'idle' | 'loading' | 'ready' | 'selecting' | 'error'
-  /** Selection submitted by the latest `select` until it settles; null otherwise. */
+  /** Selection submitted by the latest `select` while its request is in flight; null otherwise. */
   pending: ModelSelection | null
   /** Whole-request or selection failure text; null when none. */
   error: string | null
@@ -44,6 +49,10 @@ export class ModelDirectory {
 
   /** Latest selection operation wins; an older response never overwrites a newer one. */
   private generation = 0
+  /** Submitted selection displayed in place of the projection; null when the projection is displayed. */
+  private override: ModelSelection | null = null
+  /** Saved selection last displayed from a ready catalog; null before one or after a Host reset. */
+  private saved: ModelSelection | null = null
   private disposed = false
   private readonly unsubscribeCatalog: () => void
   private readonly unsubscribeSelection: () => void
@@ -67,7 +76,10 @@ export class ModelDirectory {
     private readonly track?: TrackProductEvent,
   ) {
     this.unsubscribeCatalog = catalog.store.subscribe(() => { this.syncInputs() })
-    this.unsubscribeSelection = projected.subscribe(() => { this.syncInputs() })
+    this.unsubscribeSelection = projected.subscribe(() => {
+      if (this.store.getSnapshot().pending === null) this.override = null
+      this.syncInputs()
+    })
     this.syncInputs()
   }
 
@@ -83,9 +95,11 @@ export class ModelDirectory {
   }
 
   /**
-   * Select the complete provider/model/reasoning selection. The durable
-   * projection frame updates the shared current; failures surface on the store
-   * and return with the operation so each entry can present its own failure.
+   * Select the complete provider/model/reasoning selection. The shared current
+   * shows it before the Host answers and keeps it after acceptance until the
+   * durable projection frame carries it, in either arrival order. A failure
+   * restores the projected current, surfaces on the store, and returns with
+   * the operation so each entry can present its own failure.
    * @param selection - provider, provider-owned model id, and optional adapter-owned effort.
    * @returns the selection outcome, including the original Remote failure.
    */
@@ -95,6 +109,8 @@ export class ModelDirectory {
     const previousEffort = previous?.reasoningEffort ?? (previous === null ? undefined : this.catalog.reasoningFor(previous)?.defaultEffort)
     const nextEffort = selection.reasoningEffort ?? this.catalog.reasoningFor(selection)?.defaultEffort
     const generation = ++this.generation
+    this.override = selection
+    this.syncInputs()
     this.store.update((s) => { s.status = 'selecting'; s.pending = selection; s.error = null })
     const result = await this.sessions.selectModel({
       sessionId: this.sessionId,
@@ -108,6 +124,8 @@ export class ModelDirectory {
       return result.ok ? { ok: true, value: undefined } : result
     }
     if (!result.ok) {
+      this.override = null
+      this.syncInputs()
       this.store.update((s) => {
         s.status = 'error'
         s.pending = null
@@ -124,16 +142,21 @@ export class ModelDirectory {
       })
     }
     this.store.update((s) => { s.status = 'ready'; s.pending = null; s.error = null })
+    const next = modelSelectionProjection(this.projected.getSnapshot())?.next
+    if (next?.provider === selection.provider && next.model === selection.model
+      && next.reasoningEffort === selection.reasoningEffort) this.override = null
     this.syncInputs()
     return { ok: true, value: undefined }
   }
 
   /**
-   * Invalidate an in-flight selection response from the previous Host generation.
+   * Invalidate an in-flight selection response from the previous Host generation
+   * and stop displaying a submitted selection.
    */
   resetConnected(): void {
     if (this.disposed) return
     ++this.generation
+    this.override = null
     this.store.update((state) => {
       if (state.status === 'selecting') state.status = 'idle'
       state.pending = null
@@ -159,14 +182,15 @@ export class ModelDirectory {
     if (this.disposed) return
     const catalog = this.catalog.store.getSnapshot()
     const projected = modelSelectionProjection(this.projected.getSnapshot())
-    const intended = projected?.next ?? catalog.value?.default
+    const intended = this.override ?? projected?.next ?? catalog.value?.default
     const reasoning = intended === undefined ? undefined : this.catalog.reasoningFor(intended)
     const effort = intended?.reasoningEffort ?? reasoning?.defaultEffort
     const retainedEffort = effort === undefined ? undefined
       : reasoning?.efforts.find(level => level.id === effort)?.name ?? effort
     if (catalog.status !== 'ready' || catalog.value === null || projected === undefined) {
+      if (catalog.value === null) this.saved = null
       this.store.set({
-        current: catalog.value === null ? null : this.store.getSnapshot().current,
+        current: catalog.value === null ? null : this.override ?? this.saved,
         ...retainedEffort === undefined ? {} : { retainedEffort },
         routable: null,
         groups: catalog.value?.groups ?? [],
@@ -177,7 +201,8 @@ export class ModelDirectory {
       })
       return
     }
-    const selection = projected.next ?? catalog.value.default
+    this.saved = projected.next ?? catalog.value.default
+    const selection = this.override ?? this.saved
     const routable = catalog.value.groups.some(group => group.id === selection.provider
       && group.models.some(model => model.id === selection.model))
     this.store.set({

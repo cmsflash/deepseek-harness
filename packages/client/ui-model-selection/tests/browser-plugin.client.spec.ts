@@ -78,6 +78,8 @@ async function bench(locale: 'zh' | 'en' = 'zh') {
   let catalogFailure = false
   let groups = GROUPS
   let selectionFailure: RemoteError<'session/writer-held'> | undefined
+  let held: Promise<void> | undefined
+  let publishesProjection = true
   const sessionRemote = {
     modelCatalog: () => {
       calls.models += 1
@@ -94,16 +96,20 @@ async function bench(locale: 'zh' | 'en' = 'zh') {
     },
     selectModel: (payload: { sessionId: SessionId; provider: string; model: string; reasoningEffort?: string }) => {
       calls.select += 1
-      if (selectionFailure !== undefined) return Promise.resolve({ ok: false as const, error: selectionFailure })
-      selected = {
-        provider: payload.provider,
-        model: payload.model,
-        ...payload.reasoningEffort === undefined
-          ? {}
-          : { reasoningEffort: ReasoningEffortId(payload.reasoningEffort) },
+      const failure = selectionFailure
+      const respond = () => {
+        if (failure !== undefined) return { ok: false as const, error: failure }
+        selected = {
+          provider: payload.provider,
+          model: payload.model,
+          ...payload.reasoningEffort === undefined
+            ? {}
+            : { reasoningEffort: ReasoningEffortId(payload.reasoningEffort) },
+        }
+        if (publishesProjection) projections.get(payload.sessionId)?.set({ lastUsed: null, next: selected })
+        return { ok: true as const, value: { selected } }
       }
-      projections.get(payload.sessionId)?.set({ lastUsed: null, next: selected })
-      return Promise.resolve({ ok: true as const, value: { selected } })
+      return held === undefined ? Promise.resolve(respond()) : held.then(respond)
     },
   }
   const remote = Object.assign(new TestRemote(ctx), { session: sessionRemote })
@@ -217,6 +223,14 @@ async function bench(locale: 'zh' | 'en' = 'zh') {
     rejectSelection: () => {
       selectionFailure = new RemoteError('session/writer-held', 'writer held', { sessionId: sid('owned') })
     },
+    /** Hold the responses of later selectModel calls until the returned release runs. */
+    holdSelections: (): () => void => {
+      let release!: () => void
+      held = new Promise<void>((resolve) => { release = resolve })
+      return release
+    },
+    /** Accepted selections stop publishing their projection frame; the spec delivers it. */
+    withholdProjection: () => { publishesProjection = false },
     setHostCurrent: (selection: ModelSelection) => { defaultSelection = selection },
     setProjected: (id: SessionId, value: ModelSelectionProjection) => { projections.get(id)?.set(value) },
     address: (id: SessionId) => { addressed.add(id) },
@@ -298,10 +312,12 @@ describe('ui-model-selection dual entry', () => {
     const b = await bench()
     b.mint('s1')
     const seatFace = b.seat().inject!(sid('s1'))
-    // Switch through the SEAT entry; the directory holds the submission until it settles.
+    // Switch through the SEAT entry; the directory shows the submission before it settles.
     const selection = { provider: 'deepseek-official', model: 'deepseek-v4-pro', reasoningEffort: 'max' }
     const settled = seatFace.select(selection)
-    expect(seatFace.directory.getSnapshot()).toMatchObject({ status: 'selecting', pending: selection })
+    expect(seatFace.directory.getSnapshot()).toMatchObject({
+      current: selection, retainedEffort: 'Max', routable: true, status: 'selecting', pending: selection,
+    })
     expect(await settled).toEqual({ ok: true, value: undefined })
     expect(seatFace.directory.getSnapshot()).toMatchObject({ status: 'ready', pending: null })
     expect(b.hostCurrent()).toEqual({
@@ -383,6 +399,122 @@ describe('ui-model-selection dual entry', () => {
       b.popup().options(projection('b'), new AbortController().signal),
     ])
     expect(b.calls.models).toBe(1)
+  })
+
+  const FLASH = { provider: 'deepseek-official', model: 'deepseek-v4-flash' }
+  const PRO = { provider: 'deepseek-official', model: 'deepseek-v4-pro' }
+  const EXTERNAL = { provider: 'external', model: 'deepseek-v4-flash' }
+
+  /** A loaded seat plus every `current` its directory publishes from here on. */
+  async function loadedSeat(b: Awaited<ReturnType<typeof bench>>) {
+    b.mint('s1')
+    const face = b.seat().inject!(sid('s1'))
+    await b.ctx.modelDirectories.directoryFor(sid('s1')).load()
+    const shown: ReturnType<typeof face.directory.getSnapshot>['current'][] = []
+    face.directory.subscribe(() => { shown.push(face.directory.getSnapshot().current) })
+    return { face, shown }
+  }
+
+  it('restores the projected selection when the Host rejects the submitted one', async () => {
+    const b = await bench()
+    const { face } = await loadedSeat(b)
+    const release = b.holdSelections()
+    b.rejectSelection()
+    const settled = face.select(PRO)
+    expect(face.directory.getSnapshot()).toMatchObject({ current: PRO, status: 'selecting', pending: PRO })
+    release()
+    expect(await settled).toMatchObject({ ok: false })
+    expect(face.directory.getSnapshot()).toMatchObject({
+      current: FLASH, status: 'error', pending: null, error: 'session/writer-held: writer held',
+    })
+  })
+
+  it('restores the last saved selection when the Host rejects one during a failed catalog refresh', async () => {
+    const b = await bench()
+    try {
+      const { face } = await loadedSeat(b)
+      b.setCatalogFailure(true)
+      b.remote.emit('credentials/record-updated', ['DEEPSEEK_API_KEY'])
+      await vi.waitFor(() => { expect(face.directory.getSnapshot().error).toBe('catalog offline') })
+      const release = b.holdSelections()
+      b.rejectSelection()
+      const settled = face.select(PRO)
+      expect(face.directory.getSnapshot()).toMatchObject({ current: PRO, retainedEffort: 'High', pending: PRO })
+      release()
+      await settled
+      expect(face.directory.getSnapshot()).toMatchObject({
+        current: FLASH, status: 'error', pending: null, error: 'session/writer-held: writer held',
+      })
+    } finally {
+      await b.ctx.fiber.dispose()
+    }
+  })
+
+  it('keeps showing an accepted selection until its projection frame arrives', async () => {
+    const b = await bench()
+    const { face, shown } = await loadedSeat(b)
+    b.withholdProjection()
+    await face.select(PRO)
+    expect(face.directory.getSnapshot()).toMatchObject({ current: PRO, status: 'ready', pending: null })
+    b.setProjected(sid('s1'), { lastUsed: null, next: PRO })
+    expect(face.directory.getSnapshot().current).toEqual(PRO)
+    expect(shown.every(current => current?.model === PRO.model)).toBe(true)
+  })
+
+  it('keeps showing a submitted selection when its projection frame precedes the response', async () => {
+    const b = await bench()
+    const { face, shown } = await loadedSeat(b)
+    b.withholdProjection()
+    const release = b.holdSelections()
+    const settled = face.select(PRO)
+    b.setProjected(sid('s1'), { lastUsed: null, next: PRO })
+    release()
+    await settled
+    expect(face.directory.getSnapshot()).toMatchObject({ current: PRO, status: 'ready', pending: null })
+    expect(shown.every(current => current?.model === PRO.model)).toBe(true)
+    // The projection alone holds the selection now: a later frame replaces it.
+    b.setProjected(sid('s1'), { lastUsed: null, next: EXTERNAL })
+    expect(face.directory.getSnapshot().current).toEqual(EXTERNAL)
+  })
+
+  it('shows another client\'s later selection over an accepted one whose frame never arrived', async () => {
+    const b = await bench()
+    const { face } = await loadedSeat(b)
+    b.withholdProjection()
+    await face.select(PRO)
+    b.setProjected(sid('s1'), { lastUsed: null, next: EXTERNAL })
+    expect(face.directory.getSnapshot()).toMatchObject({ current: EXTERNAL, routable: true })
+  })
+
+  it('keeps the latest submitted selection across an older response and its projection frame', async () => {
+    const b = await bench()
+    const { face, shown } = await loadedSeat(b)
+    b.withholdProjection()
+    const releaseOlder = b.holdSelections()
+    const older = face.select(PRO)
+    const releaseLatest = b.holdSelections()
+    const latest = face.select(EXTERNAL)
+    shown.length = 0
+    releaseOlder()
+    await older
+    b.setProjected(sid('s1'), { lastUsed: null, next: PRO })
+    expect(face.directory.getSnapshot()).toMatchObject({ current: EXTERNAL, status: 'selecting', pending: EXTERNAL })
+    releaseLatest()
+    await latest
+    b.setProjected(sid('s1'), { lastUsed: null, next: EXTERNAL })
+    expect(face.directory.getSnapshot()).toMatchObject({ current: EXTERNAL, status: 'ready', pending: null })
+    expect(shown.every(current => current?.provider === 'external')).toBe(true)
+  })
+
+  it('stops showing an accepted selection on connection reset', async () => {
+    const b = await bench()
+    const { face } = await loadedSeat(b)
+    b.withholdProjection()
+    await face.select(PRO)
+    b.ctx.emit('connection/reset')
+    expect(face.directory.getSnapshot().current).toBeNull()
+    await b.ctx.modelDirectories.directoryFor(sid('s1')).load()
+    expect(face.directory.getSnapshot()).toMatchObject({ current: FLASH, status: 'ready' })
   })
 
   it('drops a pending selection on connection reset and ignores its late settlement', async () => {

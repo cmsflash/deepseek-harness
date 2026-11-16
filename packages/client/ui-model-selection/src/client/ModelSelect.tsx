@@ -20,12 +20,13 @@
  * hands focus back to the cell that opened it. Data and submission ride the
  * same per-session ModelDirectory as the /model popup; exact-model reasoning
  * metadata and the selected effort come from the Host rather than a
- * client-owned vocabulary. A rejected selection announces through the shared
- * transient Toast anchored to the composer card; the in-menu strip with
- * Retry remains the catalog-load surface. While the directory's pending
- * selection is unsettled, the trigger shows a spinner in place of its
- * chevron, and each row whose value that selection carries shows one in place
- * of its check mark.
+ * client-owned vocabulary. Picking a model or effort closes the menu at once;
+ * the directory shows the pick before the Host answers. A rejected selection
+ * announces through the shared transient Toast anchored to the composer card;
+ * the in-menu strip with Retry remains the catalog-load surface. While the
+ * directory's pending selection is unsettled, the trigger shows a spinner in
+ * place of its chevron, and in a reopened menu each row whose value that
+ * selection carries shows one in place of its check mark.
  */
 import { MenuGroup, MenuSurface, observeStickyMenuGroups } from '@deepseek-ai/dsh-client-ui-primitives'
 import {
@@ -377,11 +378,7 @@ export function ModelSelect(
   }
 
   const settleSelection = (result: Awaited<ReturnType<ModelSelectInjected['select']>>): void => {
-    if (result === undefined) return
-    if (result.ok) {
-      if (rootRef.current !== null) closeAfterSelection()
-      return
-    }
+    if (result === undefined || result.ok) return
     const { error } = result
     toastSeq.current += 1
     setToast({
@@ -394,9 +391,7 @@ export function ModelSelect(
 
   const submit = (selection: ModelSelection, remember = false): void => {
     lastActionRef.current = 'select'
-    // Disabled option rows cannot retain focus while a selection is pending.
-    setSelectionFocus(true)
-    triggerRef.current?.focus()
+    closeAfterSelection()
     void select(selection).then((accepted) => {
       // Only a level the Host served is worth remembering: a rejected effort
       // would preselect a selection that fails again on the next switch.
