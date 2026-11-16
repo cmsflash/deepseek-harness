@@ -132,9 +132,11 @@
 
 /* The draft's scrollport, and the ONLY scrolling box in the composer. The
    contenteditable grows with its content inside; the 14-line cap lives here
-   because this is the box the cap describes. */
+   because this is the box the cap describes. A seat docked beneath a
+   fullscreen right panel lowers the draft's cap alone
+   (--dsh-composer-draft-max-height, ConversationRoot). */
 .scroll {
-  max-height: var(--dsh-composer-text-max-height);
+  max-height: var(--dsh-composer-draft-max-height, var(--dsh-composer-text-max-height));
   overflow-y: auto;
   /* Keeps the bar off the card's right border; .input's right pad gives the
      4px back so the text column is unchanged. */

@@ -577,11 +577,18 @@
    panel ends above it (--dsh-main-composer-height, ui-sidebar-right). The seat
    is the same element, so the draft, focus, docks, and takeovers carry over.
    Fixed positioning relies on no ancestor containing fixed descendants, and
-   the layer sits between the panel's dock (40) and its floats (60). */
+   the layer sits between the panel's dock (40) and its floats (60). The fixed
+   box is the layout viewport, which iOS keeps at full height under an
+   on-screen keyboard while the shell shortens the mount point
+   (--dsh-keyboard-fit-height, ui-web keyboard-fit); the bottom offset is the
+   difference, so the seat stays under the panel instead of behind the
+   keyboard. The draft keeps its one-line height and scrolls, so typing never
+   takes height from the panel. */
 :global([data-rightbar-fullscreen]) .root[data-phase='active'] .scrollBody > .composerSeat {
+  --dsh-composer-draft-max-height: 36px;
   position: fixed;
   right: 0;
-  bottom: 0;
+  bottom: calc(100% - var(--dsh-keyboard-fit-height, 100%));
   left: var(--dsh-sidebar-width, 0px);
   z-index: 45;
   background: var(--dsw-alias-bg-base);

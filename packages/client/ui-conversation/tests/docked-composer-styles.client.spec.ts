@@ -15,6 +15,18 @@ describe('docked composer seat', () => {
     expect(seat).toContain('background: var(--dsw-alias-bg-base)')
   })
 
+  it('stays above an on-screen keyboard that leaves the layout viewport at full height', () => {
+    const seat = css.match(new RegExp(String.raw`${docked} > \.composerSeat\s*\{([^}]*)\}`))?.[1]
+    expect(seat).toContain('bottom: calc(100% - var(--dsh-keyboard-fit-height, 100%))')
+  })
+
+  it('holds the docked draft at one line and lets it scroll', () => {
+    const seat = css.match(new RegExp(String.raw`${docked} > \.composerSeat\s*\{([^}]*)\}`))?.[1]
+    expect(seat).toContain('--dsh-composer-draft-max-height: 36px')
+    const inputBar = readFileSync(new URL('../src/client/skeleton/InputBar.module.css', import.meta.url), 'utf8')
+    expect(inputBar).toContain('max-height: var(--dsh-composer-draft-max-height, var(--dsh-composer-text-max-height))')
+  })
+
   it('fades the end of the panel into the seat without taking its pointer events', () => {
     const fade = css.match(new RegExp(String.raw`${docked} > \.composerSeat::before\s*\{([^}]*)\}`))?.[1]
     expect(fade).toContain('bottom: 100%')
