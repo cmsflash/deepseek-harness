@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type {
   SessionListState, SessionProjectionMap, SessionSummary,
 } from '@deepseek-ai/dsh-api-session-controller/client'
@@ -973,6 +973,46 @@ describe('createWorkspaceViewStore', () => {
     store.actions.setSessionOrder('alpha', ['b', 'a', 'c'], {})
     store.actions.pinSessionOrder('c', ['alpha'], source)
     expect(store.getSnapshot().sessionOrderByAccount.alpha).toEqual(['c', 'b', 'a'])
+  })
+
+  it('saves Session expansion by Session id beside the group expansion', () => {
+    const store = createWorkspaceViewStore().create()
+    expect(store.getSnapshot().sessionExpansion).toEqual({})
+    store.actions.setSessionExpanded('a', false)
+    store.actions.setSessionExpanded('b', true)
+    expect(store.getSnapshot().sessionExpansion).toEqual({ a: false, b: true })
+    expect(store.getSnapshot().groupExpansion).toEqual({})
+  })
+
+  it('saves Session expansion over a persisted view that has no such field', () => {
+    const stored = new Map([['dsh.workspace.view.v5', JSON.stringify({
+      groupBy: 'workspace', orderBy: 'updated', groupExpansion: { alpha: true }, sessionOrderByAccount: {},
+    })]])
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => stored.get(key) ?? null,
+      setItem: (key: string, value: string) => { stored.set(key, value) },
+    })
+    try {
+      const store = createWorkspaceViewStore().create()
+      expect(store.getSnapshot().sessionExpansion).toBeUndefined()
+      store.actions.retainSessionExpansion(['a'])
+      expect(store.getSnapshot().sessionExpansion).toBeUndefined()
+      store.actions.setSessionExpanded('a', false)
+      expect(store.getSnapshot()).toMatchObject({ sessionExpansion: { a: false }, groupExpansion: { alpha: true } })
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('drops saved Session expansion outside the retained Session ids, and rewrites nothing otherwise', () => {
+    const store = createWorkspaceViewStore().create()
+    store.actions.setSessionExpanded('a', false)
+    store.actions.setSessionExpanded('b', true)
+    const before = store.getSnapshot().sessionExpansion
+    store.actions.retainSessionExpansion(['a', 'b', 'c'])
+    expect(store.getSnapshot().sessionExpansion).toBe(before)
+    store.actions.retainSessionExpansion(['a'])
+    expect(store.getSnapshot().sessionExpansion).toEqual({ a: false })
   })
 
   it('removes view state outside the retained Workspace key set', () => {

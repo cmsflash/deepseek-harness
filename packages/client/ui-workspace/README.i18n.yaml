@@ -23,6 +23,9 @@
 /deepseek-ai-dsh-client-ui-workspace/use-this-package/workspace-hierarchy:
   en: a94394a5a9f70ed8
   zh: 62ce596a95395ad8
+/deepseek-ai-dsh-client-ui-workspace/use-this-package/nested-sessions:
+  en: e43cf9233b9ea797
+  zh: 187c279048269dfe
 /deepseek-ai-dsh-client-ui-workspace/use-this-package/search:
   en: 60d1486f5309a338
   zh: c16261d4dd6200de
@@ -54,8 +57,8 @@
   en: ad4a333892f2fe92
   zh: 3a670fd401f4d7a7
 /deepseek-ai-dsh-client-ui-workspace/understand-the-implementation/view-state:
-  en: fe14a1a0d266fd33
-  zh: 4da54e7a48786bef
+  en: 4ab1d3b8f255d25c
+  zh: a25c5d99b597435c
 /deepseek-ai-dsh-client-ui-workspace/understand-the-implementation/hover-cards:
   en: 6ff4a88c01b588a3
   zh: 665849e2f2390c60
@@ -69,8 +72,8 @@
   en: ca75c51c89c2c9b0
   zh: de54f3467ef3b9be
 /deepseek-ai-dsh-client-ui-workspace/known-limitations-and-deferred-work:
-  en: 6eed1c21c5f4614e
-  zh: 5c9eab1605cb357b
+  en: 18d3abbd6190492c
+  zh: 1a655449c6328786
 /deepseek-ai-dsh-client-ui-workspace/known-limitations-and-deferred-work/dev-note:
   en: e67f633dc6fe7773
   zh: 3bb0c20c93f16f98

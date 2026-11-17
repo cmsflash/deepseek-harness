@@ -133,6 +133,7 @@
     "apps/web/tests/remote-settings.e2e.ts",
     "apps/web/tests/public-mount.e2e.ts",
     "apps/web/tests/workspace-new-session-folding.e2e.ts",
+    "apps/web/tests/thread-nesting.e2e.ts",
     "apps/web/tests/workspace-management.e2e.ts",
     "apps/web/tests/default-workspace.e2e.ts",
     "apps/web/tests/new-session-refused.e2e.ts",

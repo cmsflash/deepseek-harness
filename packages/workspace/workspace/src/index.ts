@@ -8,6 +8,7 @@
 import { randomUUID } from 'node:crypto'
 import { mkdir, stat } from 'node:fs/promises'
 import { Context, Service } from '@deepseek-ai/cordis'
+import { brandString } from '@deepseek-ai/dsh-brand'
 import type { SessionHeader, SessionId } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-session-persistence'
 import type { DomainGlobal, KvTable } from '@deepseek-ai/dsh-storage-domain'
@@ -18,10 +19,13 @@ export { WorkspaceMoveInvalidError } from './entity.ts'
 import { defaultWorkspaceTitle, fullyQualifiedWorkspacePath, realpathNormalize } from './paths.ts'
 import { workspaceDomainSpec } from './spec.ts'
 import type { WorkspaceDomainState, WorkspaceRecord } from './spec.ts'
-import type { SessionActivity, Workspace, WorkspaceId as WorkspaceIdBrand } from './types.ts'
+import type {
+  SessionActivity, SessionParentRefusal, Workspace, WorkspaceId as WorkspaceIdBrand,
+} from './types.ts'
 
 export type {
-  SessionActivity, SessionActivityItem, SessionActivityKind, SessionActivityKindMap, Workspace,
+  SessionActivity, SessionActivityItem, SessionActivityKind, SessionActivityKindMap, SessionParentRefusal,
+  Workspace,
 } from './types.ts'
 export { workspaceDomainState, workspaceRecord, workspaceDomainSpec } from './spec.ts'
 export type { WorkspaceDomainState, WorkspaceRecord } from './spec.ts'
@@ -40,8 +44,8 @@ export function WorkspaceId(id: string): WorkspaceId {
 }
 
 /**
- * An archiveSession or pinSession request named a session neither live nor in
- * session persistence — a definite miss only; storage faults propagate as
+ * An archiveSession, pinSession, or setSessionParent request named a session
+ * neither live nor in session persistence — a definite miss only; storage faults propagate as
  * themselves.
  */
 export class WorkspaceUnknownSessionError extends Error {
@@ -49,7 +53,7 @@ export class WorkspaceUnknownSessionError extends Error {
    * @param sessionId - The unknown session id.
    * @param verb - The registry operation that named the session.
    */
-  constructor(readonly sessionId: SessionId, verb: 'archive' | 'pin') {
+  constructor(readonly sessionId: SessionId, verb: 'archive' | 'pin' | 'nest') {
     super(`cannot ${verb} session '${sessionId}': live sessions and session persistence hold no such session`)
     this.name = 'WorkspaceUnknownSessionError'
   }
@@ -79,6 +83,25 @@ export class WorkspaceArchivedSessionPinError extends Error {
   constructor(readonly sessionId: SessionId) {
     super(`cannot pin session '${sessionId}': the session is archived`)
     this.name = 'WorkspaceArchivedSessionPinError'
+  }
+}
+
+/** A setSessionParent request the registry refused without writing; `reason` says why. */
+export class WorkspaceSessionParentInvalidError extends Error {
+  /**
+   * @param sessionId - The child the request named.
+   * @param parentSessionId - The parent the request named.
+   * @param reason - Why the link was refused.
+   * @param detail - Sentence completing "cannot nest session X under Y: ".
+   */
+  constructor(
+    readonly sessionId: SessionId,
+    readonly parentSessionId: SessionId,
+    readonly reason: SessionParentRefusal,
+    detail: string,
+  ) {
+    super(`cannot nest session '${sessionId}' under '${parentSessionId}': ${detail}`)
+    this.name = 'WorkspaceSessionParentInvalidError'
   }
 }
 
@@ -189,6 +212,7 @@ export class WorkspaceRegistry extends Service {
       this.missingSessionPaths.delete(id)
       this.invalidSessionPaths.delete(id)
     },
+    sessionsUnaccounted: ids => this.dropSessionParents(ids),
   }
 
   constructor(ctx: Context) {
@@ -216,6 +240,7 @@ export class WorkspaceRegistry extends Service {
     await this.indexLiveSessions()
     this.validateStoredState(this.requireState())
     this.rebuildEntities()
+    await this.repairSessionParents()
     this.reportFilteredCandidates()
   }
 
@@ -466,6 +491,123 @@ export class WorkspaceRegistry extends Service {
   }
 
   /**
+   * The registry-global parent links: each key is a child session and its
+   * value the session it nests under on grouping surfaces. A session absent
+   * from the keys has no parent. Nesting never touches workspace accounting.
+   * @returns the complete child-to-parent map.
+   */
+  get sessionParents(): Readonly<Record<SessionId, SessionId>> {
+    return this.requireState().sessionParents
+  }
+
+  /**
+   * Set or clear the session one session nests under, durably. A value equal
+   * to the stored one (the same parent, or `undefined` without a link)
+   * resolves without writing. `undefined` removes the child's link without
+   * checking that either session exists. Setting a parent refuses without
+   * writing, checking in this order: the child is its own parent (`self`);
+   * the child, then the parent, is neither live nor in session persistence
+   * ({@link WorkspaceUnknownSessionError}); either header has subagent origin
+   * (`subagent`); no workspace's `sessionIds` contains the child or the
+   * parent (`unaccounted`); the two belong to different workspaces
+   * (`cross-workspace`); the child is already an ancestor of the parent
+   * (`cycle`). Archive state is not consulted. A link ends when either
+   * session leaves its durable account: deleting a workspace drops the links
+   * of its sessions in the write that removes it from the order, an entity
+   * write that removes session ids is followed by one registry write dropping
+   * their links, and startup drops every link with an end on no account.
+   * @param sessionId - The child session whose parent changes.
+   * @param parentSessionId - The new parent; `undefined` clears the link.
+   * @returns resolution after durability.
+   * @throws {WorkspaceSessionParentInvalidError} when the link is refused.
+   */
+  setSessionParent(sessionId: SessionId, parentSessionId: SessionId | undefined): Promise<void> {
+    return this.enqueueOperation(async () => {
+      if (this.requireState().sessionParents[sessionId] === parentSessionId) return
+      if (parentSessionId === undefined) {
+        const state = this.requireState()
+        const sessionParents = Object.fromEntries(
+          Object.entries(state.sessionParents).filter(([child]) => child !== sessionId),
+        )
+        await this.setState({ ...state, sessionParents })
+        return
+      }
+      const refuse = (reason: SessionParentRefusal, detail: string): never => {
+        throw new WorkspaceSessionParentInvalidError(sessionId, parentSessionId, reason, detail)
+      }
+      if (parentSessionId === sessionId) refuse('self', 'a session cannot be its own parent')
+      for (const id of [sessionId, parentSessionId]) {
+        if (!(await this.sessionKnown(id))) throw new WorkspaceUnknownSessionError(id, 'nest')
+      }
+      for (const id of [sessionId, parentSessionId]) {
+        if ((await this.readSessionHeader(id)).origin === 'subagent') {
+          refuse('subagent', `session '${id}' is a subagent session`)
+        }
+      }
+      const childWorkspace = this.accountingWorkspace(sessionId)
+      const parentWorkspace = this.accountingWorkspace(parentSessionId)
+      for (const [id, workspace] of [[sessionId, childWorkspace], [parentSessionId, parentWorkspace]] as const) {
+        if (workspace === undefined) refuse('unaccounted', `no workspace accounts for session '${id}'`)
+      }
+      if (childWorkspace !== parentWorkspace) {
+        refuse('cross-workspace', 'the sessions belong to different workspaces')
+      }
+      const state = this.requireState()
+      if (closesCycle(state.sessionParents, sessionId, parentSessionId)) {
+        refuse('cycle', `session '${sessionId}' is already an ancestor of session '${parentSessionId}'`)
+      }
+      await this.setState({ ...state, sessionParents: { ...state.sessionParents, [sessionId]: parentSessionId } })
+    })
+  }
+
+  private accountingWorkspace(id: SessionId): WorkspaceEntity | undefined {
+    for (const entity of this.entities.values()) {
+      if (entity.sessionIds.includes(id)) return entity
+    }
+    return undefined
+  }
+
+  /**
+   * Drop the links to and from Sessions that left their account. Entity writes await this call
+   * (`sessionsUnaccounted`), and it takes a slot in the operation queue, so nothing that runs inside
+   * a queued operation may await an entity write: the two would wait for each other.
+   */
+  private dropSessionParents(ids: readonly SessionId[]): Promise<void> {
+    const gone = new Set(ids)
+    return this.enqueueOperation(async () => {
+      const state = this.requireState()
+      const sessionParents = withoutSessions(state.sessionParents, id => gone.has(id))
+      if (sessionParents !== state.sessionParents) await this.setState({ ...state, sessionParents })
+    }).catch((error: unknown) => {
+      this.ctx.logger.warn(
+        `workspace: parent links of sessions that left their account were not dropped; the next start repairs them: ${String(error)}`,
+      )
+    })
+  }
+
+  /**
+   * Drop every link with an end on no durable account; a consistent map
+   * causes no write. A failed write is logged and leaves the links for the
+   * next start, because a leftover link must not keep the registry from starting.
+   */
+  private async repairSessionParents(): Promise<void> {
+    const accounted = new Set<SessionId>()
+    for (const [, record] of this.requireTable().entries()) {
+      for (const sessionId of record.sessionIds) accounted.add(sessionId)
+    }
+    const state = this.requireState()
+    const sessionParents = withoutSessions(state.sessionParents, id => !accounted.has(id))
+    if (sessionParents === state.sessionParents) return
+    try {
+      await this.setState({ ...state, sessionParents })
+    } catch (error: unknown) {
+      this.ctx.logger.warn(
+        `workspace: parent links with an end on no account were not dropped at start; the next start repairs them: ${String(error)}`,
+      )
+    }
+  }
+
+  /**
    * Whether a session is live, header-indexed, or present in a fresh
    * persistence listing. Only a definite miss returns false — a failing
    * `sessionPersistence.list()` propagates so storage faults never
@@ -586,11 +728,13 @@ export class WorkspaceRegistry extends Service {
     const entity = this.entities.get(id)
     if (entity === undefined) return false
     const state = this.requireState()
+    const leaving = new Set((this.requireTable().get(id) as WorkspaceRecord).sessionIds)
     const nextState = {
       ...state,
       pendingMutation: undefined,
       initialized: true,
       workspaceIds: state.workspaceIds.filter(workspaceId => workspaceId !== id),
+      sessionParents: withoutSessions(state.sessionParents, sessionId => leaving.has(sessionId)),
     }
     await this.setState({
       ...nextState,
@@ -731,6 +875,7 @@ export class WorkspaceRegistry extends Service {
         workspaceIds,
         archivedSessionIds: state.archivedSessionIds,
         pinnedSessionIds: state.pinnedSessionIds,
+        sessionParents: state.sessionParents,
       })
     }
     await this.setState({
@@ -738,6 +883,7 @@ export class WorkspaceRegistry extends Service {
       workspaceIds,
       archivedSessionIds: state.archivedSessionIds,
       pinnedSessionIds: state.pinnedSessionIds,
+      sessionParents: state.sessionParents,
     })
   }
 
@@ -905,5 +1051,29 @@ export class WorkspaceRegistry extends Service {
 
 const sameSessionIds = (left: readonly SessionId[], right: readonly SessionId[]): boolean =>
   left.length === right.length && left.every((id, index) => id === right[index])
+
+/** The links that survive once every Session `gone` accepts has left; the same object when none is dropped. */
+const withoutSessions = (
+  parents: Readonly<Record<SessionId, SessionId>>,
+  gone: (id: SessionId) => boolean,
+): Readonly<Record<SessionId, SessionId>> => {
+  const entries = Object.entries(parents)
+  const kept = entries.filter(([child, parent]) => !gone(brandString<SessionId>(child)) && !gone(parent))
+  return kept.length === entries.length ? parents : Object.fromEntries(kept)
+}
+
+/** Whether `child` is `parent` or one of its ancestors; a repeated Session ends the walk. */
+const closesCycle = (
+  parents: Readonly<Record<SessionId, SessionId>>,
+  child: SessionId,
+  parent: SessionId,
+): boolean => {
+  const seen = new Set<SessionId>()
+  for (let cursor: SessionId | undefined = parent; cursor !== undefined && !seen.has(cursor); cursor = parents[cursor]) {
+    if (cursor === child) return true
+    seen.add(cursor)
+  }
+  return false
+}
 
 export default WorkspaceRegistry

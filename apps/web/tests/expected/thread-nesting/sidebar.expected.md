@@ -1,0 +1,20 @@
+- tree "Sessions":
+  - treeitem "{{workspace}} Workspace actions for {{workspace}} New session in {{workspace}}" [expanded]:
+    - text: {{workspace}}
+    - button "Workspace actions for {{workspace}}"
+    - button "New session in {{workspace}}"
+  - treeitem "New Session" [selected]
+  - treeitem "Untitled 1min Hide sessions under Untitled" [expanded]:
+    - text: Untitled 1min
+    - button "Hide sessions under Untitled"
+  - group:
+    - treeitem "Untitled 1min Hide sessions under Untitled" [expanded]:
+      - text: Untitled 1min
+      - button "Hide sessions under Untitled"
+    - group:
+      - treeitem "Untitled 1min"
+    - treeitem "Untitled 1min"
+  - treeitem "Untitled 1min"
+  - treeitem "Untitled 1min"
+  - treeitem "Untitled 1min"
+  - treeitem "Untitled 1min"

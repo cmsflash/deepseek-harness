@@ -10,7 +10,7 @@ import { HoverCardGroup, MenuItemButton, Tooltip } from '@deepseek-ai/dsh-client
 import type { PropsRenderSlots } from '@deepseek-ai/dsh-client-ui-slots'
 import type { MenuOpenState, SessionRowOwnerProps } from '../src/client/contract/slots.ts'
 import { zh as commonZh } from '@deepseek-ai/dsh-client-locale/src/locales/zh.ts'
-import type { RowDragProps } from '../src/client/rows/Rows.tsx'
+import type { RowDragProps, SessionRowExpander } from '../src/client/rows/Rows.tsx'
 import {
   ProjectRowItem as ProjectRowItemComponent, SearchResultItem, SessionNodeItem as SessionNodeItemComponent,
 } from '../src/client/rows/Rows.tsx'
@@ -1755,4 +1755,112 @@ it.each([['未命名', t], ['Untitled', tEn]])('labels unnamed search results as
     onUnarchive={vi.fn()} useSessionAccess={allowAllAccess.useSessionAccess} t={translate} />)
   fireEvent.click(screen.getByText(label))
   expect(onOpen).toHaveBeenCalledWith(result.id)
+})
+
+describe('nested Session rows', () => {
+  const node: SessionNode = {
+    id: sid('parent'), title: 'Parent', blank: false, running: false,
+    runningSubagentCount: 0, completed: false, updatedAt: 0, pinned: false, archived: false, costUsd: 0,
+  }
+  const expander = (overrides: Partial<SessionRowExpander> = {}): SessionRowExpander => ({
+    expanded: true, containsCurrent: false, toggle: vi.fn(), ...overrides,
+  })
+  const nestedButton = (): HTMLElement | null => screen.queryByRole('button', { name: /sessions under/ })
+
+  it('adds no expand control and no indent to a row without nested rows', () => {
+    render(<SessionNodeItem node={node} currentId={undefined} now={0} onOpen={vi.fn()} t={tEn} />)
+    const row = screen.getByRole('treeitem')
+    expect(row.hasAttribute('aria-expanded')).toBe(false)
+    expect(nestedButton()).toBeNull()
+    expect(row.style.getPropertyValue('--dsh-session-indent')).toBe('')
+    expect(row.hasAttribute('style')).toBe(false)
+  })
+
+  it('puts the title before the expand control in the row, so the row is named by its title first', () => {
+    render(<SessionNodeItem node={node} currentId={undefined} now={0} onOpen={vi.fn()} expander={expander()} t={tEn} />)
+    const control = screen.getByRole('button', { name: 'Hide sessions under Parent' })
+    const order = screen.getByText('Parent').compareDocumentPosition(control)
+    expect(order & Node.DOCUMENT_POSITION_FOLLOWING).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(screen.getByRole('treeitem').contains(control)).toBe(true)
+  })
+
+  it('exposes the expansion state on the row and names the control after it', () => {
+    const view = render(
+      <SessionNodeItem node={node} currentId={undefined} now={0} onOpen={vi.fn()} expander={expander()} t={tEn} />,
+    )
+    expect(screen.getByRole('treeitem').getAttribute('aria-expanded')).toBe('true')
+    expect(screen.getByRole('button', { name: 'Hide sessions under Parent' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Show sessions under Parent' })).toBeNull()
+
+    view.rerender(
+      <SessionNodeItem
+        node={node} currentId={undefined} now={0} onOpen={vi.fn()} expander={expander({ expanded: false })} t={tEn}
+      />,
+    )
+    expect(screen.getByRole('treeitem').getAttribute('aria-expanded')).toBe('false')
+    expect(screen.getByRole('button', { name: 'Show sessions under Parent' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Hide sessions under Parent' })).toBeNull()
+  })
+
+  it('toggles from the control, by click or key, without opening the Session', () => {
+    const onOpen = vi.fn()
+    const control = expander()
+    render(<SessionNodeItem node={node} currentId={undefined} now={0} onOpen={onOpen} expander={control} t={tEn} />)
+    const button = screen.getByRole('button', { name: 'Hide sessions under Parent' })
+    fireEvent.click(button)
+    expect(control.toggle).toHaveBeenCalledOnce()
+    fireEvent.keyDown(button, { key: 'Enter' })
+    fireEvent.keyDown(button, { key: ' ' })
+    expect(onOpen).not.toHaveBeenCalled()
+  })
+
+  it('indents 12px per nesting level and not at the top level', () => {
+    const view = render(<SessionNodeItem node={node} currentId={undefined} now={0} onOpen={vi.fn()} depth={2} t={tEn} />)
+    expect(screen.getByRole('treeitem').style.getPropertyValue('--dsh-session-indent')).toBe('24px')
+    view.rerender(<SessionNodeItem node={node} currentId={undefined} now={0} onOpen={vi.fn()} depth={0} t={tEn} />)
+    expect(screen.getByRole('treeitem').style.getPropertyValue('--dsh-session-indent')).toBe('')
+  })
+
+  it('marks the control active only while collapsed rows hold the selected Session', () => {
+    const view = render(
+      <SessionNodeItem
+        node={node} currentId={undefined} now={0} onOpen={vi.fn()}
+        expander={expander({ containsCurrent: true, expanded: false })} t={tEn}
+      />,
+    )
+    expect(nestedButton()!.className).toMatch(/expanderActive/)
+    view.rerender(
+      <SessionNodeItem
+        node={node} currentId={undefined} now={0} onOpen={vi.fn()}
+        expander={expander({ containsCurrent: true, expanded: true })} t={tEn}
+      />,
+    )
+    expect(nestedButton()!.className).not.toMatch(/expanderActive/)
+    view.rerender(
+      <SessionNodeItem
+        node={node} currentId={undefined} now={0} onOpen={vi.fn()}
+        expander={expander({ containsCurrent: false, expanded: false })} t={tEn}
+      />,
+    )
+    expect(nestedButton()!.className).not.toMatch(/expanderActive/)
+  })
+
+  it('keeps the status dot, the pin marker, and the archived look beside the control', () => {
+    const view = render(
+      <SessionNodeItem
+        node={{ ...node, running: true, pinned: true }} currentId={undefined} now={0} onOpen={vi.fn()}
+        expander={expander()} t={tEn}
+      />,
+    )
+    expect(nestedButton()).toBeTruthy()
+    expect(view.container.querySelector('[data-state="ongoing"]')).not.toBeNull()
+    expect(screen.getByRole('img', { name: 'Pinned' })).toBeTruthy()
+    view.rerender(
+      <SessionNodeItem
+        node={{ ...node, archived: true }} currentId={undefined} now={0} onOpen={vi.fn()} expander={expander()} t={tEn}
+      />,
+    )
+    expect(nestedButton()).toBeTruthy()
+    expect(screen.getByRole('treeitem').className).toMatch(/archived/)
+  })
 })

@@ -909,6 +909,8 @@ export const LINK_MAP: Readonly<Record<string, string>> = {
   WorkspacePinValue: 'workspace.md',
   WorkspaceRenameRequest: 'workspace.md',
   WorkspaceUnarchiveSessionRequest: 'workspace.md',
+  WorkspaceSessionParentsValue: 'workspace.md',
+  WorkspaceSetSessionParentRequest: 'workspace.md',
   WorkspaceUnpinSessionRequest: 'workspace.md',
   WorkspaceValue: 'workspace.md',
   ClientArtifactBaseline: 'client-modules.md',

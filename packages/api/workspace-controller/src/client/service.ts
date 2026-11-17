@@ -101,6 +101,13 @@ export interface IWorkspaces {
    */
   unpinSession(sessionId: SessionId): Promise<void>
   /**
+   * Nest a Session under another, or clear its parent with `null`.
+   * @param sessionId - the child Session whose parent changes.
+   * @param parentSessionId - the new parent; `null` clears the link.
+   * @throws when the Host refuses; the message carries the Remote code and reason.
+   */
+  setSessionParent(sessionId: SessionId, parentSessionId: SessionId | null): Promise<void>
+  /**
    * Move a Session within one Workspace account.
    * @param workspaceId - owning Workspace.
    * @param sessionId - Session to move.
@@ -173,6 +180,11 @@ export class WorkspaceController extends Service implements IWorkspaces {
   async unpinSession(sessionId: SessionId): Promise<void> {
     const result = await this.model.unpinSession(sessionId)
     if (!result.ok) throw commandError('session unpin', result.error)
+  }
+
+  async setSessionParent(sessionId: SessionId, parentSessionId: SessionId | null): Promise<void> {
+    const result = await this.model.setSessionParent(sessionId, parentSessionId)
+    if (!result.ok) throw commandError('session parent', result.error)
   }
 
   async insertSessionBefore(

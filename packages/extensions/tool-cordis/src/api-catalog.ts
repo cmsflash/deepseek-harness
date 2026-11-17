@@ -4476,6 +4476,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'the complete resulting pin set, most recently pinned first.',
       },
       {
+        signature: '@Remote(\'setSessionParent\') setSessionParent(request: WorkspaceSetSessionParentRequest): Promise<WorkspaceSessionParentsValue>',
+        description: 'Set or clear the Session one Session nests under on Workspace grouping surfaces.',
+        parameters: [{ name: 'request', description: 'child Session and its new parent, or `null` to clear.' }],
+        returns: 'the complete resulting parent links.',
+      },
+      {
         signature: '@Remote({ mode: \'stream\' }) async *follow(signal: AbortSignal): AsyncIterable<WorkspaceFollowFrame>',
         description: 'Stream a complete Workspace baseline followed by ordered increments. A non-owner receives only the Workspaces and Sessions `allows()` admits. When a delivered Workspace is no longer admitted at its next change or the next order change, the stream sends a `replace` frame with the complete filtered state instead of a `remove`, because a Client never resurrects a removed Workspace; a `remove` frame reports a deletion and reaches only a Client that received that Workspace.',
         parameters: [{ name: 'signal', description: 'generation cancellation.' }],
@@ -4585,6 +4591,13 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         description: 'Unpin one session durably by dropping it from the registry-global pin set. Unpinning runs no session-existence check because removing an id cannot introduce an unknown one, so an entry whose session is gone still resolves. An id that is not pinned resolves without writing.',
         parameters: [{ name: 'sessionId', description: 'The session to unpin.' }],
         returns: 'resolution after durability.',
+      },
+      {
+        signature: 'setSessionParent(sessionId: SessionId, parentSessionId: SessionId | undefined): Promise<void>',
+        description: 'Set or clear the session one session nests under, durably. A value equal to the stored one (the same parent, or `undefined` without a link) resolves without writing. `undefined` removes the child\'s link without checking that either session exists. Setting a parent refuses without writing, checking in this order: the child is its own parent (`self`); the child, then the parent, is neither live nor in session persistence (WorkspaceUnknownSessionError); either header has subagent origin (`subagent`); no workspace\'s `sessionIds` contains the child or the parent (`unaccounted`); the two belong to different workspaces (`cross-workspace`); the child is already an ancestor of the parent (`cycle`). Archive state is not consulted. A link ends when either session leaves its durable account: deleting a workspace drops the links of its sessions in the write that removes it from the order, an entity write that removes session ids is followed by one registry write dropping their links, and startup drops every link with an end on no account.',
+        parameters: [{ name: 'sessionId', description: 'The child session whose parent changes.' }, { name: 'parentSessionId', description: 'The new parent; `undefined` clears the link.' }],
+        returns: 'resolution after durability.',
+        throws: ['{WorkspaceSessionParentInvalidError} when the link is refused.'],
       },
       {
         signature: 'async resolveByPath(path: string): Promise<Workspace | undefined>',
@@ -10007,7 +10020,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'WorkspaceBaseline',
-    declaration: 'export interface WorkspaceBaseline {\n    readonly items: readonly WorkspaceView[];\n    readonly archivedSessionIds: readonly SessionId[];\n    readonly pinnedSessionIds: readonly SessionId[];\n}',
+    declaration: 'export interface WorkspaceBaseline {\n    readonly items: readonly WorkspaceView[];\n    readonly archivedSessionIds: readonly SessionId[];\n    readonly pinnedSessionIds: readonly SessionId[];\n    readonly sessionParents?: WorkspaceSessionParents;\n}',
   },
   {
     name: 'WorkspaceByteRange',
@@ -10091,7 +10104,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'WorkspaceFollowIncrement',
-    declaration: 'export type WorkspaceFollowIncrement = {\n    readonly type: \'replace\';\n    readonly value: WorkspaceBaseline;\n} | {\n    readonly type: \'upsert\';\n    readonly workspace: WorkspaceView;\n} | {\n    readonly type: \'remove\';\n    readonly workspaceId: WorkspaceId;\n} | {\n    readonly type: \'order\';\n    readonly workspaceIds: readonly WorkspaceId[];\n} | {\n    readonly type: \'archived\';\n    readonly archivedSessionIds: readonly SessionId[];\n} | {\n    readonly type: \'pinned\';\n    readonly pinnedSessionIds: readonly SessionId[];\n};',
+    declaration: 'export type WorkspaceFollowIncrement = {\n    readonly type: \'replace\';\n    readonly value: WorkspaceBaseline;\n} | {\n    readonly type: \'upsert\';\n    readonly workspace: WorkspaceView;\n} | {\n    readonly type: \'remove\';\n    readonly workspaceId: WorkspaceId;\n} | {\n    readonly type: \'order\';\n    readonly workspaceIds: readonly WorkspaceId[];\n} | {\n    readonly type: \'archived\';\n    readonly archivedSessionIds: readonly SessionId[];\n} | {\n    readonly type: \'pinned\';\n    readonly pinnedSessionIds: readonly SessionId[];\n} | {\n    readonly type: \'parents\';\n    readonly sessionParents: WorkspaceSessionParents;\n};',
   },
   {
     name: 'WorkspaceInsertBeforeRequest',
@@ -10116,6 +10129,18 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'WorkspaceRenameRequest',
     declaration: 'export interface WorkspaceRenameRequest {\n    readonly workspaceId: WorkspaceId;\n    readonly title: string;\n}',
+  },
+  {
+    name: 'WorkspaceSessionParents',
+    declaration: 'export type WorkspaceSessionParents = Readonly<Record<SessionId, SessionId>>;',
+  },
+  {
+    name: 'WorkspaceSessionParentsValue',
+    declaration: 'export interface WorkspaceSessionParentsValue {\n    readonly sessionParents: WorkspaceSessionParents;\n}',
+  },
+  {
+    name: 'WorkspaceSetSessionParentRequest',
+    declaration: 'export interface WorkspaceSetSessionParentRequest {\n    readonly sessionId: SessionId;\n    readonly parentSessionId: SessionId | null;\n}',
   },
   {
     name: 'WorkspaceUnarchiveSessionRequest',

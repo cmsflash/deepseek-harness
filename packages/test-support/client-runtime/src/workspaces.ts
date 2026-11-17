@@ -207,4 +207,24 @@ export class TestWorkspaces implements IWorkspaces {
       draft.pinnedSessionIds = draft.pinnedSessionIds.filter(id => id !== sessionId)
     })
   }
+
+  /**
+   * Set or clear a session's parent (recorded). The default mirrors the
+   * production face's observable effect: the list state's parent links gain
+   * or lose the child's entry.
+   * @param sessionId - the child session.
+   * @param parentSessionId - the new parent; `null` clears the link.
+   */
+  async setSessionParent(sessionId: SessionId, parentSessionId: SessionId | null): Promise<void> {
+    this.calls.push({ method: 'setSessionParent', args: [sessionId, parentSessionId] })
+    const stub = this.stubs.get('setSessionParent')
+    if (stub !== undefined) {
+      await (stub(sessionId, parentSessionId) as Promise<void>)
+      return
+    }
+    await this.update((draft) => {
+      const { [sessionId]: _cleared, ...rest } = draft.sessionParents ?? {}
+      draft.sessionParents = parentSessionId === null ? rest : { ...rest, [sessionId]: parentSessionId }
+    })
+  }
 }

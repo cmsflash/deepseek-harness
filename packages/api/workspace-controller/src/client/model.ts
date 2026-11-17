@@ -3,6 +3,7 @@
 import { notifySubscribers } from '@deepseek-ai/dsh-client-store'
 import type {} from '@deepseek-ai/dsh-api-workspace-controller/remote'
 import { isRemoteFailure } from '@deepseek-ai/dsh-api-gateway/client'
+import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { RemoteFailure, RemoteResult, TypertClientRemote } from '@deepseek-ai/dsh-typert-protocol'
 import type {
   WorkspaceArchiveSessionRequest,
@@ -15,6 +16,9 @@ import type {
   WorkspaceOrderValue,
   WorkspacePinSessionRequest,
   WorkspacePinValue,
+  WorkspaceSessionParents,
+  WorkspaceSessionParentsValue,
+  WorkspaceSetSessionParentRequest,
   WorkspaceUnarchiveSessionRequest,
   WorkspaceUnpinSessionRequest,
   WorkspaceValue,
@@ -35,6 +39,8 @@ export interface WorkspaceSnapshot {
   readonly archivedSessionIds: WorkspaceArchiveValue['archivedSessionIds']
   /** Complete registry-global pin set, most recently pinned first. */
   readonly pinnedSessionIds: WorkspacePinValue['pinnedSessionIds']
+  /** Complete parent links (child to parent). The Remote-backed model always sets it; absent means no links. */
+  readonly sessionParents?: WorkspaceSessionParents
   readonly state: 'idle' | 'loading' | 'error'
   readonly phase: WorkspaceListPhase
   readonly error: RemoteFailure | null
@@ -54,6 +60,8 @@ export interface WorkspaceFollowSink {
   replaceArchived(sessionIds: WorkspaceArchiveValue['archivedSessionIds']): void
   /** Replace the complete pinned Session set. */
   replacePinned(pinnedSessionIds: WorkspacePinValue['pinnedSessionIds']): void
+  /** Replace the complete parent links. */
+  replaceParents(sessionParents: WorkspaceSessionParents): void
 }
 
 /**
@@ -63,6 +71,7 @@ export class ClientWorkspaceModel implements WorkspaceFollowSink {
   private items: readonly WorkspaceView[] = []
   private archivedSessionIds: WorkspaceArchiveValue['archivedSessionIds'] = []
   private pinnedSessionIds: WorkspacePinValue['pinnedSessionIds'] = []
+  private sessionParents: WorkspaceSessionParents = {}
   private state: WorkspaceSnapshot['state'] = 'loading'
   private phase: WorkspaceListPhase = 'pending'
   private error: RemoteFailure | null = null
@@ -76,6 +85,8 @@ export class ClientWorkspaceModel implements WorkspaceFollowSink {
   private archiveRequestSeq = 0
   /** Latest pin-set request; a later request or a pushed set supersedes it. */
   private pinRequestSeq = 0
+  /** Latest parent-links request; a later request or a pushed map supersedes it. */
+  private parentRequestSeq = 0
   /** Host Workspace ids are never reused, so delayed data cannot resurrect a removed row. */
   private readonly removedIds = new Set<WorkspaceId>()
   private readonly listeners = new Set<() => void>()
@@ -258,6 +269,25 @@ export class ClientWorkspaceModel implements WorkspaceFollowSink {
   }
 
   /**
+   * Set or clear one Session's parent and install the returned complete map.
+   * A reply superseded by a later parent request or a pushed map installs nothing.
+   * @param sessionId - the child Session whose parent changes.
+   * @param parentSessionId - the new parent; `null` clears the link.
+   * @returns generated Remote result.
+   */
+  async setSessionParent(
+    sessionId: WorkspaceSetSessionParentRequest['sessionId'],
+    parentSessionId: WorkspaceSetSessionParentRequest['parentSessionId'],
+  ): Promise<RemoteResult<WorkspaceSessionParentsValue>> {
+    const requestSeq = ++this.parentRequestSeq
+    const result = await this.remote.setSessionParent({ sessionId, parentSessionId })
+    if (result.ok && requestSeq === this.parentRequestSeq) {
+      this.installParents(result.value.sessionParents)
+    }
+    return result
+  }
+
+  /**
    * Replace the projection from one complete stream-generation baseline.
    * @param baseline - complete Workspace and archive projection.
    */
@@ -265,9 +295,11 @@ export class ClientWorkspaceModel implements WorkspaceFollowSink {
     this.orderFrameGeneration++
     this.archiveRequestSeq++
     this.pinRequestSeq++
+    this.parentRequestSeq++
     this.installViews(baseline.items)
     this.installArchived(baseline.archivedSessionIds)
     this.installPinned(baseline.pinnedSessionIds)
+    this.installParents(baseline.sessionParents ?? {})
     this.state = 'idle'
     this.phase = 'ready'
     this.error = null
@@ -306,6 +338,15 @@ export class ClientWorkspaceModel implements WorkspaceFollowSink {
   replacePinned(pinnedSessionIds: WorkspacePinValue['pinnedSessionIds']): void {
     this.pinRequestSeq++
     this.installPinned(pinnedSessionIds)
+  }
+
+  /**
+   * Replace the parent links from the current follow generation.
+   * @param sessionParents - complete Host-confirmed child-to-parent map.
+   */
+  replaceParents(sessionParents: WorkspaceSessionParents): void {
+    this.parentRequestSeq++
+    this.installParents(sessionParents)
   }
 
   /** Keep the last complete projection visible while a lost carrier reconnects. */
@@ -350,6 +391,7 @@ export class ClientWorkspaceModel implements WorkspaceFollowSink {
       items: this.items,
       archivedSessionIds: this.archivedSessionIds,
       pinnedSessionIds: this.pinnedSessionIds,
+      sessionParents: this.sessionParents,
       state: this.state,
       phase: this.phase,
       error: this.error,
@@ -367,6 +409,14 @@ export class ClientWorkspaceModel implements WorkspaceFollowSink {
     if (pinnedSessionIds.length === this.pinnedSessionIds.length
       && pinnedSessionIds.every((id, index) => id === this.pinnedSessionIds[index])) return
     this.pinnedSessionIds = [...pinnedSessionIds]
+    this.invalidate()
+  }
+
+  private installParents(sessionParents: WorkspaceSessionParents): void {
+    const children = Object.keys(sessionParents) as SessionId[]
+    if (children.length === Object.keys(this.sessionParents).length
+      && children.every(child => this.sessionParents[child] === sessionParents[child])) return
+    this.sessionParents = { ...sessionParents }
     this.invalidate()
   }
 

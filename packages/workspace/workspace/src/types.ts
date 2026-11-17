@@ -59,6 +59,9 @@ export interface SessionActivity {
   readonly items?: readonly SessionActivityItem[]
 }
 
+/** Why the registry refused to nest one Session under another. */
+export type SessionParentRefusal = 'self' | 'subagent' | 'unaccounted' | 'cross-workspace' | 'cycle'
+
 /**
  * One workspace: a stable id over an existing directory, a display title, and
  * an ordered candidate account of sessions. Membership validates header cwd

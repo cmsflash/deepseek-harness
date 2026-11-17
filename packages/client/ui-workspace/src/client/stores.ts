@@ -32,6 +32,11 @@ type WorkspaceViewState = {
   sessionOrderByAccount: Record<string, string[]>
   /** Archived-row visibility; omitted in pre-filter v5 snapshots and read as 'default'. */
   archivedFilter?: ArchivedFilter
+  /**
+   * Saved expansion of Sessions that have nested Sessions, by Session id. Absent in state persisted
+   * before nesting existed; an absent field or id reads as expanded.
+   */
+  sessionExpansion?: Record<string, boolean>
 }
 
 type SessionOrderSource = {
@@ -71,6 +76,8 @@ type WorkspaceViewActions = {
     source: SessionOrderSource,
   ) => void
   setArchivedFilter: (draft: WorkspaceViewState, filter: ArchivedFilter) => void
+  setSessionExpanded: (draft: WorkspaceViewState, sessionId: string, expanded: boolean) => void
+  retainSessionExpansion: (draft: WorkspaceViewState, sessionIds: readonly string[]) => void
 }
 
 /** Copy read-only projections into the persisted mutable store representation. */
@@ -92,6 +99,7 @@ export function createWorkspaceViewStore(): EngineStoreHandle<WorkspaceViewState
       groupExpansion: {},
       sessionOrderByAccount: {},
       archivedFilter: 'default',
+      sessionExpansion: {},
     }),
     persist: 'dsh.workspace.view.v5',
     actions: {
@@ -131,6 +139,16 @@ export function createWorkspaceViewStore(): EngineStoreHandle<WorkspaceViewState
         }))
       },
       setArchivedFilter: (d, filter: ArchivedFilter) => { d.archivedFilter = filter },
+      setSessionExpanded: (d, sessionId: string, expanded: boolean) => {
+        (d.sessionExpansion ??= {})[sessionId] = expanded
+      },
+      retainSessionExpansion: (d, sessionIds: readonly string[]) => {
+        if (d.sessionExpansion === undefined) return
+        const retained = new Set(sessionIds)
+        const entries = Object.entries(d.sessionExpansion)
+        const kept = entries.filter(([id]) => retained.has(id))
+        if (kept.length !== entries.length) d.sessionExpansion = Object.fromEntries(kept)
+      },
     },
   })
 }

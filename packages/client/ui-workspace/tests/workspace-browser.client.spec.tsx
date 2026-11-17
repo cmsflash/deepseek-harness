@@ -20,11 +20,18 @@ import { createWorkspaceShortcutControls } from '../src/client/shortcuts.ts'
 import { createWorkspaceViewStore, FLAT_SESSION_ORDER_KEY } from '../src/client/stores.ts'
 import { UNGROUPED_KEY } from '../src/client/tree.ts'
 import { WorkspaceBrowser } from '../src/client/rows/WorkspaceBrowser.tsx'
+import { nestSessions } from '../src/client/session-nesting.ts'
 import { zh } from '../src/client/locales.ts'
 
 // Every fixture carries the resource hook the resources plugin merges into GlobalStandardProps.
 const useResource = (() => ({ status: 'none' as const, value: undefined, failure: undefined, reload: () => {} })) as GlobalStandardProps['useResource']
 const usePanelInfo: GlobalStandardProps['usePanelInfo'] = selector => selector({ activePanelId: null })
+
+// Counts derivations only; the real function runs.
+vi.mock('../src/client/session-nesting.ts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/client/session-nesting.ts')>()
+  return { ...actual, nestSessions: vi.fn(actual.nestSessions) }
+})
 
 afterEach(cleanup)
 const scrollIntoView = vi.fn()
@@ -73,10 +80,12 @@ const workspaceState = (
   items: readonly WorkspaceView[],
   archivedSessionIds: readonly SessionId[] = [],
   pinnedSessionIds: readonly SessionId[] = [],
+  sessionParents?: Readonly<Record<string, string>>,
 ): WorkspaceSnapshot => ({
   items,
   archivedSessionIds,
   pinnedSessionIds,
+  ...sessionParents === undefined ? {} : { sessionParents: sessionParents as NonNullable<WorkspaceSnapshot['sessionParents']> },
   state: 'idle',
   phase: 'ready',
   error: null,
@@ -2857,5 +2866,290 @@ describe('Workspace tree grouping', () => {
     fireEvent.dragEnd(alpha)
     expect(b.props.insertWorkspaceBefore).toHaveBeenCalledOnce()
     expect(b.props.insertWorkspaceBefore).toHaveBeenCalledWith(wid('alpha'), wid('gamma'))
+  })
+})
+
+describe('nested Session rows', () => {
+  const CHAIN = { mid: 'top', leaf: 'mid' }
+  const rect = { top: 100, bottom: 134, left: 0, right: 200, width: 200, height: 34, x: 0, y: 100, toJSON: () => ({}) }
+  const row = (title: string) => screen.getByText(title).closest('[role="treeitem"]') as HTMLElement
+  const indent = (title: string) => row(title).style.getPropertyValue('--dsh-session-indent')
+  const titles = () => screen.getAllByRole('treeitem').map(item => item.querySelector('[class*="title"]')?.textContent)
+  const hideButton = (title: string) => screen.queryByRole('button', { name: `收起“${title}”下的会话` })
+  const showButton = (title: string) => screen.queryByRole('button', { name: `展开“${title}”下的会话` })
+  const sessions = (ids: readonly string[]) => hook(sessionState(ids.map((id, index) => summary(id, 1000 - index))))
+  const runningStatus = (id: string) => hook<SessionStatusSnapshot>(new Map([[sid(id), {
+    running: true, pendingInteraction: undefined, completionUnread: false,
+  }]]))
+  /** One expanded Workspace `alpha` holding `ids` in list order. */
+  function mountNested(
+    ids: readonly string[],
+    sessionParents: Readonly<Record<string, string>>,
+    options: {
+      archived?: readonly string[]
+      pinned?: readonly string[]
+      collapsed?: readonly string[]
+      overrides?: Partial<WorkspaceBrowserProps>
+    } = {},
+  ) {
+    const preferences = createWorkspaceViewStore().create()
+    preferences.actions.setGroupExpanded('alpha', true)
+    for (const id of options.collapsed ?? []) preferences.actions.setSessionExpanded(id, false)
+    return mount({
+      useSessions: sessions(ids),
+      useWorkspaces: nested(ids, sessionParents, options.archived, options.pinned),
+      ...options.overrides,
+    })
+  }
+  const nested = (
+    ids: readonly string[],
+    sessionParents: Readonly<Record<string, string>>,
+    archived: readonly string[] = [],
+    pinned: readonly string[] = [],
+  ) => hook(workspaceState([workspace('alpha', [...ids])], archived.map(sid), pinned.map(sid), sessionParents))
+
+  it('renders a parent chain as indented rows inside nested groups', () => {
+    mountNested(['top', 'mid', 'leaf', 'other'], CHAIN)
+    expect(titles()).toEqual(['alpha', 'top', 'mid', 'leaf', 'other'])
+    expect([indent('top'), indent('mid'), indent('leaf'), indent('other')]).toEqual(['', '12px', '24px', ''])
+    const midGroup = row('mid').closest('[role="group"]')
+    const leafGroup = row('leaf').closest('[role="group"]')
+    expect(row('top').closest('[role="group"]')).toBeNull()
+    expect(midGroup).not.toBeNull()
+    expect(leafGroup).not.toBe(midGroup)
+    expect(leafGroup?.parentElement?.closest('[role="group"]')).toBe(midGroup)
+    expect(row('alpha').getAttribute('aria-description')).toBe(t('sessions.count.other', { n: 4 }))
+  })
+
+  it('gives an expand control only to rows that have nested rows', () => {
+    mountNested(['top', 'mid', 'leaf'], CHAIN)
+    expect(row('top').getAttribute('aria-expanded')).toBe('true')
+    expect(row('mid').getAttribute('aria-expanded')).toBe('true')
+    expect(row('leaf').getAttribute('aria-expanded')).toBeNull()
+    expect(hideButton('top')).not.toBeNull()
+    expect(hideButton('mid')).not.toBeNull()
+    expect(hideButton('leaf') ?? showButton('leaf')).toBeNull()
+  })
+
+  it('collapses a parent, stores the collapse, and starts collapsed on the next mount', () => {
+    const b = mountNested(['top', 'mid', 'leaf'], CHAIN)
+    fireEvent.click(hideButton('top') as HTMLElement)
+    expect(titles()).toEqual(['alpha', 'top'])
+    expect(row('top').getAttribute('aria-expanded')).toBe('false')
+    expect(b.props.open).not.toHaveBeenCalled()
+    expect(b.store.getSnapshot().sessionExpansion).toEqual({ top: false })
+    expect(row('alpha').getAttribute('aria-description')).toBe(t('sessions.count.other', { n: 3 }))
+    b.view.unmount()
+    mount({ useSessions: b.props.useSessions, useWorkspaces: b.props.useWorkspaces })
+    expect(titles()).toEqual(['alpha', 'top'])
+    fireEvent.click(showButton('top') as HTMLElement)
+    expect(titles()).toEqual(['alpha', 'top', 'mid', 'leaf'])
+  })
+
+  it('marks a collapsed parent that hides the current Session', () => {
+    const b = mountNested(['top', 'mid', 'leaf', 'side', 'kid'], { ...CHAIN, kid: 'side' }, {
+      collapsed: ['mid', 'side'],
+      overrides: {
+        useSessions: hook(sessionState(
+          ['top', 'mid', 'leaf', 'side', 'kid'].map((id, index) => summary(id, 1000 - index)),
+          { main: sid('leaf') },
+        )),
+      },
+    })
+    expect(showButton('mid')?.className).toContain('expanderActive')
+    expect(showButton('side')?.className).not.toContain('expanderActive')
+    expect(hideButton('top')?.className).not.toContain('expanderActive')
+    fireEvent.click(showButton('mid') as HTMLElement)
+    expect(hideButton('mid')?.className).not.toContain('expanderActive')
+    expect(b.store.getSnapshot().sessionExpansion).toEqual({ mid: true, side: false })
+  })
+
+  it('re-nests when the parent links change', () => {
+    const b = mountNested(['top', 'mid', 'leaf'], CHAIN)
+    const browser = screen.getByRole('tree')
+    rerender(b, { useWorkspaces: nested(['top', 'mid', 'leaf'], { leaf: 'mid' }) })
+    expect(screen.getByRole('tree')).toBe(browser)
+    expect([indent('top'), indent('mid'), indent('leaf')]).toEqual(['', '', '12px'])
+    expect(row('top').getAttribute('aria-expanded')).toBeNull()
+    rerender(b, { useWorkspaces: nested(['top', 'mid', 'leaf'], { leaf: 'top', mid: 'top' }) })
+    expect([indent('top'), indent('mid'), indent('leaf')]).toEqual(['', '12px', '12px'])
+  })
+
+  it('shows the children of a hidden archived parent at the top level', () => {
+    const b = mountNested(['top', 'mid', 'leaf'], CHAIN, { archived: ['top'] })
+    expect(titles()).toEqual(['alpha', 'mid', 'leaf'])
+    expect([indent('mid'), indent('leaf')]).toEqual(['', '12px'])
+    act(() => { b.store.actions.setArchivedFilter('show') })
+    expect(titles()).toEqual(['alpha', 'top', 'mid', 'leaf'])
+    expect([indent('mid'), indent('leaf')]).toEqual(['12px', '24px'])
+    act(() => { b.store.actions.setArchivedFilter('default') })
+    rerender(b, { useWorkspaces: nested(['top', 'mid', 'leaf'], CHAIN) })
+    expect([indent('top'), indent('mid'), indent('leaf')]).toEqual(['', '12px', '24px'])
+  })
+
+  it('keeps a row at the top level when its link names a Session outside the list', () => {
+    mountNested(['one', 'two'], { one: 'ghost' })
+    expect(titles()).toEqual(['alpha', 'one', 'two'])
+    expect([indent('one'), indent('two')]).toEqual(['', ''])
+  })
+
+  it('shows both Sessions of a parent cycle and a self-linked Session at the top level', () => {
+    mountNested(['one', 'two', 'self', 'child'], { one: 'two', two: 'one', self: 'self', child: 'two' }, {
+      overrides: {
+        useSessions: hook(sessionState(
+          ['one', 'two', 'self', 'child'].map((id, index) => summary(id, 1000 - index)),
+          { main: sid('child') },
+        )),
+      },
+    })
+    expect(titles()).toEqual(['alpha', 'one', 'two', 'child', 'self'])
+    expect([indent('one'), indent('two'), indent('self'), indent('child')]).toEqual(['', '', '', '12px'])
+    expect(row('one').getAttribute('aria-expanded')).toBeNull()
+    expect(row('self').getAttribute('aria-expanded')).toBeNull()
+    expect(row('two').getAttribute('aria-expanded')).toBe('true')
+  })
+
+  it('counts top-level rows against the watermark and nested rows in the overflow label', () => {
+    const ids = ['r1', 'k1', 'k2', 'k3', 'r2', 'r3', 'r4', 'r5', 'r6', 'r7', 'deep', 'deeper']
+    mountNested(ids, { k1: 'r1', k2: 'r1', k3: 'r1', deep: 'r7', deeper: 'deep' })
+    expect(titles()).toEqual(['alpha', 'r1', 'k1', 'k2', 'k3', 'r2', 'r3', 'r4', 'r5'])
+    fireEvent.click(screen.getByRole('button', { name: '展开其余 4 个会话' }))
+    expect(titles()).toEqual(['alpha', ...ids])
+    fireEvent.click(screen.getByRole('button', { name: '收起' }))
+    expect(titles()).toEqual(['alpha', 'r1', 'k1', 'k2', 'k3', 'r2', 'r3', 'r4', 'r5'])
+  })
+
+  it('reveals five more top-level rows per click while more than five stay hidden', () => {
+    const ids = [...Array.from({ length: 12 }, (_, index) => `r${index + 1}`), 'kid']
+    mountNested(ids, { kid: 'r6' })
+    fireEvent.click(screen.getByRole('button', { name: '展开其余 8 个会话' }))
+    expect(titles()).toEqual(['alpha', 'r1', 'r2', 'r3', 'r4', 'r5', 'r6', 'kid', 'r7', 'r8', 'r9', 'r10'])
+    expect(screen.getByRole('button', { name: '展开其余 2 个会话' })).toBeTruthy()
+  })
+
+  it('raises the watermark for a rendered nested row that needs attention', () => {
+    const ids = ['r1', 'r2', 'r3', 'r4', 'r5', 'r6', 'r7', 'deep', 'deeper']
+    mountNested(ids, { deep: 'r7', deeper: 'deep' }, {
+      overrides: { useSessionStatus: runningStatus('deeper') },
+    })
+    expect(titles()).toEqual(['alpha', ...ids])
+    expect(screen.queryByRole('button', { name: /展开其余/u })).toBeNull()
+  })
+
+  it('does not raise the watermark for a row under a collapsed parent', () => {
+    const ids = ['r1', 'r2', 'r3', 'r4', 'r5', 'r6', 'r7', 'deep', 'deeper']
+    mountNested(ids, { deep: 'r7', deeper: 'deep' }, {
+      collapsed: ['deep'],
+      overrides: { useSessionStatus: runningStatus('deeper') },
+    })
+    expect(titles()).toEqual(['alpha', 'r1', 'r2', 'r3', 'r4', 'r5'])
+    expect(screen.getByRole('button', { name: '展开其余 3 个会话' })).toBeTruthy()
+  })
+
+  it('keeps a pinned child under its parent, first among its siblings', () => {
+    mountNested(['top', 'c1', 'c2', 'other'], { c1: 'top', c2: 'top' }, { pinned: ['c2'] })
+    expect(titles()).toEqual(['alpha', 'top', 'c2', 'c1', 'other'])
+    expect(indent('c2')).toBe('12px')
+    expect(within(row('c2')).getByRole('img', { name: zh['row.pinned'] })).toBeTruthy()
+    expect(within(row('c1')).queryByRole('img', { name: zh['row.pinned'] })).toBeNull()
+  })
+
+  it('reorders a nested row among its siblings and writes the complete Workspace order', () => {
+    const b = mountNested(['top', 'c1', 'c2', 'c3', 'other'], { c1: 'top', c2: 'top', c3: 'top' })
+    const target = row('c1')
+    target.getBoundingClientRect = () => rect
+    fireEvent.dragStart(row('c3'), { dataTransfer: dragData() })
+    fireDrag(target, 'drop', 102)
+    expect(titles()).toEqual(['alpha', 'top', 'c3', 'c1', 'c2', 'other'])
+    expect(b.store.getSnapshot().sessionOrderByAccount.alpha).toEqual(['top', 'c3', 'c1', 'c2', 'other'])
+  })
+
+  it('refuses a drop onto a row with another parent', () => {
+    const b = mountNested(['top', 'c1', 'c2', 'other', 'far'], { c1: 'top', c2: 'top', far: 'other' })
+    const before = b.store.getSnapshot().sessionOrderByAccount
+    for (const [sourceTitle, targetTitle] of [['c2', 'other'], ['c2', 'far'], ['other', 'c1']] as const) {
+      const source = row(sourceTitle)
+      const target = row(targetTitle)
+      target.getBoundingClientRect = () => rect
+      fireEvent.dragStart(source, { dataTransfer: dragData() })
+      fireDrag(target, 'dragOver', 102)
+      expect(target.className).not.toMatch(/drop(Before|After)/u)
+      fireDrag(target, 'drop', 102)
+      fireEvent.dragEnd(source)
+    }
+    expect(b.store.getSnapshot().sessionOrderByAccount).toEqual(before)
+    expect(titles()).toEqual(['alpha', 'top', 'c1', 'c2', 'other', 'far'])
+  })
+
+  it('reorders top-level rows without moving their nested rows out', () => {
+    const b = mountNested(['top', 'c1', 'other'], { c1: 'top' })
+    const target = row('top')
+    target.getBoundingClientRect = () => rect
+    fireEvent.dragStart(row('other'), { dataTransfer: dragData() })
+    fireDrag(target, 'drop', 102)
+    expect(b.store.getSnapshot().sessionOrderByAccount.alpha).toEqual(['other', 'top', 'c1'])
+    expect(titles()).toEqual(['alpha', 'other', 'top', 'c1'])
+  })
+
+  it('expands every collapsed ancestor of a search result and scrolls it into view', () => {
+    const b = mountNested(['top', 'mid', 'needle'], { mid: 'top', needle: 'mid' }, { collapsed: ['mid'] })
+    expect(screen.queryByText('needle')).toBeNull()
+    fireEvent.change(screen.getByPlaceholderText<HTMLInputElement>('搜索会话名称'), { target: { value: 'needle' } })
+    expect(showButton('mid') ?? hideButton('top')).toBeNull()
+    expect(screen.getByRole('treeitem').style.getPropertyValue('--dsh-session-indent')).toBe('')
+    fireEvent.click(screen.getByRole('treeitem'))
+    expect(b.props.open).toHaveBeenCalledWith(sid('needle'))
+    expect(b.store.getSnapshot().sessionExpansion).toEqual({ mid: true })
+    expect(indent('needle')).toBe('24px')
+    expect(scrollIntoView.mock.instances.at(-1)).toBe(row('needle'))
+  })
+
+  it('keeps the single list flat', () => {
+    const b = mountNested(['top', 'mid', 'leaf'], CHAIN)
+    act(() => { b.store.actions.setGroupBy('flat') })
+    expect(titles()).toEqual(['top', 'mid', 'leaf'])
+    expect([indent('top'), indent('mid'), indent('leaf')]).toEqual(['', '', ''])
+    expect(hideButton('top') ?? hideButton('mid')).toBeNull()
+    expect(row('top').getAttribute('aria-expanded')).toBeNull()
+  })
+
+  it('drops saved expansion of Sessions that no Workspace holds once the baseline is ready', () => {
+    const b = mountNested(['top', 'mid'], { mid: 'top' }, { collapsed: ['ghost', 'top'] })
+    expect(b.store.getSnapshot().sessionExpansion).toEqual({ top: false })
+  })
+  it('reveals every remaining row when five or fewer top-level rows stay hidden, however many rows nest under them', () => {
+    const roots = ['r1', 'r2', 'r3', 'r4', 'r5', 'r6', 'r7']
+    const kids = ['k1', 'k2', 'k3', 'k4', 'k5']
+    const links = Object.fromEntries(kids.map(kid => [kid, 'r6']))
+    const b = mountNested([...roots, ...kids], links)
+    fireEvent.click(screen.getByRole('button', { name: '展开其余 7 个会话' }))
+    expect(screen.getByRole('button', { name: '收起' })).toBeTruthy()
+    const later = ['r8', 'r9', 'r10', 'r11', 'r12']
+    rerender(b, {
+      useSessions: sessions([...roots, ...kids, ...later]),
+      useWorkspaces: nested([...roots, ...kids, ...later], links),
+    })
+    expect(screen.getByText('r12')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /展开其余/u })).toBeNull()
+  })
+
+  it('raises the watermark to the top-level row that holds a nested search result', () => {
+    const ids = ['r1', 'r2', 'r3', 'r4', 'r5', 'r6', 'r7', 'needle', 'r8']
+    const b = mountNested(ids, { needle: 'r7' })
+    expect(screen.queryByText('needle')).toBeNull()
+    fireEvent.change(screen.getByPlaceholderText<HTMLInputElement>('搜索会话名称'), { target: { value: 'needle' } })
+    fireEvent.click(screen.getByRole('treeitem'))
+    expect(b.props.open).toHaveBeenCalledWith(sid('needle'))
+    expect(titles()).toEqual(['alpha', 'r1', 'r2', 'r3', 'r4', 'r5', 'r6', 'r7', 'needle'])
+    expect(scrollIntoView.mock.instances.at(-1)).toBe(row('needle'))
+  })
+
+  it('keeps the nesting of a Workspace snapshot without parent links across a render that changes nothing', () => {
+    const ids = ['one', 'two']
+    const b = mountNested(ids, {}, { overrides: { useWorkspaces: hook(workspaceState([workspace('alpha', ids)])) } })
+    expect(titles()).toEqual(['alpha', 'one', 'two'])
+    const derivations = vi.mocked(nestSessions).mock.calls.length
+    rerender(b, {})
+    expect(vi.mocked(nestSessions).mock.calls).toHaveLength(derivations)
   })
 })

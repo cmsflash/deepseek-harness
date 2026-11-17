@@ -16,6 +16,8 @@ import type {
   WorkspacePinSessionRequest,
   WorkspacePinValue,
   WorkspaceRenameRequest,
+  WorkspaceSessionParentsValue,
+  WorkspaceSetSessionParentRequest,
   WorkspaceUnarchiveSessionRequest,
   WorkspaceUnpinSessionRequest,
   WorkspaceValue,
@@ -102,6 +104,11 @@ class FakeWorkspaceRemote implements WorkspaceRemote {
     _request: WorkspaceUnpinSessionRequest,
   ) => Promise<RemoteResult<WorkspacePinValue>> = () =>
     Promise.resolve(remoteOk({ pinnedSessionIds: [] }))
+  onSetSessionParent: (
+    request: WorkspaceSetSessionParentRequest,
+  ) => Promise<RemoteResult<WorkspaceSessionParentsValue>> = request => Promise.resolve(remoteOk({
+    sessionParents: request.parentSessionId === null ? {} : { [request.sessionId]: request.parentSessionId },
+  }))
 
   create(request: WorkspaceCreateRequest): Promise<RemoteResult<WorkspaceCreateValue>> {
     this.record('create', request)
@@ -146,6 +153,11 @@ class FakeWorkspaceRemote implements WorkspaceRemote {
   unpinSession(request: WorkspaceUnpinSessionRequest): Promise<RemoteResult<WorkspacePinValue>> {
     this.record('unpinSession', request)
     return this.onUnpinSession(request)
+  }
+
+  setSessionParent(request: WorkspaceSetSessionParentRequest): Promise<RemoteResult<WorkspaceSessionParentsValue>> {
+    this.record('setSessionParent', request)
+    return this.onSetSessionParent(request)
   }
 
   follow(_signal?: AbortSignal): RemoteStreamHandle<WorkspaceFollowFrame, never> {
@@ -504,6 +516,143 @@ describe('ClientWorkspaceModel', () => {
     gate.resolve(remoteOk({ pinnedSessionIds: [] }))
     await expect(pending).resolves.toMatchObject({ ok: true })
     expect(model.getSnapshot().pinnedSessionIds).toEqual(['first', 'second'])
+  })
+
+  it('installs parent links from a baseline and treats an absent field as no links', () => {
+    const model = modelFor()
+    expect(model.getSnapshot().sessionParents).toEqual({})
+    model.replaceBaseline({
+      items: [], archivedSessionIds: [], pinnedSessionIds: [], sessionParents: { [sid('child')]: sid('parent') },
+    })
+    expect(model.getSnapshot().sessionParents).toEqual({ child: 'parent' })
+    model.replaceBaseline({ items: [], archivedSessionIds: [], pinnedSessionIds: [] })
+    expect(model.getSnapshot().sessionParents).toEqual({})
+  })
+
+  it('replaces pushed parent links and keeps the map reference when no entry changed', async () => {
+    const model = modelFor()
+    model.replaceParents({ [sid('child')]: sid('parent') })
+    const before = model.getSnapshot()
+    expect(before.sessionParents).toEqual({ child: 'parent' })
+
+    model.replaceParents({ [sid('child')]: sid('parent') })
+    expect(model.getSnapshot()).toBe(before)
+    model.replaceArchived([sid('archived')])
+    expect(model.getSnapshot()).not.toBe(before)
+    expect(model.getSnapshot().sessionParents).toBe(before.sessionParents)
+
+    model.replaceParents({ [sid('child')]: sid('other') })
+    expect(model.getSnapshot().sessionParents).toEqual({ child: 'other' })
+    model.replaceParents({ [sid('second')]: sid('other') })
+    expect(model.getSnapshot().sessionParents).toEqual({ second: 'other' })
+    model.replaceParents({ [sid('second')]: sid('other'), [sid('child')]: sid('other') })
+    expect(model.getSnapshot().sessionParents).toEqual({ second: 'other', child: 'other' })
+  })
+
+  it('keeps the sessionParents object across equal maps and unrelated changes', async () => {
+    const remote = new FakeWorkspaceRemote()
+    const model = modelFor(remote)
+    const links = (): Record<SessionId, SessionId> => ({ [sid('b')]: sid('a') })
+    const row = workspace('one')
+    model.replaceBaseline({ items: [row], archivedSessionIds: [], pinnedSessionIds: [], sessionParents: links() })
+    const held = model.getSnapshot().sessionParents
+    expect(held).toEqual({ b: 'a' })
+
+    model.replaceParents(links())
+    expect(model.getSnapshot().sessionParents).toBe(held)
+    model.replaceBaseline({ items: [row], archivedSessionIds: [], pinnedSessionIds: [], sessionParents: links() })
+    expect(model.getSnapshot().sessionParents).toBe(held)
+    remote.onSetSessionParent = () => Promise.resolve(remoteOk({ sessionParents: links() }))
+    await expect(model.setSessionParent(sid('b'), sid('a'))).resolves.toMatchObject({ ok: true })
+    expect(model.getSnapshot().sessionParents).toBe(held)
+
+    const unrelated: Array<() => void> = [
+      () => { model.upsertView({ ...row, title: 'renamed', updatedAt: '2099-01-01T00:00:00.000Z' }) },
+      () => { model.upsertView(workspace('two')) },
+      () => { model.replacePinned([sid('a')]) },
+      () => { model.replaceArchived([sid('b')]) },
+      () => { model.replaceOrder([wid('one'), wid('two')]) },
+    ]
+    for (const change of unrelated) {
+      const before = model.getSnapshot()
+      change()
+      expect(model.getSnapshot()).not.toBe(before)
+      expect(model.getSnapshot().sessionParents).toBe(held)
+    }
+
+    model.replaceParents({ [sid('b')]: sid('c') })
+    expect(model.getSnapshot().sessionParents).not.toBe(held)
+    expect(model.getSnapshot().sessionParents).toEqual({ b: 'c' })
+  })
+
+  it('applies parent mutation echoes and leaves failed results unchanged', async () => {
+    const remote = new FakeWorkspaceRemote()
+    const model = modelFor(remote)
+    model.replaceParents({ [sid('kept')]: sid('parent') })
+
+    remote.onSetSessionParent = () => Promise.resolve(workspaceError(
+      new RemoteError('workspace/session-parent-invalid', 'cannot nest', {
+        sessionId: sid('parent'), parentSessionId: sid('kept'), reason: 'cycle',
+      }),
+    ))
+    await expect(model.setSessionParent(sid('parent'), sid('kept'))).resolves.toMatchObject({ ok: false })
+    expect(model.getSnapshot().sessionParents).toEqual({ kept: 'parent' })
+
+    remote.onSetSessionParent = request => Promise.resolve(remoteOk({
+      sessionParents: { [sid('kept')]: sid('parent'), [request.sessionId]: sid('parent') },
+    }))
+    await expect(model.setSessionParent(sid('fresh'), sid('parent'))).resolves.toMatchObject({ ok: true })
+    expect(model.getSnapshot().sessionParents).toEqual({ kept: 'parent', fresh: 'parent' })
+    expect(remote.calls).toContainEqual({
+      method: 'setSessionParent', request: { sessionId: 'fresh', parentSessionId: 'parent' },
+    })
+
+    remote.onSetSessionParent = () => Promise.resolve(remoteOk({ sessionParents: { [sid('kept')]: sid('parent') } }))
+    await expect(model.setSessionParent(sid('fresh'), null)).resolves.toMatchObject({ ok: true })
+    expect(model.getSnapshot().sessionParents).toEqual({ kept: 'parent' })
+    expect(remote.calls).toContainEqual({
+      method: 'setSessionParent', request: { sessionId: 'fresh', parentSessionId: null },
+    })
+  })
+
+  it('keeps the latest parent reply when overlapping requests settle out of order', async () => {
+    const remote = new FakeWorkspaceRemote()
+    const model = modelFor(remote)
+    const firstGate = deferred<RemoteResult<WorkspaceSessionParentsValue>>()
+    const secondGate = deferred<RemoteResult<WorkspaceSessionParentsValue>>()
+    let request = 0
+    remote.onSetSessionParent = () => request++ === 0 ? firstGate.promise : secondGate.promise
+
+    const first = model.setSessionParent(sid('first'), sid('parent'))
+    const second = model.setSessionParent(sid('second'), sid('parent'))
+    secondGate.resolve(remoteOk({ sessionParents: { [sid('first')]: sid('parent'), [sid('second')]: sid('parent') } }))
+    await expect(second).resolves.toMatchObject({ ok: true })
+    expect(model.getSnapshot().sessionParents).toEqual({ first: 'parent', second: 'parent' })
+    firstGate.resolve(remoteOk({ sessionParents: { [sid('first')]: sid('parent') } }))
+    await expect(first).resolves.toMatchObject({ ok: true })
+    expect(model.getSnapshot().sessionParents).toEqual({ first: 'parent', second: 'parent' })
+  })
+
+  it('keeps pushed parent links and a newer baseline when a parent reply lands later', async () => {
+    const remote = new FakeWorkspaceRemote()
+    const model = modelFor(remote)
+    const pushGate = deferred<RemoteResult<WorkspaceSessionParentsValue>>()
+    remote.onSetSessionParent = () => pushGate.promise
+    const overPush = model.setSessionParent(sid('first'), null)
+    model.replaceParents({ [sid('first')]: sid('parent'), [sid('second')]: sid('parent') })
+    pushGate.resolve(remoteOk({ sessionParents: {} }))
+    await expect(overPush).resolves.toMatchObject({ ok: true })
+    expect(model.getSnapshot().sessionParents).toEqual({ first: 'parent', second: 'parent' })
+
+    const baselineGate = deferred<RemoteResult<WorkspaceSessionParentsValue>>()
+    remote.onSetSessionParent = () => baselineGate.promise
+    const overBaseline = model.setSessionParent(sid('first'), null)
+    model.replaceBaseline({
+      items: [], archivedSessionIds: [], pinnedSessionIds: [], sessionParents: { [sid('first')]: sid('other') },
+    })
+    baselineGate.resolve(remoteOk({ sessionParents: {} }))
+    await expect(overBaseline).resolves.toMatchObject({ ok: true })
+    expect(model.getSnapshot().sessionParents).toEqual({ first: 'other' })
   })
 
   it('mirrors the Host pin drop locally when an archive echo lands', async () => {

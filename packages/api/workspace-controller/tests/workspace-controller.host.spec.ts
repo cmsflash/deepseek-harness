@@ -331,6 +331,138 @@ describe('WorkspaceController commands', () => {
   })
 })
 
+describe('WorkspaceController setSessionParent', () => {
+  /** Two Workspaces: `home` with accounted Sessions a, b, c and a subagent child; `other` with d. */
+  async function nesting() {
+    const base = await harness()
+    const { controller, ctx, root } = base
+    const home = await controller.create({ path: stageDir(root, 'nest-home') })
+    const other = await controller.create({ path: stageDir(root, 'nest-other') })
+    const account = async (id: string, workspace: typeof home, meta: Record<string, unknown> = {}) => {
+      const session = ctx.sessions.create(SessionId(id), { meta: { cwd: workspace.workspace.path, ...meta } })
+      const entity = ctx.workspaceRegistry.get(workspace.workspace.workspaceId)
+      if (entity === undefined) throw new Error('fixture Workspace disappeared')
+      await entity.attachSession(session.id)
+      return session.id
+    }
+    const a = await account('a', home)
+    const b = await account('b', home)
+    const c = await account('c', home)
+    const d = await account('d', other)
+    return { ...base, home, other, account, a, b, c, d }
+  }
+
+  it('nests, repeats, re-parents and clears, returning the complete links', async () => {
+    const { controller, a, b, c } = await nesting()
+    await expect(controller.setSessionParent({ sessionId: b, parentSessionId: a }))
+      .resolves.toEqual({ sessionParents: { [b]: a } })
+    await expect(controller.setSessionParent({ sessionId: b, parentSessionId: a }))
+      .resolves.toEqual({ sessionParents: { [b]: a } })
+    await expect(controller.setSessionParent({ sessionId: c, parentSessionId: b }))
+      .resolves.toEqual({ sessionParents: { [b]: a, [c]: b } })
+    await expect(controller.setSessionParent({ sessionId: c, parentSessionId: a }))
+      .resolves.toEqual({ sessionParents: { [b]: a, [c]: a } })
+    await expect(controller.setSessionParent({ sessionId: c, parentSessionId: null }))
+      .resolves.toEqual({ sessionParents: { [b]: a } })
+    await expect(controller.setSessionParent({ sessionId: b, parentSessionId: null }))
+      .resolves.toEqual({ sessionParents: {} })
+    // Clearing a Session without a link is not an error.
+    await expect(controller.setSessionParent({ sessionId: b, parentSessionId: null }))
+      .resolves.toEqual({ sessionParents: {} })
+  })
+
+  it('maps every refusal to its stable failure and writes nothing', async () => {
+    const { controller, ctx, root, home, account, a, b, c, d } = await nesting()
+    const sub = await account('sub', home, { origin: 'subagent', parentSession: a })
+    const loose = ctx.sessions.create(SessionId('loose'), { meta: { cwd: stageDir(root, 'nest-unowned') } }).id
+    const ghost = SessionId('ghost')
+    await controller.setSessionParent({ sessionId: b, parentSessionId: a })
+    await controller.setSessionParent({ sessionId: c, parentSessionId: b })
+    const links = { ...ctx.workspaceRegistry.sessionParents }
+
+    await expect(controller.setSessionParent({ sessionId: ghost, parentSessionId: a })).rejects.toMatchObject({
+      code: 'session/not-found',
+      details: { sessionId: ghost },
+      message: "cannot nest session 'ghost': live sessions and session persistence hold no such session",
+    })
+    await expect(controller.setSessionParent({ sessionId: a, parentSessionId: ghost })).rejects.toMatchObject({
+      code: 'session/not-found', details: { sessionId: ghost },
+    })
+    const invalid = async (sessionId: SessionId, parentSessionId: SessionId, reason: string, ending: string) => {
+      const attempt = controller.setSessionParent({ sessionId, parentSessionId })
+      await expect(attempt).rejects.toBeInstanceOf(RemoteError)
+      await expect(attempt).rejects.toMatchObject({
+        code: 'workspace/session-parent-invalid',
+        details: { sessionId, parentSessionId, reason },
+        message: `cannot nest session '${sessionId}' under '${parentSessionId}': ${ending}`,
+      })
+    }
+    await invalid(a, a, 'self', 'a session cannot be its own parent')
+    // An unknown Session as its own parent answers `self`: that check runs before the existence checks.
+    await invalid(ghost, ghost, 'self', 'a session cannot be its own parent')
+    await invalid(sub, a, 'subagent', "session 'sub' is a subagent session")
+    await invalid(a, sub, 'subagent', "session 'sub' is a subagent session")
+    await invalid(loose, a, 'unaccounted', "no workspace accounts for session 'loose'")
+    await invalid(a, loose, 'unaccounted', "no workspace accounts for session 'loose'")
+    await invalid(d, a, 'cross-workspace', 'the sessions belong to different workspaces')
+    await invalid(a, c, 'cycle', "session 'a' is already an ancestor of session 'c'")
+    expect(ctx.workspaceRegistry.sessionParents).toEqual(links)
+  })
+
+  it('propagates an unexpected registry failure', async () => {
+    const { controller, ctx, a, b } = await nesting()
+    const failure = new Error('parent storage failed')
+    vi.spyOn(ctx.workspaceRegistry, 'setSessionParent').mockRejectedValueOnce(failure)
+    await expect(controller.setSessionParent({ sessionId: b, parentSessionId: a })).rejects.toBe(failure)
+  })
+
+  it('starts a fresh feed with existing links and follows their removal', async () => {
+    const { controller, ctx, a, b } = await nesting()
+    await controller.setSessionParent({ sessionId: b, parentSessionId: a })
+    const feed = new WorkspaceFeed(ctx)
+    const abort = new AbortController()
+    const iterator = feed.follow(abort.signal)[Symbol.asyncIterator]()
+    try {
+      await expect(nextFrame(iterator)).resolves.toMatchObject({
+        type: 'baseline', value: { sessionParents: { [b]: a } },
+      })
+      await controller.setSessionParent({ sessionId: b, parentSessionId: null })
+      await expect(nextFrame(iterator)).resolves.toEqual({ type: 'parents', sessionParents: {} })
+    } finally {
+      abort.abort()
+      await iterator.return?.()
+    }
+  })
+
+  it('publishes one parents frame per changed map and none for an equal one', async () => {
+    const { controller, home, other, a, b, c } = await nesting()
+    const abort = new AbortController()
+    const iterator = controller.follow(abort.signal)[Symbol.asyncIterator]()
+    await expect(nextFrame(iterator)).resolves.toMatchObject({ type: 'baseline', value: { sessionParents: {} } })
+
+    await controller.setSessionParent({ sessionId: b, parentSessionId: a })
+    await expect(nextFrame(iterator)).resolves.toEqual({ type: 'parents', sessionParents: { [b]: a } })
+    await controller.setSessionParent({ sessionId: c, parentSessionId: b })
+    await expect(nextFrame(iterator)).resolves.toEqual({ type: 'parents', sessionParents: { [b]: a, [c]: b } })
+    // A re-parent keeps the key count: the frame still follows the changed value.
+    await controller.setSessionParent({ sessionId: c, parentSessionId: a })
+    await expect(nextFrame(iterator)).resolves.toEqual({ type: 'parents', sessionParents: { [b]: a, [c]: a } })
+
+    // Neither the repeated call nor the pin's registry write republishes an equal map.
+    await controller.setSessionParent({ sessionId: c, parentSessionId: a })
+    await controller.pinSession({ sessionId: a })
+    await expect(nextFrame(iterator)).resolves.toEqual({ type: 'pinned', pinnedSessionIds: [a] })
+
+    await controller.delete({ workspaceId: home.workspace.workspaceId })
+    await expect(nextFrame(iterator)).resolves.toEqual({ type: 'order', workspaceIds: [other.workspace.workspaceId] })
+    await expect(nextFrame(iterator)).resolves.toEqual({ type: 'parents', sessionParents: {} })
+    await expect(nextFrame(iterator)).resolves.toEqual({ type: 'remove', workspaceId: home.workspace.workspaceId })
+
+    abort.abort()
+    await expect(iterator.next()).resolves.toEqual({ done: true, value: undefined })
+  })
+})
+
 describe('WorkspaceController follow', () => {
   it('seeds a new feed from existing rows and rejects an inconsistent registry commit', async () => {
     const { ctx, root } = await harness()
@@ -381,7 +513,7 @@ describe('WorkspaceController follow', () => {
     const iterator = controller.follow(abort.signal)[Symbol.asyncIterator]()
     await expect(nextFrame(iterator)).resolves.toEqual({
       type: 'baseline',
-      value: { items: [], archivedSessionIds: [], pinnedSessionIds: [] },
+      value: { items: [], archivedSessionIds: [], pinnedSessionIds: [], sessionParents: {} },
     })
 
     const first = await controller.create({ path: stageDir(root, 'first') })
@@ -459,13 +591,18 @@ describe('WorkspaceController follow', () => {
     if (workspace === undefined) throw new Error('fixture Workspace disappeared')
     await workspace.attachSession(shared.id)
     await workspace.attachSession(secret.id)
+    const friend = ctx.sessions.create(SessionId('friend'), { meta: { cwd: shown.workspace.path } })
+    await workspace.attachSession(friend.id)
     await controller.pinSession({ sessionId: shared.id })
     await controller.pinSession({ sessionId: secret.id })
+    await controller.setSessionParent({ sessionId: friend.id, parentSessionId: shared.id })
+    await controller.setSessionParent({ sessionId: secret.id, parentSessionId: shared.id })
     ctx.remoteAccess.registerPolicy('test-guest', {
       bindings: () => [
         { role: FOLLOWER, resource: { kind: 'global' } },
         { role: WORKSPACE_VIEWER, resource: { kind: 'workspace', id: shownId } },
         { role: SESSION_VIEWER, resource: { kind: 'session', id: shared.id } },
+        { role: SESSION_VIEWER, resource: { kind: 'session', id: friend.id } },
       ],
     })
     const guest: Principal = { kind: 'test-guest', guest: 'workspace-controller' }
@@ -474,19 +611,26 @@ describe('WorkspaceController follow', () => {
     await expect(nextFrame(iterator)).resolves.toEqual({
       type: 'baseline',
       value: {
-        items: [expect.objectContaining({ workspaceId: shownId, sessionIds: [shared.id] })],
+        items: [expect.objectContaining({ workspaceId: shownId, sessionIds: [friend.id, shared.id] })],
         archivedSessionIds: [],
         pinnedSessionIds: [shared.id],
+        // The link whose child is hidden is withheld.
+        sessionParents: { [friend.id]: shared.id },
       },
     })
 
     await controller.rename({ workspaceId: hiddenId, title: 'still hidden' })
     await controller.rename({ workspaceId: shownId, title: 'renamed' })
     await expect(nextFrame(iterator)).resolves.toMatchObject({
-      type: 'upsert', workspace: { workspaceId: shownId, title: 'renamed', sessionIds: [shared.id] },
+      type: 'upsert', workspace: { workspaceId: shownId, title: 'renamed', sessionIds: [friend.id, shared.id] },
     })
     await controller.unpinSession({ sessionId: secret.id })
     await expect(nextFrame(iterator)).resolves.toEqual({ type: 'pinned', pinnedSessionIds: [shared.id] })
+    await controller.setSessionParent({ sessionId: secret.id, parentSessionId: null })
+    await expect(nextFrame(iterator)).resolves.toEqual({ type: 'parents', sessionParents: { [friend.id]: shared.id } })
+    // The link whose parent is hidden is withheld too.
+    await controller.setSessionParent({ sessionId: shared.id, parentSessionId: secret.id })
+    await expect(nextFrame(iterator)).resolves.toEqual({ type: 'parents', sessionParents: { [friend.id]: shared.id } })
     await controller.unpinSession({ sessionId: shared.id })
     await controller.archiveSession({ sessionId: secret.id })
     await controller.archiveSession({ sessionId: shared.id })
@@ -497,6 +641,7 @@ describe('WorkspaceController follow', () => {
     await expect(nextFrame(iterator)).resolves.toEqual({ type: 'order', workspaceIds: [shownId] })
     await controller.delete({ workspaceId: shownId })
     await expect(nextFrame(iterator)).resolves.toEqual({ type: 'order', workspaceIds: [] })
+    await expect(nextFrame(iterator)).resolves.toEqual({ type: 'parents', sessionParents: {} })
     await expect(nextFrame(iterator)).resolves.toEqual({ type: 'remove', workspaceId: shownId })
 
     abort.abort()

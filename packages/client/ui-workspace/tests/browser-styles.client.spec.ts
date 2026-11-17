@@ -73,6 +73,7 @@ describe('WorkspaceBrowser.module.css list', () => {
     expect(declarations('.flatList > * + *')?.get('margin-top')).toBe('2px')
     expect(declarations(".searchTree > [role='treeitem'] + [role='treeitem']")?.get('margin-top')).toBe('2px')
     expect(declarations('.groupSection > * + *')?.get('margin-top')).toBe('2px')
+    expect(declarations('.sessionChildren > * + *')?.get('margin-top')).toBe('2px')
     expect(declarations('.groupSection + .groupSection')?.get('margin-top')).toBe('4px')
   })
 
@@ -181,6 +182,28 @@ describe('WorkspaceBrowser.module.css list', () => {
     expect(dot?.get('align-self')).toBe('flex-start')
     expect(dot?.get('height')).toBe('20px')
     expect(dot?.get('align-items')).toBe('center')
+  })
+
+  it('indents nested Session rows and draws their expand control inside the leading padding', () => {
+    for (const selector of ['.projectRow', '.sessionRow']) {
+      expect(rowDeclarations(selector)?.get('padding-inline-start')).toContain('+ var(--dsh-session-indent, 0px)')
+    }
+    const [resting = '', coarse = ''] = rowsCss.split('@media (pointer: coarse)')
+    const base = declarationsFrom(resting, '.expander')
+    expect(base?.get('order')).toBe('-1')
+    // Width plus both inline margins is zero, so the status cell keeps its column.
+    expect(base?.get('width')).toBe('16px')
+    expect(base?.get('margin-inline')).toBe('-13px -3px')
+    expect(base?.get('justify-content')).toBe('center')
+    const touch = declarationsFrom(coarse.slice(0, coarse.indexOf('/*')), '.expander')
+    expect(touch?.get('width')).toBe('28px')
+    expect(touch?.get('margin-inline-end')).toBe('-15px')
+    expect(touch?.get('padding-inline-start')).toBe('2px')
+    expect(touch?.get('margin-inline-start')).toBeUndefined()
+    expect(rowDeclarations('.expander:focus-visible')?.get('outline-offset')).toBe('-2px')
+    expect(rowDeclarations('.expanderActive')?.get('color')).toBe('var(--dsw-alias-state-business-primary)')
+    const hover = /@media \(hover: hover\) \{\s*\.expander:hover \{([^}]*)\}\s*\}/.exec(rowsCss)
+    expect(hover?.[1]).toContain('color: var(--dsw-alias-label-primary)')
   })
 
   it('pins both rail controls to the shared left anchor during the column slide', () => {

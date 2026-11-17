@@ -51,8 +51,10 @@ const workspacePendingMutation = z.discriminatedUnion('operation', [
  * position), so the set never participates in the one-owner accounting
  * invariant. `pinnedSessionIds` is the registry-global pin set in pin order
  * (most recently pinned first); pinning and archival are mutually
- * exclusive, so archiving drops the session's pin. Both session sets are
- * defaulted so records written before the fields parse unchanged.
+ * exclusive, so archiving drops the session's pin. `sessionParents` is the
+ * registry-global map from a child session to the session it nests under.
+ * The session sets and the map are defaulted so records written before the
+ * fields parse unchanged.
  */
 export const workspaceDomainState = z.object({
   initialized: z.boolean(),
@@ -61,6 +63,7 @@ export const workspaceDomainState = z.object({
   workspaceIds: z.array(workspaceId),
   archivedSessionIds: z.array(sessionId).default([]),
   pinnedSessionIds: z.array(sessionId).default([]),
+  sessionParents: z.record(sessionId, sessionId).default({}),
   pendingMutation: workspacePendingMutation.optional(),
 })
 
@@ -78,7 +81,7 @@ export const workspaceDomainSpec = defineDomain({
   version: 2,
   global: {
     schema: workspaceDomainState,
-    initial: { initialized: false, workspaceIds: [], archivedSessionIds: [], pinnedSessionIds: [] },
+    initial: { initialized: false, workspaceIds: [], archivedSessionIds: [], pinnedSessionIds: [], sessionParents: {} },
   },
   tables: { workspaces: domainTable<WorkspaceId, WorkspaceRecord>(workspaceRecord) },
 })

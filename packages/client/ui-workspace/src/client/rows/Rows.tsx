@@ -11,7 +11,7 @@
  * session and workspace hover cards are suppressed while a menu is open.
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { RefObject } from 'react'
+import type { CSSProperties, RefObject } from 'react'
 import clsx from 'clsx'
 import type { PropsRenderSlots } from '@deepseek-ai/dsh-client-ui-slots'
 import {
@@ -409,6 +409,16 @@ function ProjectRow({
   )
 }
 
+/** Expand control of a Session row that has nested Session rows in its list. */
+export interface SessionRowExpander {
+  /** Whether the nested rows are shown. */
+  expanded: boolean
+  /** The selected Session is among the nested rows. */
+  containsCurrent: boolean
+  /** Show or hide the nested rows. */
+  toggle: () => void
+}
+
 /* v8 ignore next 3 -- closed-union backstop; only reached if the status is forged */
 function assertNever(value: never): never {
   throw new Error(`unknown pending interaction: ${String(value)}`)
@@ -645,10 +655,15 @@ export function SearchResultItem({
  * @param props.useSessionAccess - the browser root's Session access Hook; the title double-click
  * renames only while it allows `session/rename`.
  * @param props.t - the browser root's locale seat.
+ * @param props.depth - nesting level under other Session rows; absent or 0 at the top level of the
+ * list. Each level indents the row's contents by 12px; the fill and hit target keep the full width.
+ * @param props.expander - present only on a row with nested rows: the row then carries
+ * `aria-expanded` and a leading arrow button that toggles them without opening the Session.
  * @returns the session row.
  */
 export function SessionNodeItem({
   node, currentId, now, detail = 'updated', onOpen, onRenameRequest, renderSlot, onReveal, drag, home, useSessionAccess, t,
+  depth, expander,
 }: {
   node: SessionNode
   currentId: string | undefined
@@ -664,6 +679,10 @@ export function SessionNodeItem({
   /** Host account home; POSIX home-rooted hover paths display as `~`. */
   home?: string | undefined
   t: RowTranslate
+  /** Nesting level; absent or 0 at the top level. */
+  depth?: number | undefined
+  /** Present only on a row with nested rows. */
+  expander?: SessionRowExpander | undefined
 } & Pick<WorkspaceBrowserProps, 'useSessionAccess'> & PropsRenderSlots<
   | 'sidebar.workspaces.session.menu.item'
   | 'sidebar.workspaces.session.row.action'
@@ -711,8 +730,12 @@ export function SessionNodeItem({
         row.archived && css.archived,
         drag?.marker === 'before' && css.dropBefore, drag?.marker === 'after' && css.dropAfter,
       )}
+      style={depth !== undefined && depth > 0
+        ? { '--dsh-session-indent': `${depth * 12}px` } as CSSProperties
+        : undefined}
       role="treeitem"
       aria-selected={selected}
+      aria-expanded={expander?.expanded}
       aria-description={row.archived ? t('toast.archivedNotOpenable') : undefined}
       tabIndex={0}
       onClick={() => { onOpen(node.id) }}
@@ -793,6 +816,17 @@ export function SessionNodeItem({
           {renderSlot('sidebar.session.row.trailing', { sessionId: node.id })}
           {row.pinned && !row.archived && <PinnedIndicator t={t} />}
         </span>
+      )}
+      {/* After the title in the markup, so the row's accessible name starts with the title; CSS draws it first. */}
+      {expander !== undefined && (
+        <button
+          type="button"
+          className={clsx(css.expander, expander.containsCurrent && !expander.expanded && css.expanderActive)}
+          aria-label={t(expander.expanded ? 'actions.hideNested.aria' : 'actions.showNested.aria', { name: title })}
+          onClick={(e) => { e.stopPropagation(); expander.toggle() }}
+        >
+          <IconTriangleRightFillRegular size={12} className={clsx(css.arrow, expander.expanded && css.arrowOpen)} />
+        </button>
       )}
       {/* The strip's clicks stay in the strip: the trigger and every
           row.action entry act without also opening the row, so an entry's
