@@ -6,9 +6,9 @@
  */
 
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
-import type { SessionActivity, WorkspaceId } from '@deepseek-ai/dsh-workspace/types'
+import type { SessionActivity, SessionParentRefusal, WorkspaceId } from '@deepseek-ai/dsh-workspace/types'
 
-export type { WorkspaceId } from '@deepseek-ai/dsh-workspace/types'
+export type { SessionParentRefusal, WorkspaceId } from '@deepseek-ai/dsh-workspace/types'
 export type {
   SessionActivity, SessionActivityItem, SessionActivityKind, SessionActivityKindMap,
 } from '@deepseek-ai/dsh-workspace/types'
@@ -49,6 +49,12 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
       readonly workspaceId: WorkspaceId
       readonly sessionId: SessionId
       readonly beforeSessionId?: SessionId
+    }
+    /** The link was refused without a write; `reason` says why. */
+    'workspace/session-parent-invalid': {
+      readonly sessionId: SessionId
+      readonly parentSessionId: SessionId
+      readonly reason: SessionParentRefusal
     }
     /** The verb needs an interaction the composed backend does not serve. */
     'directory-picker/unavailable': { readonly capability: string }
@@ -149,12 +155,30 @@ export interface WorkspacePinValue {
   readonly pinnedSessionIds: readonly SessionId[]
 }
 
+/** Complete parent links: child Session id to the Session it nests under. A Session absent from the keys has no parent. */
+export type WorkspaceSessionParents = Readonly<Record<SessionId, SessionId>>
+
+/** Set or clear the Session one Session nests under. */
+export interface WorkspaceSetSessionParentRequest {
+  /** The child: the Session whose parent changes. */
+  readonly sessionId: SessionId
+  /** The new parent; `null` clears the link. The key is required. */
+  readonly parentSessionId: SessionId | null
+}
+
+/** Complete parent links after a mutation. */
+export interface WorkspaceSessionParentsValue {
+  readonly sessionParents: WorkspaceSessionParents
+}
+
 /** Complete reconnect baseline for Workspace browser state. */
 export interface WorkspaceBaseline {
   readonly items: readonly WorkspaceView[]
   readonly archivedSessionIds: readonly SessionId[]
   /** Registry-global pin set, most recently pinned first. */
   readonly pinnedSessionIds: readonly SessionId[]
+  /** Complete parent links. The Host always sends it; an absent field means no links. */
+  readonly sessionParents?: WorkspaceSessionParents
 }
 
 /**
@@ -169,6 +193,7 @@ export type WorkspaceFollowIncrement =
   | { readonly type: 'order'; readonly workspaceIds: readonly WorkspaceId[] }
   | { readonly type: 'archived'; readonly archivedSessionIds: readonly SessionId[] }
   | { readonly type: 'pinned'; readonly pinnedSessionIds: readonly SessionId[] }
+  | { readonly type: 'parents'; readonly sessionParents: WorkspaceSessionParents }
 
 /** Workspace state stream; every generation starts with exactly one baseline. */
 export type WorkspaceFollowFrame =

@@ -8,7 +8,7 @@
   background-clip: padding-box;
   box-sizing: border-box;
   padding: 0 8px;
-  padding-inline-start: calc(var(--dsh-sidebar-row-padding) - var(--dsh-sidebar-paint-inset) + var(--dsh-workspace-indent, 0px));
+  padding-inline-start: calc(var(--dsh-sidebar-row-padding) - var(--dsh-sidebar-paint-inset) + var(--dsh-workspace-indent, 0px) + var(--dsh-session-indent, 0px));
   cursor: pointer;
   -webkit-user-select: none;
   user-select: none;
@@ -493,6 +493,51 @@
 @media (hover: hover) {
   .iconButton:hover {
     color: var(--dsw-alias-label-primary);
+  }
+}
+
+/* Drawn first, inside the row's own leading padding, although it follows the
+   title in the markup: the negative margins cancel the button's width, so the
+   status cell and the title keep their columns. */
+.expander {
+  order: -1;
+  flex: none;
+  align-self: stretch;
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  margin-inline: -13px -3px;
+  border: none;
+  padding: 0;
+  background: transparent;
+  cursor: pointer;
+  color: var(--dsw-alias-label-caption);
+}
+
+.expanderActive {
+  color: var(--dsw-alias-state-business-primary);
+}
+
+.expander:focus-visible {
+  outline-offset: -2px;
+}
+
+@media (hover: hover) {
+  .expander:hover {
+    color: var(--dsw-alias-label-primary);
+  }
+}
+
+/* A wider target for touch: it extends over the status cell, which takes no input. */
+@media (pointer: coarse) {
+  .expander {
+    justify-content: flex-start;
+    width: 28px;
+    margin-inline-end: -15px;
+    padding-inline-start: 2px;
   }
 }
 

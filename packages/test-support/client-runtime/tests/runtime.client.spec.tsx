@@ -838,6 +838,43 @@ describe('workspaces action face', () => {
     }
   })
 
+  it('records parent calls, echoes them into the parent links, and honors stubs', async () => {
+    const runtime = await SlotTestRuntime.create()
+    try {
+      const ws = runtime.workspaces
+      const parent = 'parent' as SessionId
+      const first = 'first' as SessionId
+      const second = 'second' as SessionId
+      expect(ws.list.getSnapshot().sessionParents).toEqual({})
+      await ws.setSessionParent(first, parent)
+      await ws.setSessionParent(second, first)
+      expect(ws.list.getSnapshot().sessionParents).toEqual({ first: 'parent', second: 'first' })
+      await ws.setSessionParent(second, parent)
+      await ws.setSessionParent(first, null)
+      expect(ws.list.getSnapshot().sessionParents).toEqual({ second: 'parent' })
+
+      await ws.update((draft) => { delete draft.sessionParents })
+      await ws.setSessionParent(first, parent)
+      expect(ws.list.getSnapshot().sessionParents).toEqual({ first: 'parent' })
+
+      const setParent = vi.fn(async () => {})
+      ws.stub('setSessionParent', setParent)
+      await ws.setSessionParent(second, null)
+      expect(setParent).toHaveBeenCalledWith(second, null)
+      expect(ws.list.getSnapshot().sessionParents).toEqual({ first: 'parent' })
+      expect(ws.calls).toEqual([
+        { method: 'setSessionParent', args: [first, parent] },
+        { method: 'setSessionParent', args: [second, first] },
+        { method: 'setSessionParent', args: [second, parent] },
+        { method: 'setSessionParent', args: [first, null] },
+        { method: 'setSessionParent', args: [first, parent] },
+        { method: 'setSessionParent', args: [second, null] },
+      ])
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
   it('records every IWorkspaces verb with inert defaults and honors stubs', async () => {
     const runtime = await SlotTestRuntime.create()
     const ws = runtime.workspaces

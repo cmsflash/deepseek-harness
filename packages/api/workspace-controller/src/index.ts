@@ -25,6 +25,9 @@ import type {
   WorkspacePinSessionRequest,
   WorkspacePinValue,
   WorkspaceRenameRequest,
+  WorkspaceSessionParents,
+  WorkspaceSessionParentsValue,
+  WorkspaceSetSessionParentRequest,
   WorkspaceUnarchiveSessionRequest,
   WorkspaceUnpinSessionRequest,
   WorkspaceValue,
@@ -192,6 +195,16 @@ export class WorkspaceController extends TypertRemoteService {
   }
 
   /**
+   * Set or clear the Session one Session nests under on Workspace grouping surfaces.
+   * @param request - child Session and its new parent, or `null` to clear.
+   * @returns the complete resulting parent links.
+   */
+  @Remote('setSessionParent')
+  setSessionParent(request: WorkspaceSetSessionParentRequest): Promise<WorkspaceSessionParentsValue> {
+    return this.commands.setSessionParent(request)
+  }
+
+  /**
    * Stream a complete Workspace baseline followed by ordered increments. A
    * non-owner receives only the Workspaces and Sessions `allows()` admits.
    * When a delivered Workspace is no longer admitted at its next change or
@@ -207,11 +220,20 @@ export class WorkspaceController extends TypertRemoteService {
     const access = this.ctx.remoteAccess
     const visible = (workspaceId: WorkspaceId): boolean => access.allows({ kind: 'workspace', id: workspaceId })
     const sessions = (sessionIds: readonly SessionId[]): SessionId[] =>
-      sessionIds.filter(sessionId => access.allows({ kind: 'session', id: sessionId }))
+      sessionIds.filter(admitted)
+    const admitted = (sessionId: SessionId): boolean => access.allows({ kind: 'session', id: sessionId })
+    /** The links whose child and parent are both admitted. */
+    const parents = (sessionParents: WorkspaceSessionParents): WorkspaceSessionParents => {
+      const links: Record<SessionId, SessionId> = {}
+      for (const [child, parent] of sessionParentLinks(sessionParents)) {
+        if (admitted(child) && admitted(parent)) links[child] = parent
+      }
+      return links
+    }
     /** Workspaces this generation has delivered and not yet removed. */
     const delivered = new Set<WorkspaceId>()
     /** The admitted part of `value`; it becomes the delivered set. */
-    const filtered = (value: WorkspaceBaseline): WorkspaceBaseline => {
+    const filtered = (value: Required<WorkspaceBaseline>): Required<WorkspaceBaseline> => {
       const items = value.items.filter(item => visible(item.workspaceId))
       delivered.clear()
       for (const item of items) delivered.add(item.workspaceId)
@@ -219,6 +241,7 @@ export class WorkspaceController extends TypertRemoteService {
         items: items.map(item => ({ ...item, sessionIds: sessions(item.sessionIds) })),
         archivedSessionIds: sessions(value.archivedSessionIds),
         pinnedSessionIds: sessions(value.pinnedSessionIds),
+        sessionParents: parents(value.sessionParents),
       }
     }
     for await (const frame of this.feed.follow(signal)) {
@@ -252,12 +275,19 @@ export class WorkspaceController extends TypertRemoteService {
         case 'pinned':
           yield { type: 'pinned', pinnedSessionIds: sessions(frame.pinnedSessionIds) }
           break
+        case 'parents':
+          yield { type: 'parents', sessionParents: parents(frame.sessionParents) }
+          break
         /* v8 ignore next -- closed follow-frame union. */
         default:
           assertNever(frame)
       }
     }
   }
+}
+
+function sessionParentLinks(sessionParents: WorkspaceSessionParents): [child: SessionId, parent: SessionId][] {
+  return Object.entries(sessionParents) as [SessionId, SessionId][]
 }
 
 /* v8 ignore next 3 -- closed-union backstop. */

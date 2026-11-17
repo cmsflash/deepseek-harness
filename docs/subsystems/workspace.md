@@ -133,6 +133,10 @@ The controller's `initializeDefault` takes no request: it owns the fixed `defaul
 
 The controller's [transport types](../../packages/api/workspace-controller/src/types.ts) define `WorkspacePinSessionRequest` and `WorkspaceUnpinSessionRequest`, each carrying one `sessionId`. Both operations return `WorkspacePinValue`: the complete `pinnedSessionIds` array of Session ids, most recently pinned first. Pinning requires a known, unarchived Session; unpinning an id that is not pinned succeeds without changing the set. Archiving removes the Session's pin in the same durable write, and unarchiving does not restore it.
 
+## Session nesting
+
+The registry keeps one registry-global map, `sessionParents`, from a child Session id to the id of the Session it nests under; grouping surfaces read it to show a Session beneath another, and it changes neither Workspace accounting nor order. The controller's [transport types](../../packages/api/workspace-controller/src/types.ts) define `WorkspaceSetSessionParentRequest`, carrying the child's `sessionId` and a `parentSessionId` that is a Session id or `null` to clear the link, and `WorkspaceSessionParentsValue`, the complete map after the call. Setting the stored value again succeeds without a write. An unknown child or parent fails as `session/not-found`; every other refusal fails as `workspace/session-parent-invalid` with a `reason`: a Session as its own parent (`self`), a subagent-origin Session on either side (`subagent`), a Session no Workspace accounts for (`unaccounted`), two Sessions in different Workspaces (`cross-workspace`), or a link that would close a cycle (`cycle`). Archive state is not consulted, so archiving keeps a link and archived Sessions can be linked. A link ends when either Session leaves its Workspace's durable account: with the Workspace's deletion, after a detach or a prune, or at the next start. The `workspace/follow` baseline carries the map, and a `parents` frame carries the complete map after each committed change to it.
+
 ## Archive admission
 
 Archiving is a registry-global durable set, and the registry refuses to hide running work behind it. The rule is a capability seam over two Host events the package declares and dispatches ([events](#workspace-events)): `workspace/session-activity` (waterfall) asks the composed providers what still runs for a Session, and `workspace/session-stop` (parallel) asks them to stop it. Each provider registers on the root like any listener, so the package knows no agent, job, or schedule vocabulary; the families are keys of a merge-extensible map.
@@ -387,6 +391,13 @@ Host service backing the generated `ctx.remote.workspace` namespace.
 @Remote('unpinSession') unpinSession(request: WorkspaceUnpinSessionRequest): Promise<WorkspacePinValue>
 
 /**
+ * Set or clear the Session one Session nests under on Workspace grouping surfaces.
+ * @param request - child Session and its new parent, or `null` to clear.
+ * @returns the complete resulting parent links.
+ */
+@Remote('setSessionParent') setSessionParent(request: WorkspaceSetSessionParentRequest): Promise<WorkspaceSessionParentsValue>
+
+/**
  * Stream a complete Workspace baseline followed by ordered increments. A
  * non-owner receives only the Workspaces and Sessions `allows()` admits.
  * When a delivered Workspace is no longer admitted at its next change or
@@ -578,6 +589,29 @@ pinSession(sessionId: SessionId): Promise<void>
  * @returns resolution after durability.
  */
 unpinSession(sessionId: SessionId): Promise<void>
+
+/**
+ * Set or clear the session one session nests under, durably. A value equal
+ * to the stored one (the same parent, or `undefined` without a link)
+ * resolves without writing. `undefined` removes the child's link without
+ * checking that either session exists. Setting a parent refuses without
+ * writing, checking in this order: the child is its own parent (`self`);
+ * the child, then the parent, is neither live nor in session persistence
+ * ({@link WorkspaceUnknownSessionError}); either header has subagent origin
+ * (`subagent`); no workspace's `sessionIds` contains the child or the
+ * parent (`unaccounted`); the two belong to different workspaces
+ * (`cross-workspace`); the child is already an ancestor of the parent
+ * (`cycle`). Archive state is not consulted. A link ends when either
+ * session leaves its durable account: deleting a workspace drops the links
+ * of its sessions in the write that removes it from the order, an entity
+ * write that removes session ids is followed by one registry write dropping
+ * their links, and startup drops every link with an end on no account.
+ * @param sessionId - The child session whose parent changes.
+ * @param parentSessionId - The new parent; `undefined` clears the link.
+ * @returns resolution after durability.
+ * @throws {WorkspaceSessionParentInvalidError} when the link is refused.
+ */
+setSessionParent(sessionId: SessionId, parentSessionId: SessionId | undefined): Promise<void>
 
 /**
  * Resolve by canonical directory path without creating or mutating a

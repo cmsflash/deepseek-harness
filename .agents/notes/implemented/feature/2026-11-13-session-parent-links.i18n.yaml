@@ -1,0 +1,19 @@
+# Bilingual-pair consistency record for 2026-11-13-session-parent-links.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-11-13-session-parent-links.md
+/agent-note-session-parent-links-live-in-the-workspace-registry:
+  en: 150e7577d38007eb
+  zh: f3f40e665323d72e
+/agent-note-session-parent-links-live-in-the-workspace-registry/problem:
+  en: aa74dd60b6343010
+  zh: d0b6e085045b0c1b
+/agent-note-session-parent-links-live-in-the-workspace-registry/decision:
+  en: c95b694003ee5ee2
+  zh: c8b7f4dfa07bee1b
+/agent-note-session-parent-links-live-in-the-workspace-registry/alternatives-considered:
+  en: e9c9d2cf5262463c
+  zh: df55c0fe4c2325e8
+/agent-note-session-parent-links-live-in-the-workspace-registry/consequences:
+  en: 34f6559074564bd1
+  zh: 3b8085233044f113

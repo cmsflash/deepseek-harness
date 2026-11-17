@@ -413,7 +413,8 @@
 
 .flatList > * + *,
 .searchTree > [role='treeitem'] + [role='treeitem'],
-.groupSection > * + * {
+.groupSection > * + *,
+.sessionChildren > * + * {
   margin-top: 2px;
 }
 

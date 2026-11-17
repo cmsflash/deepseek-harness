@@ -14,7 +14,7 @@
  * are slot entries with their own behavior, so this component threads no
  * action callbacks and hosts no action surface.
  */
-import { type CSSProperties, type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
+import { type CSSProperties, Fragment, type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
 import clsx from 'clsx'
 import {
   AnimatedRows, Button, HoverCardGroup, IconArchiveCheckOutlineRegular, IconArchiveOffOutlineRegular, IconArchiveOutlineRegular,
@@ -36,6 +36,10 @@ import {
   deriveFlat, deriveGroups, deriveSearchResults, orderByRecency, owningGroupKey, owningParentFolder,
   pinCurrentBlank, reconcileManualOrder, sessionMemberIds, UNGROUPED_KEY, visibleSessionIds,
 } from '../tree.ts'
+import {
+  nestedRows, nestingAncestorIds, nestSessions,
+  type NestedSession, type SessionExpansion, type SessionNesting, type SessionParents,
+} from '../session-nesting.ts'
 import { ProjectRowItem, SearchResultItem, SessionNodeItem } from './Rows.tsx'
 import { FLAT_SESSION_ORDER_KEY, type SessionGroupBy, type SessionRowDetail } from '../stores.ts'
 import { WorkspacePickFlow } from '../WorkspacePicker.tsx'
@@ -54,40 +58,56 @@ const SEARCH_QUERY_MAX_CODE_UNITS = 500
 const SESSION_WATERMARK_BASE = 5
 /** Highest watermark that attention-bearing Sessions raise automatically; Show more and search reveals may exceed it. */
 const SESSION_WATERMARK_AUTO_MAX = 50
+/** Stable selector fallback for a Workspace snapshot that carries no parent links. */
+const NO_SESSION_PARENTS: SessionParents = {}
+/** Stable selector fallback for view state persisted before nested Session rows existed. */
+const NO_SESSION_EXPANSION: SessionExpansion = {}
 
-/** Show the blank row plus the first `watermark` non-blank rows, in list order. */
-function watermarkRows(sessions: readonly SessionNode[], watermark: number): {
-  rows: readonly SessionNode[]
+/** One top-level Session row of a list with its rendered nested rows. */
+type SessionEntry = NestedSession<SessionNode>
+
+/** A Workspace group with its Session rows nested under their parent Sessions. */
+type NestedGroup = GroupNode & { nesting: SessionNesting<SessionNode> }
+
+/**
+ * Show the blank row plus the first `watermark` non-blank top-level rows, in list order; each shown row brings
+ * its rendered nested rows. `hiddenCount` counts every row the left-out top-level rows would add.
+ */
+function watermarkRows(roots: readonly SessionEntry[], watermark: number): {
+  rows: readonly SessionEntry[]
+  hiddenRoots: number
   hiddenCount: number
 } {
   let count = 0
-  const rows = sessions.filter((session) => {
-    if (session.blank) return true
-    count += 1
-    return count <= watermark
-  })
-  return { rows, hiddenCount: sessions.length - rows.length }
+  const rows: SessionEntry[] = []
+  const hidden: SessionEntry[] = []
+  for (const entry of roots) {
+    if (entry.row.blank || (count += 1) <= watermark) rows.push(entry)
+    else hidden.push(entry)
+  }
+  return { rows, hiddenRoots: hidden.length, hiddenCount: nestedRows(hidden).length }
 }
 
 /**
- * Smallest watermark that covers every non-blank row within the automatic maximum that is running, has a running
- * child, awaits the user, carries an unread completion, or is current, and the reveal target at any position.
+ * Smallest watermark that covers every non-blank top-level row within the automatic maximum that, itself or through
+ * a rendered nested row, is running, has a running child, awaits the user, carries an unread completion, or is
+ * current, and the top-level row holding the rendered reveal target at any position.
  */
 function requiredWatermark(
-  sessions: readonly SessionNode[],
+  roots: readonly SessionEntry[],
   current: SessionId | undefined,
   revealSessionId: SessionId | undefined,
 ): number {
   let index = 0
   let required = 0
-  for (const session of sessions) {
-    if (session.blank) continue
+  for (const entry of roots) {
+    if (entry.row.blank) continue
     index += 1
-    const attention = index <= SESSION_WATERMARK_AUTO_MAX && (
+    const rendered = nestedRows([entry])
+    const attention = index <= SESSION_WATERMARK_AUTO_MAX && rendered.some(session =>
       session.running || session.runningSubagentCount > 0 || session.pendingInteraction !== undefined
-      || session.completed || session.id === current
-    )
-    if (attention || session.id === revealSessionId) required = index
+      || session.completed || session.id === current)
+    if (attention || rendered.some(session => session.id === revealSessionId)) required = index
   }
   return required
 }
@@ -220,6 +240,8 @@ interface DragState {
   sessionId: SessionNode['id']
   /** Source row was pinned at drag start; drop targets share the pinned block. */
   pinned: boolean
+  /** Session the source row nested under at drag start; drop targets share it. Absent for a top-level row. */
+  parentId: SessionId | undefined
   /** Row the marker sits on and which half (insert above/below it). */
   over: { id: SessionNode['id']; half: 'before' | 'after' } | null
 }
@@ -293,6 +315,12 @@ type SessionTreeProps = Pick<
   groupExpansion: Readonly<Record<string, boolean>>
   /** Persist one Workspace group's expansion. */
   setGroupExpanded: (key: string, expanded: boolean) => void
+  /** Parent links published by the Workspace model: child Session id to the Session it nests under. */
+  sessionParents: SessionParents
+  /** Saved expansion of Sessions that have nested Sessions; an absent id reads as expanded. */
+  sessionExpansion: SessionExpansion
+  /** Persist whether one Session shows the Sessions nested under it. */
+  setSessionExpanded: (sessionId: string, expanded: boolean) => void
   /** Save a drag order and select Manual. */
   setSessionOrder: (accountKey: string, order: readonly string[]) => void
   /** Registry-global pin and archive sets plus the archived-visibility choice. */
@@ -336,6 +364,7 @@ function SessionTree({
   renderSlot,
   insertWorkspaceBefore,
   nestWorkspaces, groupExpansion, setGroupExpanded,
+  sessionParents, sessionExpansion, setSessionExpanded,
   setSessionOrder, home, rowDetail, t,
   revealSessionId, onSessionRevealed, shortcuts,
 }: SessionTreeProps) {
@@ -393,6 +422,19 @@ function SessionTree({
     }),
     [list, workspaces, rowState, statuses, expandedGroups, ungroupedSessionIds],
   )
+  const nestedGroups = useMemo<readonly NestedGroup[]>(
+    () => groups.map(group => ({ ...group, nesting: nestSessions(group.sessions, sessionParents, sessionExpansion) })),
+    [groups, sessionParents, sessionExpansion],
+  )
+  // Accepted links of every list; nestSessions drops each link on a cycle, so walks over this map end.
+  const sessionParentIds = useMemo(
+    () => new Map(nestedGroups.flatMap(group => [...group.nesting.parents])),
+    [nestedGroups],
+  )
+  const currentSessionAncestors = useMemo(
+    () => new Set(current === undefined ? [] : nestingAncestorIds(current, sessionParentIds)),
+    [current, sessionParentIds],
+  )
   useEffect(() => {
     for (let key = revealGroup; key !== undefined; key = parents.get(key)) {
       if (groupExpansion[key] === false || (key === revealGroup && groupExpansion[key] !== true)) {
@@ -400,8 +442,14 @@ function SessionTree({
       }
     }
   }, [groupExpansion, parents, revealGroup, setGroupExpanded])
-  const baselines = new Map(groups.map(group => [group.key, Math.max(SESSION_WATERMARK_BASE, requiredWatermark(
-    group.sessions,
+  useEffect(() => {
+    if (revealSessionId === undefined) return
+    for (const id of nestingAncestorIds(revealSessionId, sessionParentIds)) {
+      if (sessionExpansion[id] === false) setSessionExpanded(id, true)
+    }
+  }, [revealSessionId, sessionExpansion, sessionParentIds, setSessionExpanded])
+  const baselines = new Map(nestedGroups.map(group => [group.key, Math.max(SESSION_WATERMARK_BASE, requiredWatermark(
+    group.nesting.roots,
     current,
     group.key === revealGroup ? revealSessionId : undefined,
   ))]))
@@ -433,15 +481,16 @@ function SessionTree({
     if (sessionDropCommitted.current) return
     sessionDropCommitted.current = true
     setDrag(null)
-    const group = groups.find(candidate => candidate.key === activeDrag.accountKey)
+    const group = nestedGroups.find(candidate => candidate.key === activeDrag.accountKey)
     if (group === undefined) return
     if (over.id === activeDrag.sessionId) return
     const accountSessionIds = activeDrag.accountKey === UNGROUPED_KEY
       ? ungroupedSessionIds
       : workspaces.find(workspace => workspace.workspaceId === activeDrag.accountKey)?.sessionIds
     if (accountSessionIds === undefined) return
-    const renderedSessions = watermarkRows(group.sessions, sessionWatermarks[group.key] ?? SESSION_WATERMARK_BASE).rows
-    const nextOrder = sessionDragOrder(accountSessionIds, renderedSessions, activeDrag, over)
+    const renderedRoots = watermarkRows(group.nesting.roots, sessionWatermarks[group.key] ?? SESSION_WATERMARK_BASE).rows
+    const siblings = nestedRows(renderedRoots).filter(row => sessionParentIds.get(row.id) === activeDrag.parentId)
+    const nextOrder = sessionDragOrder(accountSessionIds, siblings, activeDrag, over)
     if (nextOrder !== undefined) setSessionOrder(activeDrag.accountKey, nextOrder)
   }
   const commitWorkspaceDrag = (
@@ -467,9 +516,9 @@ function SessionTree({
     })
   }
   const childrenByParent = useMemo(() => {
-    const rendered = new Set(groups.map(group => group.key))
-    const children = new Map<string | undefined, GroupNode[]>()
-    for (const group of groups) {
+    const rendered = new Set(nestedGroups.map(group => group.key))
+    const children = new Map<string | undefined, NestedGroup[]>()
+    for (const group of nestedGroups) {
       // The archived-only view drops empty groups, so an ancestor may be
       // absent; nest under the nearest rendered one.
       let parent = parents.get(group.key)
@@ -479,25 +528,116 @@ function SessionTree({
       else siblings.push(group)
     }
     return children
-  }, [groups, parents])
+  }, [nestedGroups, parents])
   const rootGroups = childrenByParent.get(undefined) ?? []
   const workspaceDropAtListStart = rootGroups[0]?.workspaceId !== undefined
     && workspaceDrag?.over?.id === rootGroups[0].workspaceId
     && workspaceDrag.over.half === 'before'
 
   const rowKeys: string[] = groups.length === 0 ? ['empty'] : []
-  const renderGroup = (group: GroupNode, depth: number): ReactNode => {
+  const renderSessionRow = (entry: SessionEntry, group: NestedGroup, nestedRowNodes: readonly ReactNode[]): ReactNode => {
+    const node = entry.row
+    // Session drag never leaves its browser-local account or the Session it
+    // nests under, and pinned rows reorder only within their leading pinned block.
+    const parentId = sessionParentIds.get(node.id)
+    const sameGroupDrag = drag !== null && drag.accountKey === group.key
+    const compatibleTarget = sameGroupDrag && drag.pinned === node.pinned && drag.parentId === parentId
+    const normalizeHalf = (half: 'before' | 'after'): 'before' | 'after' =>
+      node.blank ? 'after' : half
+    const dragProps = {
+      start: () => {
+        sessionDropCommitted.current = false
+        setDrag({ accountKey: group.key, sessionId: node.id, pinned: node.pinned, parentId, over: null })
+      },
+      active: compatibleTarget,
+      marker: sameGroupDrag && drag.over?.id === node.id ? drag.over.half : null,
+      hover: (half: 'before' | 'after') => {
+        /* v8 ignore next -- narrowing guard: Rows gates hover on `active`, which is false while the drag state is null. */
+        setDrag(d => (d === null ? d : {
+          ...d, over: { id: node.id, half: normalizeHalf(half) },
+        }))
+      },
+      drop: (half: 'before' | 'after') => {
+        /* v8 ignore next -- narrowing guard: Rows gates drop on `active`, which is false while the drag state is null. */
+        if (drag === null) return
+        commitSessionDrag(drag, { id: node.id, half: normalizeHalf(half) })
+      },
+      end: () => {
+        if (drag?.over !== null && drag?.over !== undefined) commitSessionDrag(drag, drag.over)
+        else setDrag(null)
+        sessionDropCommitted.current = false
+      },
+    }
+    return (
+      <Fragment key={node.id}>
+        <SessionNodeItem
+          node={node}
+          currentId={current}
+          now={now}
+          detail={rowDetail}
+          onOpen={open}
+          onRenameRequest={onSessionRenameRequest}
+          renderSlot={renderSlot}
+          onReveal={node.id === revealSessionId && group.key === revealGroup
+            ? () => { onSessionRevealed(node.id) }
+            : undefined}
+          drag={dragProps}
+          depth={entry.depth}
+          expander={entry.childCount === 0
+            ? undefined
+            : {
+              expanded: entry.expanded,
+              containsCurrent: currentSessionAncestors.has(node.id),
+              toggle: () => { setSessionExpanded(node.id, !entry.expanded) },
+            }}
+          home={home}
+          useSessionAccess={useSessionAccess}
+          t={t}
+        />
+        {nestedRowNodes.length > 0 && (
+          <div role="group" className={css.sessionChildren}>
+            {nestedRowNodes}
+          </div>
+        )}
+      </Fragment>
+    )
+  }
+  // An explicit stack instead of recursion: a deep parent chain cannot exhaust the call stack here.
+  const renderSessionRows = (roots: readonly SessionEntry[], group: NestedGroup): ReactNode[] => {
+    const rendered: ReactNode[] = []
+    const levels = [{ entries: roots, index: 0, nodes: rendered }]
+    for (let level = levels.at(-1); level !== undefined; level = levels.at(-1)) {
+      const entry = level.entries[level.index]
+      if (entry === undefined) {
+        levels.pop()
+        const outer = levels.at(-1)
+        const parent = outer?.entries[outer.index]
+        if (outer === undefined || parent === undefined) break
+        outer.nodes.push(renderSessionRow(parent, group, level.nodes))
+        outer.index += 1
+        continue
+      }
+      rowKeys.push(`session:${entry.row.id}`)
+      if (entry.children.length > 0) {
+        levels.push({ entries: entry.children, index: 0, nodes: [] })
+      } else {
+        level.nodes.push(renderSessionRow(entry, group, []))
+        level.index += 1
+      }
+    }
+    return rendered
+  }
+  const renderGroup = (group: NestedGroup, depth: number): ReactNode => {
     const workspaceId = group.workspaceId
     const children = childrenByParent.get(group.key) ?? []
     const compatibleDrag = workspaceDrag !== null && parents.get(workspaceDrag.workspaceId) === parents.get(group.key)
     const watermark = sessionWatermarks[group.key] ?? SESSION_WATERMARK_BASE
-    const collapsed = watermarkRows(group.sessions, baselines.get(group.key) ?? SESSION_WATERMARK_BASE)
-    const visible = watermarkRows(group.sessions, watermark)
-    const sessionsExpanded = visible.hiddenCount === 0
+    const collapsed = watermarkRows(group.nesting.roots, baselines.get(group.key) ?? SESSION_WATERMARK_BASE)
+    const visible = watermarkRows(group.nesting.roots, watermark)
+    const sessionsExpanded = visible.hiddenRoots === 0
     rowKeys.push(`workspace:${group.key}`)
     const childRows = group.expanded ? children.map(child => renderGroup(child, depth + 1)) : []
-    const sessions = visible.rows
-    for (const node of sessions) rowKeys.push(`session:${node.id}`)
+    const sessionRows = renderSessionRows(visible.rows, group)
     if (collapsed.hiddenCount > 0) rowKeys.push(`overflow:${group.key}`)
     const workspaceMarker = workspaceId !== undefined && workspaceDrag?.over?.id === workspaceId
       ? workspaceDrag.over.half
@@ -605,57 +745,7 @@ function SessionTree({
             {childRows}
           </div>
         )}
-        {sessions.map((node) => {
-        // Session drag never leaves its browser-local account, and pinned
-        // rows reorder only within their leading pinned block.
-          const sameGroupDrag = drag !== null && drag.accountKey === group.key
-          const compatibleTarget = sameGroupDrag && drag.pinned === node.pinned
-          const normalizeHalf = (half: 'before' | 'after'): 'before' | 'after' =>
-            node.blank ? 'after' : half
-          const dragProps = {
-            start: () => {
-              sessionDropCommitted.current = false
-              setDrag({ accountKey: group.key, sessionId: node.id, pinned: node.pinned, over: null })
-            },
-            active: compatibleTarget,
-            marker: sameGroupDrag && drag.over?.id === node.id ? drag.over.half : null,
-            hover: (half: 'before' | 'after') => {
-            /* v8 ignore next -- narrowing guard: Rows gates hover on `active`, which is false while the drag state is null. */
-              setDrag(d => (d === null ? d : {
-                ...d, over: { id: node.id, half: normalizeHalf(half) },
-              }))
-            },
-            drop: (half: 'before' | 'after') => {
-            /* v8 ignore next -- narrowing guard: Rows gates drop on `active`, which is false while the drag state is null. */
-              if (drag === null) return
-              commitSessionDrag(drag, { id: node.id, half: normalizeHalf(half) })
-            },
-            end: () => {
-              if (drag?.over !== null && drag?.over !== undefined) commitSessionDrag(drag, drag.over)
-              else setDrag(null)
-              sessionDropCommitted.current = false
-            },
-          }
-          return (
-            <SessionNodeItem
-              key={node.id}
-              node={node}
-              currentId={current}
-              now={now}
-              detail={rowDetail}
-              onOpen={open}
-              onRenameRequest={onSessionRenameRequest}
-              renderSlot={renderSlot}
-              onReveal={node.id === revealSessionId && group.key === revealGroup
-                ? () => { onSessionRevealed(node.id) }
-                : undefined}
-              drag={dragProps}
-              home={home}
-              useSessionAccess={useSessionAccess}
-              t={t}
-            />
-          )
-        })}
+        {sessionRows}
         {collapsed.hiddenCount > 0 && (
           <button
             type="button"
@@ -669,7 +759,7 @@ function SessionTree({
               }
               setStoredWatermarks(marks => ({
                 ...marks,
-                [group.key]: visible.hiddenCount <= SESSION_WATERMARK_BASE ? Infinity : watermark + SESSION_WATERMARK_BASE,
+                [group.key]: visible.hiddenRoots <= SESSION_WATERMARK_BASE ? Infinity : watermark + SESSION_WATERMARK_BASE,
               }))
               setWatermarkMotionKey(key => key + 1)
             }}
@@ -786,7 +876,7 @@ function FlatList({
               drag={{
                 start: () => {
                   dropCommitted.current = false
-                  setDrag({ accountKey: FLAT_SESSION_ORDER_KEY, sessionId: node.id, pinned: node.pinned, over: null })
+                  setDrag({ accountKey: FLAT_SESSION_ORDER_KEY, sessionId: node.id, pinned: node.pinned, parentId: undefined, over: null })
                 },
                 active,
                 marker: active && drag.over?.id === node.id ? drag.over.half : null,
@@ -989,6 +1079,8 @@ export function WorkspaceBrowser({
   // Persisted view blobs written before the row-detail option existed read as Last active.
   const rowDetail = useStore(s => s.rowDetail ?? 'updated')
   const groupExpansion = useStore(s => s.groupExpansion)
+  const sessionParents = useWorkspaces(state => state.sessionParents ?? NO_SESSION_PARENTS)
+  const sessionExpansion = useStore(s => s.sessionExpansion ?? NO_SESSION_EXPANSION)
   const sessionOrderByAccount = useStore(s => s.sessionOrderByAccount)
   // Archived sessions are not openable: the row stays visible under the
   // filter but a click explains instead of navigating.
@@ -1068,7 +1160,8 @@ export function WorkspaceBrowser({
       FLAT_SESSION_ORDER_KEY,
       ...workspaces.map(workspace => workspace.workspaceId),
     ])
-  }, [actions.retainAccountKeys, workspacePhase, workspaces])
+    actions.retainSessionExpansion(workspaces.flatMap(workspace => workspace.sessionIds))
+  }, [actions.retainAccountKeys, actions.retainSessionExpansion, workspacePhase, workspaces])
   useEffect(() => {
     if (list.phase !== 'ready' || workspaceReady || orderBy !== 'manual' || currentBlank === undefined) return
     // A first prompt can end blank pinning before the Workspace baseline arrives.
@@ -1521,6 +1614,9 @@ export function WorkspaceBrowser({
                 animationResetKey={`${groupBy}/${orderBy}/${archivedFilter}`}
                 groupExpansion={groupExpansion}
                 setGroupExpanded={actions.setGroupExpanded}
+                sessionParents={sessionParents}
+                sessionExpansion={sessionExpansion}
+                setSessionExpanded={actions.setSessionExpanded}
                 setSessionOrder={saveSessionOrder}
                 rowState={rowState}
                 onLeaveArchivedOnly={leaveArchivedOnly}

@@ -61,6 +61,13 @@ export interface WorkspaceEntityHost {
    * @param path - Canonical existing directory from the immutable header cwd.
    */
   rememberSessionPath(id: SessionId, path: string): void
+
+  /**
+   * Report Sessions a committed write removed from this workspace's durable account.
+   * @param ids - Session ids no longer on the account.
+   * @returns resolution after the registry dropped the parent links to and from them.
+   */
+  sessionsUnaccounted(ids: readonly SessionId[]): Promise<void>
 }
 
 /** Chain-slot abort sentinel thrown by the update fn when the record needs no change; only `mutate` observes it. */
@@ -202,6 +209,7 @@ export class WorkspaceEntity implements Workspace {
    */
   private async mutate(fn: (record: WorkspaceRecord) => WorkspaceRecord): Promise<void> {
     let next: WorkspaceRecord
+    let dropped: SessionId[] = []
     try {
       next = await this.host.table().update(this.id, (current) => {
         const changed = fn(current)
@@ -211,6 +219,7 @@ export class WorkspaceEntity implements Workspace {
         if (changed === current && sessionIds.length === current.sessionIds.length) {
           throw unchangedSentinel
         }
+        dropped = current.sessionIds.filter(id => !sessionIds.includes(id))
         return { ...changed, sessionIds, updatedAt: new Date().toISOString() }
       })
     } catch (error) {
@@ -218,5 +227,6 @@ export class WorkspaceEntity implements Workspace {
       throw error
     }
     this.record = next
+    if (dropped.length > 0) await this.host.sessionsUnaccounted(dropped)
   }
 }

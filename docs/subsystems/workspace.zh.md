@@ -133,6 +133,10 @@ interface Workspace {
 
 控制器的[传输类型](../../packages/api/workspace-controller/src/types.ts)定义了 `WorkspacePinSessionRequest` 和 `WorkspaceUnpinSessionRequest`，两者都携带一个 `sessionId`。两个操作都返回 `WorkspacePinValue`：完整的会话 id 数组 `pinnedSessionIds`，最近置顶的会话排在前面。置顶要求会话已知且未归档；对未置顶的 id 取消置顶会成功，且不改变集合。归档在同一次持久化写入中移除该会话的置顶，取消归档不会恢复置顶。
 
+## 会话嵌套
+
+注册表保存一个注册表全局的映射 `sessionParents`，从子会话 id 指向其所嵌套会话的 id；分组界面读取它以把一个会话显示在另一个会话之下，它既不改变工作区记账也不改变顺序。控制器的[传输类型](../../packages/api/workspace-controller/src/types.ts)定义了 `WorkspaceSetSessionParentRequest`（携带子会话的 `sessionId`，以及为会话 id 或以 `null` 清除关联的 `parentSessionId`）和 `WorkspaceSessionParentsValue`（调用之后的完整映射）。再次设置已存的值会成功且不写入。子会话或父会话未知时以 `session/not-found` 失败；其余拒绝以带 `reason` 的 `workspace/session-parent-invalid` 失败：会话以自身为父（`self`）、任一方来源为子代理（`subagent`）、会话不在任何工作区的记账中（`unaccounted`）、两个会话属于不同工作区（`cross-workspace`），或关联会形成环（`cycle`）。不查看归档状态，因此归档保留关联，已归档会话也可以建立关联。任一会话离开其工作区的持久记账时关联即结束：随工作区删除、在解除挂接或清理之后，或在下一次启动时。`workspace/follow` 的 baseline 携带该映射，每次对它的已提交变更之后由 `parents` 帧携带完整映射。
+
 ## 归档准入
 
 归档是一个注册表全局的持久化集合，注册表拒绝把正在运行的工作藏在它后面。这条规则是本包声明并派发的两个宿主事件之上的能力接缝（[事件](#workspace-events)）：`workspace/session-activity`（waterfall）向已组合的提供方询问某会话还有什么在跑，`workspace/session-stop`（parallel）请它们停止这些工作。每个提供方像任何监听器一样在根上注册，因此本包不认识 agent、job 或 schedule 的词汇；各族是一个可合并扩展的 map 的键。
@@ -387,6 +391,13 @@ Host service backing the generated `ctx.remote.workspace` namespace.
 @Remote('unpinSession') unpinSession(request: WorkspaceUnpinSessionRequest): Promise<WorkspacePinValue>
 
 /**
+ * Set or clear the Session one Session nests under on Workspace grouping surfaces.
+ * @param request - child Session and its new parent, or `null` to clear.
+ * @returns the complete resulting parent links.
+ */
+@Remote('setSessionParent') setSessionParent(request: WorkspaceSetSessionParentRequest): Promise<WorkspaceSessionParentsValue>
+
+/**
  * Stream a complete Workspace baseline followed by ordered increments. A
  * non-owner receives only the Workspaces and Sessions `allows()` admits.
  * When a delivered Workspace is no longer admitted at its next change or
@@ -578,6 +589,29 @@ pinSession(sessionId: SessionId): Promise<void>
  * @returns resolution after durability.
  */
 unpinSession(sessionId: SessionId): Promise<void>
+
+/**
+ * Set or clear the session one session nests under, durably. A value equal
+ * to the stored one (the same parent, or `undefined` without a link)
+ * resolves without writing. `undefined` removes the child's link without
+ * checking that either session exists. Setting a parent refuses without
+ * writing, checking in this order: the child is its own parent (`self`);
+ * the child, then the parent, is neither live nor in session persistence
+ * ({@link WorkspaceUnknownSessionError}); either header has subagent origin
+ * (`subagent`); no workspace's `sessionIds` contains the child or the
+ * parent (`unaccounted`); the two belong to different workspaces
+ * (`cross-workspace`); the child is already an ancestor of the parent
+ * (`cycle`). Archive state is not consulted. A link ends when either
+ * session leaves its durable account: deleting a workspace drops the links
+ * of its sessions in the write that removes it from the order, an entity
+ * write that removes session ids is followed by one registry write dropping
+ * their links, and startup drops every link with an end on no account.
+ * @param sessionId - The child session whose parent changes.
+ * @param parentSessionId - The new parent; `undefined` clears the link.
+ * @returns resolution after durability.
+ * @throws {WorkspaceSessionParentInvalidError} when the link is refused.
+ */
+setSessionParent(sessionId: SessionId, parentSessionId: SessionId | undefined): Promise<void>
 
 /**
  * Resolve by canonical directory path without creating or mutating a

@@ -18,6 +18,8 @@ import WorkspaceRegistry, {
   type workspaceDomainState,
   WorkspaceMoveInvalidError,
   WorkspaceOrderInvalidError,
+  WorkspaceSessionParentInvalidError,
+  WorkspaceUnknownSessionError,
 } from '../src/index.ts'
 import type { WorkspaceDomainState, WorkspaceRecord } from '../src/index.ts'
 import { defaultWorkspaceTitle, fullyQualifiedWorkspacePath } from '../src/paths.ts'
@@ -39,6 +41,8 @@ interface HarnessOptions {
   liveSessions?: SessionHeader[]
   sessionStore?: boolean
   backend?: StorageBackend
+  /** Runs on the composed Context before the registry starts. */
+  prepare?: (ctx: Context) => void
 }
 
 /** Boot the real storage/domain/registry composition over controllable header-only peers. */
@@ -70,6 +74,7 @@ async function harness(options: HarnessOptions = {}) {
 
   const changes: DomainChanged[] = []
   ctx.on('domain/changed', (change) => { changes.push(change) })
+  options.prepare?.(ctx)
   const fiber = await ctx.plugin(WorkspaceRegistry)
   const initChanges = [...changes]
   changes.length = 0
@@ -149,8 +154,8 @@ function record(path: string, sessionIds: string[], createdAt = '2026-07-24T00:0
 }
 
 /**
- * Media written before archivedSessionIds and pinnedSessionIds existed omit
- * the fields; keeping the fixtures in that shape continuously proves the
+ * Media written before archivedSessionIds, pinnedSessionIds, and
+ * sessionParents existed omit the fields; keeping the fixtures in that shape continuously proves the
  * schema defaults upgrade them.
  */
 type StoredDomainState = z.input<typeof workspaceDomainState>
@@ -205,7 +210,9 @@ describe('WorkspaceRegistry lifecycle and bootstrap', () => {
     await fiber.await()
     expect(ctx.workspaceRegistry.list()).toEqual([])
     expect(list).toHaveBeenCalledTimes(1)
-    expect(storedState(pool)).toEqual({ initialized: true, workspaceIds: [], archivedSessionIds: [], pinnedSessionIds: [] })
+    expect(storedState(pool)).toEqual({
+      initialized: true, workspaceIds: [], archivedSessionIds: [], pinnedSessionIds: [], sessionParents: {},
+    })
   })
 
   it('bootstraps once from list headers only, in workspace/session createdAt order', async () => {
@@ -240,6 +247,7 @@ describe('WorkspaceRegistry lifecycle and bootstrap', () => {
       workspaceIds: result.registry.list().map(workspace => workspace.id),
       archivedSessionIds: [],
       pinnedSessionIds: [],
+      sessionParents: {},
     })
   })
 
@@ -268,7 +276,9 @@ describe('WorkspaceRegistry lifecycle and bootstrap', () => {
     const second = await harness({ pool, sessions: [header('late', late, 100)] })
     expect(second.list).not.toHaveBeenCalled()
     expect(second.registry.list()).toEqual([])
-    expect(storedState(pool)).toEqual({ initialized: true, workspaceIds: [], archivedSessionIds: [], pinnedSessionIds: [] })
+    expect(storedState(pool)).toEqual({
+      initialized: true, workspaceIds: [], archivedSessionIds: [], pinnedSessionIds: [], sessionParents: {},
+    })
   })
 
   it('reuses partial records after a bootstrap record write fails', async () => {
@@ -522,7 +532,9 @@ describe('WorkspaceRegistry create and lookup', () => {
     await expect(result.registry.delete(workspace.id)).resolves.toBe(false)
     expect(result.registry.get(workspace.id)).toBeUndefined()
     expect(result.registry.list()).toEqual([])
-    expect(storedState(result.pool)).toEqual({ initialized: true, workspaceIds: [], archivedSessionIds: [], pinnedSessionIds: [] })
+    expect(storedState(result.pool)).toEqual({
+      initialized: true, workspaceIds: [], archivedSessionIds: [], pinnedSessionIds: [], sessionParents: {},
+    })
     expect(result.pool.media.get('workspace')!.tables.get('workspaces')!.has(workspace.id)).toBe(false)
     await expect(realpath(dir)).resolves.toBe(dir)
     expect(result.list).toHaveBeenCalledTimes(1)
@@ -567,6 +579,7 @@ describe('WorkspaceRegistry create and lookup', () => {
       workspaceIds: [],
       archivedSessionIds: [],
       pinnedSessionIds: [],
+      sessionParents: {},
       pendingMutation: { operation: 'delete', workspaceId: workspace.id },
     })
     const reregistered = await first.registry.create(dir)
@@ -576,6 +589,7 @@ describe('WorkspaceRegistry create and lookup', () => {
       workspaceIds: [reregistered.id],
       archivedSessionIds: [],
       pinnedSessionIds: [],
+      sessionParents: {},
     })
     await first.fiber.dispose()
 
@@ -999,7 +1013,9 @@ describe('header-validated membership projection', () => {
     const createRecovery = await harness({ pool: interruptedCreate })
     expect(createRecovery.registry.list()).toEqual([])
     expect(interruptedCreate.media.get('workspace')!.tables.get('workspaces')!.has(createId)).toBe(false)
-    expect(storedState(interruptedCreate)).toEqual({ initialized: true, workspaceIds: [], archivedSessionIds: [], pinnedSessionIds: [] })
+    expect(storedState(interruptedCreate)).toEqual({
+      initialized: true, workspaceIds: [], archivedSessionIds: [], pinnedSessionIds: [], sessionParents: {},
+    })
 
     const interruptedDelete = storedPool(
       [[deleteId, record(deleteDir, [])]],
@@ -1012,7 +1028,9 @@ describe('header-validated membership projection', () => {
     const deleteRecovery = await harness({ pool: interruptedDelete })
     expect(deleteRecovery.registry.list()).toEqual([])
     expect(interruptedDelete.media.get('workspace')!.tables.get('workspaces')!.has(deleteId)).toBe(false)
-    expect(storedState(interruptedDelete)).toEqual({ initialized: true, workspaceIds: [], archivedSessionIds: [], pinnedSessionIds: [] })
+    expect(storedState(interruptedDelete)).toEqual({
+      initialized: true, workspaceIds: [], archivedSessionIds: [], pinnedSessionIds: [], sessionParents: {},
+    })
 
     const corruptPending = storedPool(
       [[deleteId, record(deleteDir, [])]],
@@ -1379,6 +1397,337 @@ describe('registry-global session unpin', () => {
     await expect(result.registry.unpinSession(SessionId('vanished'))).resolves.toBeUndefined()
     expect(result.registry.pinnedSessionIds).toEqual([])
     expect(result.list.mock.calls.length).toBe(listingsBefore)
+  })
+})
+
+describe('registry-global session parents', () => {
+  const sid = SessionId
+  const globalWrites = (changes: readonly DomainChanged[]): number =>
+    changes.filter(change => change.table === '').length
+
+  it('sets, repeats, replaces and clears durably without touching accounting', async () => {
+    const dir = await makeDir('parents-home')
+    const result = await harness({ sessions: [header('a', dir, 100), header('b', dir, 200), header('c', dir, 300)] })
+    const workspace = result.registry.list()[0]!
+    const accounted = [...workspace.sessionIds]
+    expect(result.registry.sessionParents).toEqual({})
+
+    await result.registry.setSessionParent(sid('b'), sid('a'))
+    expect(result.registry.sessionParents).toEqual({ b: 'a' })
+    expect(storedState(result.pool).sessionParents).toEqual({ b: 'a' })
+    const afterSet = globalWrites(result.changes)
+
+    await result.registry.setSessionParent(sid('b'), sid('a'))
+    expect(globalWrites(result.changes)).toBe(afterSet)
+
+    await result.registry.setSessionParent(sid('b'), sid('c'))
+    await result.registry.setSessionParent(sid('a'), sid('b'))
+    expect(storedState(result.pool).sessionParents).toEqual({ b: 'c', a: 'b' })
+
+    // Clearing removes the child's own entry and keeps the links it parents.
+    await result.registry.setSessionParent(sid('b'), undefined)
+    expect(result.registry.sessionParents).toEqual({ a: 'b' })
+    expect(storedState(result.pool).sessionParents).toEqual({ a: 'b' })
+    const afterClear = globalWrites(result.changes)
+
+    await result.registry.setSessionParent(sid('b'), undefined)
+    expect(globalWrites(result.changes)).toBe(afterClear)
+    expect(workspace.sessionIds).toEqual(accounted)
+  })
+
+  it('clears a link whose sessions are gone without consulting session persistence', async () => {
+    const dir = await makeDir('parents-vanished')
+    const result = await harness({ sessions: [header('a', dir, 100), header('b', dir, 200)] })
+    await result.registry.setSessionParent(sid('b'), sid('a'))
+    result.setSessions([])
+    const listingsBefore = result.list.mock.calls.length
+
+    await expect(result.registry.setSessionParent(sid('b'), undefined)).resolves.toBeUndefined()
+    expect(result.registry.sessionParents).toEqual({})
+    expect(result.list.mock.calls.length).toBe(listingsBefore)
+  })
+
+  it('refuses invalid and unknown links without writing', async () => {
+    const dir = await makeDir('parents-refuse')
+    const other = await makeDir('parents-refuse-other')
+    const result = await harness({
+      sessions: [
+        header('a', dir, 100),
+        header('b', dir, 200),
+        header('c', dir, 300),
+        { ...header('sub', dir, 400), origin: 'subagent' as const, parentSession: sid('a') },
+        header('d', other, 500),
+        header('loose'),
+        { ...header('loose-sub'), origin: 'subagent' as const, parentSession: sid('a') },
+      ],
+    })
+    // The subagent child sits on the account, so its refusal is about origin, not accounting.
+    expect(result.registry.list().find(workspace => workspace.path === dir)!.sessionIds).toContain('sub')
+    await result.registry.setSessionParent(sid('b'), sid('a'))
+    await result.registry.setSessionParent(sid('c'), sid('b'))
+    const stored = JSON.stringify(storedState(result.pool))
+    const writes = result.changes.length
+
+    const refused = async (child: string, parent: string, reason: string, detail: string): Promise<void> => {
+      const attempt = result.registry.setSessionParent(sid(child), sid(parent))
+      await expect(attempt).rejects.toBeInstanceOf(WorkspaceSessionParentInvalidError)
+      await expect(attempt).rejects.toMatchObject({
+        name: 'WorkspaceSessionParentInvalidError',
+        sessionId: child,
+        parentSessionId: parent,
+        reason,
+        message: `cannot nest session '${child}' under '${parent}': ${detail}`,
+      })
+    }
+    await refused('a', 'a', 'self', 'a session cannot be its own parent')
+    await refused('sub', 'a', 'subagent', "session 'sub' is a subagent session")
+    await refused('a', 'sub', 'subagent', "session 'sub' is a subagent session")
+    await refused('loose', 'a', 'unaccounted', "no workspace accounts for session 'loose'")
+    await refused('a', 'loose', 'unaccounted', "no workspace accounts for session 'loose'")
+    await refused('d', 'a', 'cross-workspace', 'the sessions belong to different workspaces')
+    await refused('a', 'b', 'cycle', "session 'a' is already an ancestor of session 'b'")
+    await refused('a', 'c', 'cycle', "session 'a' is already an ancestor of session 'c'")
+
+    // Each request below meets two refusals; the earlier check answers.
+    await refused('ghost', 'ghost', 'self', 'a session cannot be its own parent')
+    const unknownBeforeSubagent = result.registry.setSessionParent(sid('sub'), sid('ghost-parent'))
+    await expect(unknownBeforeSubagent).rejects.toBeInstanceOf(WorkspaceUnknownSessionError)
+    await refused('loose-sub', 'a', 'subagent', "session 'loose-sub' is a subagent session")
+    await refused('a', 'loose-sub', 'subagent', "session 'loose-sub' is a subagent session")
+    await refused('loose', 'd', 'unaccounted', "no workspace accounts for session 'loose'")
+    await refused('d', 'loose', 'unaccounted', "no workspace accounts for session 'loose'")
+
+    const unknownChild = result.registry.setSessionParent(sid('ghost-child'), sid('a'))
+    await expect(unknownChild).rejects.toBeInstanceOf(WorkspaceUnknownSessionError)
+    await expect(unknownChild).rejects.toMatchObject({ sessionId: 'ghost-child' })
+    await expect(unknownChild).rejects.toThrow(/cannot nest session 'ghost-child'/)
+    const unknownParent = result.registry.setSessionParent(sid('a'), sid('ghost-parent'))
+    await expect(unknownParent).rejects.toBeInstanceOf(WorkspaceUnknownSessionError)
+    await expect(unknownParent).rejects.toMatchObject({ sessionId: 'ghost-parent' })
+
+    expect(JSON.stringify(storedState(result.pool))).toBe(stored)
+    expect(result.changes.length).toBe(writes)
+  })
+
+  it('propagates a persistence-listing failure instead of reporting an unknown session', async () => {
+    const dir = await makeDir('parents-listing')
+    const result = await harness({ sessions: [header('a', dir, 100)] })
+    result.list.mockRejectedValueOnce(new Error('persistence backend down'))
+    await expect(result.registry.setSessionParent(sid('unlisted'), sid('a')))
+      .rejects.toThrow(/persistence backend down/)
+    expect(storedState(result.pool).sessionParents).toEqual({})
+  })
+
+  it('keeps and accepts links regardless of archive state', async () => {
+    const dir = await makeDir('parents-archive')
+    const result = await harness({ sessions: [header('a', dir, 100), header('b', dir, 200), header('c', dir, 300)] })
+    await result.registry.setSessionParent(sid('b'), sid('a'))
+    await result.registry.archiveSession(sid('b'))
+    await result.registry.archiveSession(sid('a'))
+    expect(storedState(result.pool).sessionParents).toEqual({ b: 'a' })
+
+    await result.registry.archiveSession(sid('c'))
+    await result.registry.setSessionParent(sid('c'), sid('b'))
+    expect(result.registry.sessionParents).toEqual({ b: 'a', c: 'b' })
+    await result.registry.unarchiveSession(sid('b'))
+    expect(storedState(result.pool).sessionParents).toEqual({ b: 'a', c: 'b' })
+  })
+
+  it('drops a deleted workspace\'s links in the write that removes it from the order', async () => {
+    const gone = await makeDir('parents-delete-gone')
+    const kept = await makeDir('parents-delete-kept')
+    const result = await harness({
+      sessions: [header('a', gone, 100), header('b', gone, 200), header('k1', kept, 300), header('k2', kept, 400)],
+    })
+    const leaving = result.registry.list().find(workspace => workspace.path === gone)!
+    const staying = result.registry.list().find(workspace => workspace.path === kept)!
+    await result.registry.setSessionParent(sid('b'), sid('a'))
+    await result.registry.setSessionParent(sid('k2'), sid('k1'))
+    result.changes.length = 0
+
+    await expect(result.registry.delete(leaving.id)).resolves.toBe(true)
+    expect(result.registry.sessionParents).toEqual({ k2: 'k1' })
+    expect(storedState(result.pool).sessionParents).toEqual({ k2: 'k1' })
+    const orderWrite = result.changes.find(change => change.table === '')!
+    expect(orderWrite).toMatchObject({ operation: 'put', value: { workspaceIds: [staying.id] } })
+    expect((orderWrite.value as WorkspaceDomainState).sessionParents).toEqual({ k2: 'k1' })
+    expect(result.changes.indexOf(orderWrite)).toBeLessThan(
+      result.changes.findIndex(change => change.table === 'workspaces'),
+    )
+  })
+
+  it('restores the links when the record deletion fails', async () => {
+    const dir = await makeDir('parents-delete-rollback')
+    const pool = new MemoryMediaPool()
+    const result = await harness({
+      pool,
+      sessions: [header('a', dir, 100), header('b', dir, 200)],
+      backend: selectiveFailureBackend(pool, { deleteAt: 1 }),
+    })
+    const workspace = result.registry.list()[0]!
+    await result.registry.setSessionParent(sid('b'), sid('a'))
+
+    await expect(result.registry.delete(workspace.id)).rejects.toThrow(/selected rollback delete failure/)
+    expect(result.registry.sessionParents).toEqual({ b: 'a' })
+    expect(storedState(pool).sessionParents).toEqual({ b: 'a' })
+  })
+
+  it('drops the links to and from a detached session in one following registry write', async () => {
+    const dir = await makeDir('parents-detach')
+    const result = await harness({
+      sessions: [header('a', dir, 100), header('b', dir, 200), header('c', dir, 300), header('d', dir, 400)],
+    })
+    const workspace = result.registry.list()[0]!
+    await result.registry.setSessionParent(sid('b'), sid('a'))
+    await result.registry.setSessionParent(sid('c'), sid('b'))
+    await result.registry.setSessionParent(sid('d'), sid('a'))
+    result.changes.length = 0
+
+    await workspace.detachSession(sid('b'))
+    expect(result.registry.sessionParents).toEqual({ d: 'a' })
+    expect(storedState(result.pool).sessionParents).toEqual({ d: 'a' })
+    expect(result.changes.map(change => change.table)).toEqual(['workspaces', ''])
+
+    // A session without links leaves its account without a registry write.
+    result.changes.length = 0
+    await workspace.detachSession(sid('c'))
+    expect(result.changes.map(change => change.table)).toEqual(['workspaces'])
+  })
+
+  it('keeps a filtered candidate\'s links until the write that prunes it', async () => {
+    const dir = await makeDir('parents-prune')
+    const workspaceId = WorkspaceId('prune-home')
+    const pool = storedPool(
+      [[workspaceId, record(dir, ['a', 'ghost'])]],
+      { initialized: true, workspaceIds: [workspaceId], sessionParents: { a: 'ghost' } },
+    )
+    const result = await harness({ pool, sessions: [header('a', dir, 100)] })
+    const workspace = result.registry.get(workspaceId)!
+    expect(workspace.sessionIds).toEqual(['a'])
+    expect(result.registry.sessionParents).toEqual({ a: 'ghost' })
+    expect(globalWrites(result.initChanges)).toBe(0)
+
+    await workspace.setTitle('renamed')
+    expect(storedRecord(pool, workspaceId).sessionIds).toEqual(['a'])
+    expect(result.registry.sessionParents).toEqual({})
+    expect(storedState(pool).sessionParents).toEqual({})
+  })
+
+  it('repairs links with an end on no account at start and writes nothing for a consistent map', async () => {
+    const dir = await makeDir('parents-repair')
+    const workspaceId = WorkspaceId('repair-home')
+    const pool = storedPool(
+      [[workspaceId, record(dir, ['a', 'b'])]],
+      { initialized: true, workspaceIds: [workspaceId], sessionParents: { a: 'gone', gone2: 'a', b: 'a' } },
+    )
+    const sessions = [header('a', dir, 100), header('b', dir, 200)]
+    const first = await harness({ pool, sessions })
+    expect(first.registry.sessionParents).toEqual({ b: 'a' })
+    expect(storedState(pool).sessionParents).toEqual({ b: 'a' })
+    expect(globalWrites(first.initChanges)).toBe(1)
+    await first.fiber.dispose()
+
+    const second = await harness({ pool, sessions })
+    expect(second.registry.sessionParents).toEqual({ b: 'a' })
+    expect(globalWrites(second.initChanges)).toBe(0)
+  })
+
+  it('starts with the leftover links when the start repair cannot be written, and repairs at a later start', async () => {
+    const dir = await makeDir('parents-repair-failure')
+    const workspaceId = WorkspaceId('repair-failure-home')
+    const pool = storedPool(
+      [[workspaceId, record(dir, ['a', 'b'])]],
+      { initialized: true, workspaceIds: [workspaceId], sessionParents: { a: 'gone', b: 'a' } },
+    )
+    const sessions = [header('a', dir, 100), header('b', dir, 200)]
+    const warn = vi.fn()
+    const first = await harness({
+      pool,
+      sessions,
+      backend: selectiveFailureBackend(pool, { globalAt: 1 }),
+      prepare: (ctx) => { vi.spyOn(ctx.logger, 'warn').mockImplementation(warn) },
+    })
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('not dropped at start'))
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('selected bootstrap marker failure'))
+    expect(first.registry.list().map(workspace => workspace.id)).toEqual([workspaceId])
+    expect(first.registry.sessionParents).toEqual({ a: 'gone', b: 'a' })
+    expect(storedState(pool).sessionParents).toEqual({ a: 'gone', b: 'a' })
+    await first.fiber.dispose()
+
+    const second = await harness({ pool, sessions })
+    expect(second.registry.sessionParents).toEqual({ b: 'a' })
+    expect(storedState(pool).sessionParents).toEqual({ b: 'a' })
+  })
+
+  it('logs a failed link drop, still resolves the entity write, and repairs at the next start', async () => {
+    const dir = await makeDir('parents-drop-failure')
+    const workspaceId = WorkspaceId('drop-failure-home')
+    const pool = storedPool(
+      [[workspaceId, record(dir, ['a', 'b'])]],
+      { initialized: true, workspaceIds: [workspaceId], sessionParents: { b: 'a' } },
+    )
+    const sessions = [header('a', dir, 100), header('b', dir, 200)]
+    const first = await harness({ pool, sessions, backend: selectiveFailureBackend(pool, { globalAt: 1 }) })
+    const warn = vi.spyOn(first.ctx.logger, 'warn').mockImplementation(() => {})
+
+    await expect(first.registry.get(workspaceId)!.detachSession(sid('b'))).resolves.toBeUndefined()
+    expect(storedRecord(pool, workspaceId).sessionIds).toEqual(['a'])
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('not dropped'))
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('selected bootstrap marker failure'))
+    expect(storedState(pool).sessionParents).toEqual({ b: 'a' })
+    await first.fiber.dispose()
+
+    const second = await harness({ pool, sessions })
+    expect(second.registry.sessionParents).toEqual({})
+    expect(storedState(pool).sessionParents).toEqual({})
+  })
+
+  it('restores the links across restarts and loads media written before the field as no links', async () => {
+    const dir = await makeDir('parents-restart')
+    const pool = new MemoryMediaPool()
+    const sessions = [header('a', dir, 100), header('b', dir, 200)]
+    const first = await harness({ pool, sessions })
+    await first.registry.setSessionParent(sid('b'), sid('a'))
+    await first.fiber.dispose()
+
+    const second = await harness({ pool, sessions })
+    expect(second.registry.sessionParents).toEqual({ b: 'a' })
+
+    const workspaceId = WorkspaceId('earlier-media')
+    const earlier = storedPool(
+      [[workspaceId, record(dir, ['a', 'b'])]],
+      { initialized: true, workspaceIds: [workspaceId] },
+    )
+    const upgraded = await harness({ pool: earlier, sessions })
+    expect(upgraded.registry.sessionParents).toEqual({})
+    await upgraded.registry.setSessionParent(sid('b'), sid('a'))
+    expect(storedState(earlier).sessionParents).toEqual({ b: 'a' })
+  })
+
+  it('ends the ancestor walk on a cycle already present in stored state', async () => {
+    const dir = await makeDir('parents-stored-cycle')
+    const workspaceId = WorkspaceId('cycle-home')
+    const pool = storedPool(
+      [[workspaceId, record(dir, ['x', 'y', 'z'])]],
+      { initialized: true, workspaceIds: [workspaceId], sessionParents: { x: 'y', y: 'x' } },
+    )
+    const result = await harness({
+      pool, sessions: [header('x', dir, 100), header('y', dir, 200), header('z', dir, 300)],
+    })
+    await expect(result.registry.setSessionParent(sid('z'), sid('x'))).resolves.toBeUndefined()
+    expect(result.registry.sessionParents).toEqual({ x: 'y', y: 'x', z: 'x' })
+  })
+
+  it('serializes concurrent calls that would together close a cycle', async () => {
+    const dir = await makeDir('parents-concurrent')
+    const result = await harness({ sessions: [header('a', dir, 100), header('b', dir, 200)] })
+    const settled = await Promise.allSettled([
+      result.registry.setSessionParent(sid('a'), sid('b')),
+      result.registry.setSessionParent(sid('b'), sid('a')),
+    ])
+    expect(settled[0]).toEqual({ status: 'fulfilled', value: undefined })
+    expect(settled[1]).toMatchObject({ status: 'rejected', reason: { reason: 'cycle' } })
+    expect(storedState(result.pool).sessionParents).toEqual({ a: 'b' })
   })
 })
 

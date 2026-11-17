@@ -60,6 +60,7 @@ function accepts(overrides: Partial<WorkspaceFollowSink> = {}): WorkspaceFollowS
     replaceOrder: ignore,
     replaceArchived: ignore,
     replacePinned: ignore,
+    replaceParents: ignore,
     ...overrides,
   }
 }
@@ -156,6 +157,7 @@ describe('Workspace state stream', () => {
       { type: 'order', workspaceIds: [view.workspaceId] },
       { type: 'archived', archivedSessionIds: [sid('session-one')] },
       { type: 'pinned', pinnedSessionIds: [sid('session-two')] },
+      { type: 'parents', sessionParents: { [sid('session-two')]: sid('session-one') } },
     ]
     mock.stream(FOLLOW, openStream([opening, ...increments]))
     const replaceBaseline = vi.fn<WorkspaceFollowSink['replaceBaseline']>()
@@ -164,14 +166,17 @@ describe('Workspace state stream', () => {
     const replaceOrder = vi.fn<WorkspaceFollowSink['replaceOrder']>()
     const replaceArchived = vi.fn<WorkspaceFollowSink['replaceArchived']>()
     const replacePinned = vi.fn<WorkspaceFollowSink['replacePinned']>()
+    const replaceParents = vi.fn<WorkspaceFollowSink['replaceParents']>()
     const stream = createWorkspaceStateStream(remote, {
-      accept: accepts({ replaceBaseline, upsertView, removeView, replaceOrder, replaceArchived, replacePinned }),
+      accept: accepts({
+        replaceBaseline, upsertView, removeView, replaceOrder, replaceArchived, replacePinned, replaceParents,
+      }),
       failed: vi.fn(),
     })
 
     stream.start()
     stream.start()
-    await vi.waitFor(() => { expect(replacePinned).toHaveBeenCalledOnce() })
+    await vi.waitFor(() => { expect(replaceParents).toHaveBeenCalledOnce() })
 
     expect(replaceBaseline).toHaveBeenCalledWith(opening.value)
     expect(upsertView).toHaveBeenCalledWith(view)
@@ -179,6 +184,7 @@ describe('Workspace state stream', () => {
     expect(replaceOrder).toHaveBeenCalledWith([view.workspaceId])
     expect(replaceArchived).toHaveBeenCalledWith(['session-one'])
     expect(replacePinned).toHaveBeenCalledWith(['session-two'])
+    expect(replaceParents).toHaveBeenCalledWith({ 'session-two': 'session-one' })
     await stream.dispose()
     expect(streamStates(mock)).toEqual(['cancelled'])
   })
@@ -373,6 +379,10 @@ describe('WorkspaceController', () => {
     await expect(controller.unarchiveSession(sid('session'))).resolves.toBeUndefined()
     await expect(controller.pinSession(sid('session'))).resolves.toBeUndefined()
     await expect(controller.unpinSession(sid('session'))).resolves.toBeUndefined()
+    await expect(controller.setSessionParent(sid('session'), sid('parent'))).resolves.toBeUndefined()
+    expect(model.getSnapshot().sessionParents).toEqual({ session: 'parent' })
+    await expect(controller.setSessionParent(sid('session'), null)).resolves.toBeUndefined()
+    expect(model.getSnapshot().sessionParents).toEqual({})
     await expect(controller.delete(wid('one'))).resolves.toBeUndefined()
     // Each command crosses the wire as one positional request object.
     expect(mock.log.requests('workspace/create')).toEqual([{ path: '/work/created' }])
@@ -384,6 +394,10 @@ describe('WorkspaceController', () => {
     expect(mock.log.requests('workspace/unarchiveSession')).toEqual([{ sessionId: 'session' }])
     expect(mock.log.requests('workspace/pinSession')).toEqual([{ sessionId: 'session' }])
     expect(mock.log.requests('workspace/unpinSession')).toEqual([{ sessionId: 'session' }])
+    expect(mock.log.requests('workspace/setSessionParent')).toEqual([
+      { sessionId: 'session', parentSessionId: 'parent' },
+      { sessionId: 'session', parentSessionId: null },
+    ])
     expect(mock.log.requests('workspace/delete')).toEqual([{ workspaceId: 'one' }])
   })
 
@@ -430,6 +444,13 @@ describe('WorkspaceController', () => {
     mock.remote.workspace.unpinSession.mockResolvedValueOnce(err(missingSession))
     await expect(controller.unpinSession(sid('session')))
       .rejects.toThrow('workspace session unpin failed: session/not-found: missing session')
+    mock.remote.workspace.setSessionParent.mockResolvedValueOnce(err(new RemoteError(
+      'workspace/session-parent-invalid', 'cannot nest session \'session\' under \'session\': a Session cannot be its own parent',
+      { sessionId: sid('session'), parentSessionId: sid('session'), reason: 'self' },
+    )))
+    await expect(controller.setSessionParent(sid('session'), sid('session'))).rejects.toThrow(
+      'workspace session parent failed: workspace/session-parent-invalid: cannot nest session \'session\' under \'session\'',
+    )
     mock.remote.workspace.insertSessionBefore.mockResolvedValueOnce(err(new RemoteError(
       'workspace/move-invalid', 'invalid move', { workspaceId: wid('missing'), sessionId: sid('session') },
     )))

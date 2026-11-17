@@ -8,6 +8,7 @@ import {
   WorkspaceId,
   WorkspaceMoveInvalidError,
   WorkspaceOrderInvalidError,
+  WorkspaceSessionParentInvalidError,
   WorkspaceUnknownSessionError,
 } from '@deepseek-ai/dsh-workspace'
 import { RemoteError, remoteErrorOf } from '@deepseek-ai/dsh-typert-protocol'
@@ -25,6 +26,8 @@ import type {
   WorkspacePinSessionRequest,
   WorkspacePinValue,
   WorkspaceRenameRequest,
+  WorkspaceSessionParentsValue,
+  WorkspaceSetSessionParentRequest,
   WorkspaceUnarchiveSessionRequest,
   WorkspaceUnpinSessionRequest,
   WorkspaceValue,
@@ -224,6 +227,36 @@ export class WorkspaceCommands {
   async unpinSession(request: WorkspaceUnpinSessionRequest): Promise<WorkspacePinValue> {
     await this.ctx.workspaceRegistry.unpinSession(request.sessionId)
     return { pinnedSessionIds: [...this.ctx.workspaceRegistry.pinnedSessionIds] }
+  }
+
+  /**
+   * Set or clear the Session one Session nests under in the registry-global
+   * parent links. A value equal to the stored one, including a `null` for a
+   * Session without a link, resolves without a write. An unknown child or
+   * parent fails as `session/not-found`, whose details name the missing
+   * Session; every other refusal fails as `workspace/session-parent-invalid`
+   * with both ids and the registry's reason.
+   * @param request - child Session and its new parent, or `null` to clear.
+   * @returns the complete resulting parent links.
+   */
+  async setSessionParent(request: WorkspaceSetSessionParentRequest): Promise<WorkspaceSessionParentsValue> {
+    try {
+      await this.ctx.workspaceRegistry.setSessionParent(request.sessionId, request.parentSessionId ?? undefined)
+    } catch (error) {
+      if (error instanceof WorkspaceUnknownSessionError) {
+        throw new RemoteError('session/not-found', error.message, { sessionId: error.sessionId }, { cause: error })
+      }
+      if (error instanceof WorkspaceSessionParentInvalidError) {
+        throw new RemoteError(
+          'workspace/session-parent-invalid',
+          error.message,
+          { sessionId: error.sessionId, parentSessionId: error.parentSessionId, reason: error.reason },
+          { cause: error },
+        )
+      }
+      throw error
+    }
+    return { sessionParents: { ...this.ctx.workspaceRegistry.sessionParents } }
   }
 
   private requireWorkspace(workspaceId: WorkspaceId): Workspace {

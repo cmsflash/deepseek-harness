@@ -12,11 +12,14 @@ import {
 import type {
   WorkspaceBaseline,
   WorkspaceFollowFrame,
+  WorkspaceSessionParents,
   WorkspaceView,
 } from './types.ts'
 
 /** The frames the feed produces: every follow frame except `replace`, which only access filtering sends. */
-type WorkspaceFeedFrame = Exclude<WorkspaceFollowFrame, { readonly type: 'replace' }>
+type WorkspaceFeedFrame =
+  | Exclude<WorkspaceFollowFrame, { readonly type: 'replace' | 'baseline' }>
+  | { readonly type: 'baseline'; readonly value: Required<WorkspaceBaseline> }
 
 /**
  * Project one authoritative Workspace entity into its Remote value.
@@ -53,6 +56,7 @@ export class WorkspaceFeed {
   private order: readonly string[]
   private archived: readonly string[]
   private pinned: readonly string[]
+  private parents: WorkspaceSessionParents
 
   /** @param ctx - Host context containing the authoritative Workspace registry. */
   constructor(private readonly ctx: Context) {
@@ -61,6 +65,7 @@ export class WorkspaceFeed {
     this.order = baseline.map(workspace => String(workspace.id))
     this.archived = ctx.workspaceRegistry.archivedSessionIds.map(String)
     this.pinned = ctx.workspaceRegistry.pinnedSessionIds.map(String)
+    this.parents = ctx.workspaceRegistry.sessionParents
     ctx.on('domain/changed', (change: DomainChanged) => { this.changed(change) })
     ctx.effect(() => () => {
       for (const follower of this.followers) follower.close()
@@ -70,13 +75,14 @@ export class WorkspaceFeed {
 
   /**
    * Read the complete current projection synchronously.
-   * @returns all active Workspaces plus archived and pinned Session identities.
+   * @returns all active Workspaces plus archived and pinned Session identities and parent links.
    */
-  baseline(): WorkspaceBaseline {
+  baseline(): Required<WorkspaceBaseline> {
     return {
       items: this.ctx.workspaceRegistry.list().map(workspaceView),
       archivedSessionIds: [...this.ctx.workspaceRegistry.archivedSessionIds],
       pinnedSessionIds: [...this.ctx.workspaceRegistry.pinnedSessionIds],
+      sessionParents: { ...this.ctx.workspaceRegistry.sessionParents },
     }
   }
 
@@ -126,6 +132,10 @@ export class WorkspaceFeed {
         this.pinned = nextPinned
         this.publish({ type: 'pinned', pinnedSessionIds: [...state.pinnedSessionIds] })
       }
+      if (!sameParents(this.parents, state.sessionParents)) {
+        this.parents = state.sessionParents
+        this.publish({ type: 'parents', sessionParents: { ...state.sessionParents } })
+      }
       return
     }
     if (change.table !== 'workspaces') return
@@ -148,6 +158,12 @@ export class WorkspaceFeed {
 
 function sameStrings(left: readonly string[], right: readonly string[]): boolean {
   return left.length === right.length && left.every((value, index) => value === right[index])
+}
+
+function sameParents(left: WorkspaceSessionParents, right: WorkspaceSessionParents): boolean {
+  const entries = Object.entries(left)
+  return entries.length === Object.keys(right).length
+    && entries.every(([child, parent]) => (right as Readonly<Record<string, string>>)[child] === parent)
 }
 
 class WorkspaceFollower {
