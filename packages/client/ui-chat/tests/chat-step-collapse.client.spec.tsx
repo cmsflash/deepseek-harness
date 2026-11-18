@@ -124,6 +124,7 @@ function mount(nodes: readonly ChatConversationViewNode[], mode: TranscriptViewM
     useChatGroup: bindKeyedSnapshotSelector(key => ({ getSnapshot: () => groups.get(key as GroupKey), subscribe: () => () => {} })),
     usePresentation: bindSnapshotSelector(presentation),
     useConnectionState: bindSnapshotSelector(createSnapshotStore<ConnectionState | undefined>('connected')),
+    useRunningKnown: bindSnapshotSelector(createSnapshotStore(true)),
     useGroupAction: CHAT_FLOW_INJECT.hooks.groupAction(hookStandard, { motion: MOTION }),
     useGroupHeaderAction: CHAT_FLOW_INJECT.hooks.groupHeaderAction(hookStandard, { motion: MOTION }),
     useStore: bindSnapshotSelector(store),

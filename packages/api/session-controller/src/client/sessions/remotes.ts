@@ -44,3 +44,6 @@ export interface SessionRemotes {
   readonly session: SessionRemote
   readonly subagents: SessionSubagentsRemote
 }
+
+/** The Remote the Sessions service reads: the per-Session namespaces and Host reachability. */
+export type SessionsRemote = SessionRemotes & Pick<ClientRemote, '$offline'>

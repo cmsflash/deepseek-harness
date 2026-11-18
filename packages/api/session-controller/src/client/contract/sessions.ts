@@ -52,6 +52,13 @@ export interface ISessions {
   /** Host catalog and local reference-source counts; navigation belongs to view owners. */
   readonly list: ObservableSnapshot<SessionListState>
   /**
+   * Whether every `running` value states what the Host runs now. False while
+   * the Host is unreachable and until it answers a Session listing again; every
+   * `running` value reads false for that time, which then says nothing about
+   * the Session.
+   */
+  readonly runningKnown: ObservableSnapshot<boolean>
+  /**
    * Retain an exact Client generation and start its shared initial history opening.
    * @param target - known identity or durable direct-parent address.
    * @param options - required consumer source and optional independent waiter cancellation.

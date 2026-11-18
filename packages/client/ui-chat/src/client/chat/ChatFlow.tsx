@@ -49,6 +49,7 @@ function isTranscriptEcho(item: PendingInput): boolean {
 export const ChatFlow = memo(function ChatFlow({
   entries, pendingInputs, lastInputTurn, deferCollapse, useConversation,
   useSession, useChat, useChatNode, useChatNodeBottom, useChatNodeProcess, useChatGroup, usePresentation, useConnectionState,
+  useRunningKnown,
   useStore, actions, renderSlot, renderFactorySlot, t, useGroupAction, useGroupHeaderAction, expandTurn,
   cwd, openFile, inspectCall, forkAt, loadImage, fileMentions,
 }: ChatFlowSlotProps) {
@@ -58,6 +59,7 @@ export const ChatFlow = memo(function ChatFlow({
   const timeline = useChat(snapshot => snapshot.timeline)
   const running = useSession(snapshot => snapshot.running)
   const disconnected = useConnectionState(state => state === 'disconnected' || state === 'connecting')
+  const runningKnown = useRunningKnown(known => known)
   const stepDigests = useSession(snapshot => snapshot.stepDigests)
   const stepAccounts = useSession(snapshot => snapshot.stepAccounts)
   const expandingTurns = useSession(snapshot => snapshot.expandingTurns)
@@ -161,11 +163,12 @@ export const ChatFlow = memo(function ChatFlow({
   }
   // Rows enter before the keyed status and echoes after it, so React never moves its DOM node. The
   // running bit and the Turn's end arrive separately: after the bit clears, an open latest Turn keeps
-  // the status slot (hidden) until its actions row takes the slot in the same commit.
+  // the status slot (hidden) until its actions row takes the slot in the same commit. While the Host
+  // is unreachable the bit is clear without saying the Turn stopped, so the slot says that instead.
   return [
     ...rows, ...leadingRows, ...openingRows,
     ...running || holding ? [<RunningStatus key="running" startTime={runningStartTime} paused={disconnected}
-      holding={holding} t={t} />] : [],
+      holding={holding} unknown={holding && !runningKnown} t={t} />] : [],
     ...pendingRows,
   ]
 })

@@ -127,6 +127,29 @@ describe('OfflineReplay', () => {
     replay.dispose()
   })
 
+  it('sends a failed read once more while the Host answers, and takes the record only once it does not', async () => {
+    const store = memoryStore()
+    const environment = fakeEnvironment()
+    const replay = new OfflineReplay(store, fakeConnection(), environment)
+    const signal = new AbortController().signal
+    const lost = new TypeError('Failed to fetch')
+    await replay.call('session/list', {}, () => Promise.resolve(ok(['recorded'])), signal)
+
+    const flaky = vi.fn<() => Promise<ConnectionRpcResult<unknown>>>()
+      .mockRejectedValueOnce(lost).mockResolvedValueOnce(ok(['live']))
+    await expect(replay.call('session/list', {}, flaky, signal)).resolves.toEqual(ok(['live']))
+    expect(flaky).toHaveBeenCalledTimes(2)
+    await expect(replay.call('session/list', {}, () => Promise.reject(lost), signal)).rejects.toBe(lost)
+    expect(replay.active).toBe(false)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(store.data.get('call session/list {}')).toEqual(ok(['live']))
+
+    environment.reachable = false
+    await expect(replay.call('session/list', {}, () => Promise.reject(lost), signal)).resolves.toEqual(ok(['live']))
+    expect(replay.active).toBe(true)
+    replay.dispose()
+  })
+
   it('replays a stream log after its latest opening and stays open until cancelled', async () => {
     const store = memoryStore()
     const replay = new OfflineReplay(store, fakeConnection(), fakeEnvironment())
@@ -583,10 +606,12 @@ describe('OfflineReplay failure paths', () => {
       get: () => Promise.reject(new Error('read refused')),
       put: () => Promise.reject(new Error('write refused')),
     }
-    const replay = new OfflineReplay(store, fakeConnection(), fakeEnvironment())
+    const environment = fakeEnvironment()
+    const replay = new OfflineReplay(store, fakeConnection(), environment)
     const signal = new AbortController().signal
     await expect(replay.call('session/list', {}, () => Promise.resolve(ok([])), signal)).resolves.toEqual(ok([]))
     await vi.advanceTimersByTimeAsync(0)
+    environment.reachable = false
     await expect(replay.call('session/list', {}, () => Promise.reject(new TypeError('fetch failed')), signal))
       .rejects.toThrow('fetch failed')
     expect(warn).toHaveBeenCalledWith('[offline-replay] write failed:', new Error('write refused'))

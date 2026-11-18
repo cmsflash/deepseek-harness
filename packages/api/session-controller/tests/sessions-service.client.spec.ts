@@ -1,6 +1,6 @@
 /** Client catalog projection, explicitly retained scopes, streams, and Host operations. */
 import { Context } from '@deepseek-ai/cordis'
-import { describe, expect, vi } from 'vitest'
+import { describe, expect, onTestFinished, vi } from 'vitest'
 import type { SessionId } from '@deepseek-ai/dsh-api-remotes/client'
 import type { SessionReference } from '../src/client/contract/sessions.ts'
 import type { SessionHistorySource } from '../src/client/contract/history-source.ts'
@@ -82,6 +82,45 @@ async function feedList(b: Bench, rows: FeedRow[]): Promise<void> {
 }
 
 describe('list store projection', () => {
+  it('publishes whether running values state what the Host runs now', async ({ mock, start }) => {
+    mock.load(sessionWorld)
+    const { ctx: { remote } } = await start()
+    const ctx = new Context()
+    onTestFinished(() => ctx.fiber.dispose())
+    const host = { offline: false }
+    const svc = new ClientSessions(ctx, {
+      $stream: options => remote.$stream(options),
+      commands: remote.commands,
+      session: remote.session,
+      subagents: remote.subagents,
+      $offline: { getSnapshot: () => host.offline, subscribe: () => () => {} },
+    })
+    const row = { agentAvailable: true, sessionId: sid('s1'), updatedAt: 1, running: true, blank: false }
+    mock.remote.session.list.mockResolvedValue(ok({ items: [row] }))
+    const published: boolean[] = []
+    svc.runningKnown.subscribe(() => { published.push(svc.runningKnown.getSnapshot()) })
+    const settle = async (): Promise<void> => {
+      await svc.refresh()
+      await Promise.resolve()
+    }
+
+    await settle()
+    expect(svc.runningKnown.getSnapshot()).toBe(true)
+    expect(svc.list.getSnapshot().byId[sid('s1')]?.running).toBe(true)
+
+    host.offline = true
+    svc.handleConnected()
+    await settle()
+    expect(svc.runningKnown.getSnapshot()).toBe(false)
+    expect(svc.list.getSnapshot().byId[sid('s1')]?.running).toBe(false)
+
+    host.offline = false
+    svc.handleConnected()
+    await settle()
+    expect(svc.list.getSnapshot().byId[sid('s1')]?.running).toBe(true)
+    expect(published).toEqual([false, true])
+  })
+
   it('publishes format-status changes and preserves a newer update over an in-flight list', async ({ bench }) => {
     const b = bench()
     const historical = {

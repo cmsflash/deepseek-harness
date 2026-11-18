@@ -202,6 +202,8 @@ The Chat view detects selection and context-menu gestures on business nodes mark
 
 While `ctx.remote.$offline` is true, the Chat view shows a sticky one-line status notice above the transcript ("Offline. Showing the saved copy; new messages arrive when the Host is back.", `chat.offline`, localized in every shipped locale). While the Session snapshot's `incompleteCopy` is true (its unconfirmed window came from a partial local copy), the notice adds "The saved copy of this thread is incomplete." (`chat.offlineIncomplete`). The notice reads the injected `offline` hook and that snapshot field only; it does not change the transcript, composer or Session state.
 
+While `ctx.sessions.runningKnown` is false, the Host is unreachable or has not yet answered a Session listing after returning, and every `running` value reads false. An open latest Turn then shows "Offline. Whether this is still running is unknown until the page reconnects." (`chat.runningUnknown`) in the [running-status slot](src/client/conversation-nodes/README.md) instead of holding that slot hidden; a closed Turn shows nothing extra.
+
 <a id="model-experience"></a>
 ## Model Experience
 

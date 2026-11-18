@@ -331,6 +331,8 @@ class TestSessionReference implements SessionReference {
 export class TestSessions implements ISessions {
   /** The useSessions catalog feed, independent of view ownership. */
   readonly list: SnapshotStore<SessionListState>
+  /** Plain store a spec sets to script an unreachable Host; true as with a Host that answers. */
+  readonly runningKnown: SnapshotStore<boolean> = createSnapshotStore(true)
   private readonly records = new Map<SessionId, SessionRecord>()
   private readonly generations = new Map<SessionId, SessionGeneration>()
   private readonly addresses = new Map<SessionId, SubagentAddress>()

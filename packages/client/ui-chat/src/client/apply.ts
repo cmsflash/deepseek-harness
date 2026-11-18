@@ -240,7 +240,7 @@ export function apply(ctx: Context): void {
     inject: (sessionId: SessionId): ChatFlowDataInjected => {
       const binding = ctx.sessions.binding(sessionId)
       if (binding === undefined) throw new Error(`ui-chat: unknown session "${sessionId}"`)
-      return { ...nodeSources(binding), hooks: { presentation, connectionState } }
+      return { ...nodeSources(binding), hooks: { presentation, connectionState, runningKnown: ctx.sessions.runningKnown } }
     },
   }, ChatFlow))
 

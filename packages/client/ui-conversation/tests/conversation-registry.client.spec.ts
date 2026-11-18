@@ -93,6 +93,7 @@ function fakeSessions(ctx: Context): { sessions: ISessions; binding: SessionBind
   }
   const sessions: ISessions = {
     list,
+    runningKnown: createSnapshotStore(true),
     registerHistorySource: () => () => {},
     searchResultLimit: 50,
     create: () => Promise.reject(new Error('unused fake Sessions operation')),

@@ -137,6 +137,7 @@ interface RetainedSession {
 
 class FakeSessions implements ISessions {
   readonly list: MutableSource<SessionListState>
+  readonly runningKnown = createSnapshotStore(true)
   readonly create: ReturnType<typeof vi.fn<ISessions['create']>>
   readonly fork = vi.fn<ISessions['fork']>(async () => sid('forked'))
   readonly retained: RetainedSession[] = []
