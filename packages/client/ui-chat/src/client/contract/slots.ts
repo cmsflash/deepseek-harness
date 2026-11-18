@@ -390,6 +390,8 @@ export type ChatFlowDataInjected = Pick<ChatViewInjected, 'keyedHooks' | 'expand
   hooks: Pick<ChatViewInjected['hooks'], 'presentation'> & {
     /** Client connection lifecycle; the running clock pauses while it is not connected. */
     connectionState: ConnectionStateSource
+    /** Whether the Session's `running` value states what the Host runs now; false while the Host is unreachable. */
+    runningKnown: ObservableSnapshot<boolean>
   }
 }
 

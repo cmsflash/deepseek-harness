@@ -122,7 +122,14 @@ export class SessionManager {
   private readonly addresses = new Map<SessionId, SubagentAddress>()
   private readonly projectionLoads = new Map<SessionId, ProjectionLoad>()
   private readonly projectionInflight = new Map<SessionId, ProjectionInflight>()
-
+  /**
+   * False from an unreachable Host until a listing the Host itself answered
+   * lands. While false every running bit reads false: a recorded listing
+   * states what ran when it was recorded, not what runs now.
+   */
+  private runningKnownBit = true
+  /** Pending repeat of a failed listing that would have restored the running bits. */
+  private listRetry: ReturnType<typeof setTimeout> | undefined
 
   private listSnapshotCache: SessionListSnapshot
   /** Entry-identity cache (reference stability): list rebuilds reuse the previous entry
@@ -134,9 +141,20 @@ export class SessionManager {
     this.listSnapshotCache = this.buildListSnapshot()
   })
 
-  /** @param remote - generated Remote namespaces used by catalog and history readers. */
-  constructor(private readonly remote: SessionRemotes) {
+  /**
+   * @param remote - generated Remote namespaces used by catalog and history readers.
+   * @param hostOffline - whether answers come from the offline record because the Host is unreachable.
+   */
+  constructor(
+    private readonly remote: SessionRemotes,
+    private readonly hostOffline: () => boolean = () => false,
+  ) {
     this.listSnapshotCache = this.buildListSnapshot()
+  }
+
+  /** Whether running bits state what the Host runs now; see {@link SessionManager.runningKnownBit}. */
+  get runningKnown(): boolean {
+    return this.runningKnownBit
   }
 
   /**
@@ -215,6 +233,7 @@ export class SessionManager {
    */
   async dispose(): Promise<void> {
     this.disposed = true
+    clearTimeout(this.listRetry)
     this.listMutations = null
     this.listInflight = null
     this.engagedSessions.clear()
@@ -450,20 +469,25 @@ export class SessionManager {
   /** Full refresh via session.list (single-flight within one Host generation). */
   refreshList(): Promise<void> {
     if (this.listInflight !== null) return this.listInflight
+    clearTimeout(this.listRetry)
     this.listState = 'loading'
     this.listError = null
     const established = this.summaries
     const mutations: SessionListMutation[] = []
     this.listMutations = mutations
     this.notifier.markDirty()
+    const offlineAtRequest = this.hostOffline()
     this.listInflight = (async () => {
       try {
         const result = await this.remote.session.list({})
         if (this.listMutations !== mutations) return
+        const recorded = offlineAtRequest || this.hostOffline()
         if (result.ok) {
+          if (recorded && this.runningKnownBit) this.forgetRunning()
+          const listed = recorded ? result.value.items.map(notRunning) : result.value.items
           const baseline: SessionSummary[] = this.listPhase === 'pending'
-            ? [...result.value.items]
-            : mergeOrderedBaseline(established, result.value.items, summary => summary.sessionId)
+            ? [...listed]
+            : mergeOrderedBaseline(established, listed, summary => summary.sessionId)
           // A removal supersedes running observed in the pull, including after re-addition.
           const removedSincePull = new Set<SessionId>()
           for (const mutation of mutations) {
@@ -479,6 +503,7 @@ export class SessionManager {
           for (const sessionId of this.engagedSessions) this.pruneEngagement(sessionId, retained)
           this.listState = 'idle'
           this.listPhase = 'ready'
+          if (!recorded) this.runningKnownBit = true
           this.updateParentAvailability()
           // Resident Sessions and list rows share one display blank, reconciled with the metadata projection.
           for (const s of this.summaries) {
@@ -507,11 +532,23 @@ export class SessionManager {
         if (this.listMutations === mutations) {
           this.listMutations = null
           this.listInflight = null
+          // Nothing else repeats a listing within one connection, so the running bits would stay unknown.
+          if (this.listState === 'error' && !this.runningKnownBit && !this.hostOffline()) {
+            this.listRetry = setTimeout(() => { void this.refreshList() }, LIST_RETRY_MS)
+          }
           this.notifier.markDirty()
         }
       }
     })()
     return this.listInflight
+  }
+
+  /** The Host is unreachable: clear every running bit until a listing it answers lands. */
+  private forgetRunning(): void {
+    this.runningKnownBit = false
+    this.summaries = this.summaries.map(notRunning)
+    for (const session of this.sessions.values()) session.handleRunning(false)
+    this.notifier.markDirty()
   }
 
   /**
@@ -813,13 +850,16 @@ export class SessionManager {
    * Values stay visible: the new generation's control baseline retains the
    * Sessions it can vouch for and restates the changed ones, and a Session it
    * leaves out keeps its values until a persisted-checkpoint view or a follow
-   * opening describes it again.
+   * opening describes it again. A generation answered from the offline record
+   * first clears every running bit, which stays clear until the Host answers a
+   * listing.
    * Opened Session follow streams resume independently through API Gateway.
    */
   handleConnected(): void {
     for (const store of this.projectionStores.values()) store.beginGeneration()
     this.listMutations = null
     this.listInflight = null
+    if (this.hostOffline()) this.forgetRunning()
     void this.refreshList()
     const parents = new Set(this.projectionLoads.keys())
     for (const id of this.sessions.keys()) {
@@ -881,6 +921,14 @@ export class SessionManager {
       ])),
     }
   }
+}
+
+/** Delay before repeating a failed listing whose answer the running bits wait for. */
+const LIST_RETRY_MS = 5_000
+
+/** One listing row with its running bit cleared; the row itself when already clear. */
+function notRunning(summary: SessionSummary): SessionSummary {
+  return summary.running ? { ...summary, running: false } : summary
 }
 
 /** Apply one list mutation without deriving display order. */

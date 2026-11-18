@@ -194,14 +194,25 @@ export class OfflineReplay {
     } catch (error) {
       if (signal.aborted) throw error
       this.check()
-      // fetch rejects with TypeError when the request never reached the Host; calls
-      // made before the probe settles (during the first page load) still get the record.
-      const value = recorded && error instanceof TypeError ? await this.read(callKey(endpoint, args)) : undefined
-      if (value === undefined) throw error
-      return value as ConnectionRpcResult<unknown>
+      // fetch rejects with TypeError when the request never reached the Host. The probe decides who
+      // answers: the record once the Host is found unreachable, otherwise the Host, asked once more,
+      // so a recorded answer never stands in for one the Host can still give.
+      if (!recorded || !(error instanceof TypeError)) throw error
+      if (!await this.probed()) {
+        const value = await this.read(callKey(endpoint, args))
+        if (value === undefined) throw error
+        return value as ConnectionRpcResult<unknown>
+      }
+      result = await live()
     }
     if (recorded && result.ok) this.write(callKey(endpoint, args), result)
     return result
+  }
+
+  /** @returns whether the probe in flight, if any, left the Host reachable. */
+  private async probed(): Promise<boolean> {
+    await this.probing
+    return this.episode === undefined
   }
 
   /**

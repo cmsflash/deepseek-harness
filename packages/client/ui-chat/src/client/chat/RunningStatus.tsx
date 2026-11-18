@@ -13,6 +13,8 @@ interface RunningStatusProps {
   readonly paused: boolean
   /** Keep the slot without showing or announcing the status: the Session stopped before its Turn closed. */
   readonly holding?: boolean
+  /** The held slot states that the Host is unreachable: the open Turn's running state is unknown. */
+  readonly unknown?: boolean
   readonly t: ChatViewSlotProps['t']
 }
 
@@ -20,9 +22,11 @@ interface RunningStatusProps {
  * Show live elapsed time after the current Turn's content without announcing ticks.
  * @param props - Current Turn start time, pause state, and localized copy.
  * @returns the blue running indicator; mount while the Session is running, or holding its slot hidden until the
- * Turn's actions row replaces it.
+ * Turn's actions row replaces it. A held slot marked unknown shows the unreachable-Host notice instead.
  */
-export const RunningStatus = memo(function RunningStatus({ startTime, paused, holding = false, t }: RunningStatusProps) {
+export const RunningStatus = memo(function RunningStatus({
+  startTime, paused, holding = false, unknown = false, t,
+}: RunningStatusProps) {
   const [now, setNow] = useState(Date.now)
   useEffect(() => {
     if (startTime === undefined || paused || holding) return
@@ -33,6 +37,14 @@ export const RunningStatus = memo(function RunningStatus({ startTime, paused, ho
   const label = startTime === undefined ? t('chat.deepDiving') : t('chat.deepDivingFor', {
     duration: formatRunDuration(Math.max(1000, now - startTime), t).map(part => part.text).join(''),
   })
+  if (unknown) {
+    return (
+      <div className={css.running} data-chat-running data-unknown="">
+        <span className={css.runningDivider} aria-hidden="true" />
+        <span className={css.runningContent} role="status">{t('chat.runningUnknown')}</span>
+      </div>
+    )
+  }
   return (
     <div className={css.running} data-chat-running data-holding={holding ? '' : undefined} aria-hidden={holding || undefined}>
       {holding ? null : (

@@ -202,6 +202,8 @@ Chat view 在标记了 `data-text-interaction-source` 的业务节点上检测�
 
 当 `ctx.remote.$offline` 为 true 时，聊天视图在对话记录上方显示一条置顶的单行状态提示（"离线。正在显示已保存的副本；主机恢复后将收到新消息。"，`chat.offline`，所有已发布语言均已本地化）。当会话快照的 `incompleteCopy` 为 true（其未确认窗口来自不完整的本地副本）时，提示会追加"此会话的已保存副本不完整。"（`chat.offlineIncomplete`）。该提示只读取注入的 `offline` 钩子与这一快照字段，不改变对话记录、输入框或会话状态。
 
+当 `ctx.sessions.runningKnown` 为 false 时，主机不可达，或恢复后尚未应答会话列表，此时所有 `running` 值均读作 false。最新一轮若仍未结束，其[运行状态槽位](src/client/conversation-nodes/README.zh.md)会显示"离线。重新连接前无法得知是否仍在运行。"（`chat.runningUnknown`），而不是隐藏保留该槽位；已结束的轮次不显示额外内容。
+
 <a id="model-experience"></a>
 ## 模型体验
 

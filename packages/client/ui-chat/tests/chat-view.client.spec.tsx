@@ -291,12 +291,13 @@ const renderCommandSlot: React.ComponentProps<typeof CommandNodeView>['renderSlo
   (_key, _owner, opts) => opts?.fallback ?? null
 const renderTurnTailSlot: React.ComponentProps<typeof TurnTailNodeView>['renderSlot'] = () => null
 
-function HarnessChatFlow({ standard, owner, hookContext, renderSlot, useConnectionState }: {
+function HarnessChatFlow({ standard, owner, hookContext, renderSlot, useConnectionState, useRunningKnown }: {
   readonly standard: HarnessStandardProps
   readonly owner: ChatFlowOwnerProps
   readonly hookContext: ChatFlowHookContext
   readonly renderSlot: ChatFlowSlotProps['renderSlot']
   readonly useConnectionState: ChatFlowSlotProps['useConnectionState']
+  readonly useRunningKnown: ChatFlowSlotProps['useRunningKnown']
 }) {
   const hooks = useMemo(() => ({
     useGroupAction: CHAT_FLOW_INJECT.hooks.groupAction(standard, hookContext),
@@ -304,7 +305,7 @@ function HarnessChatFlow({ standard, owner, hookContext, renderSlot, useConnecti
   }), [standard, hookContext])
   const { renderSlot: _rootRenderSlot, __renders: _rootRenders, ...shared } = standard
   return <ChatFlow {...shared} {...owner} {...hooks} renderSlot={renderSlot}
-    useConnectionState={useConnectionState} />
+    useConnectionState={useConnectionState} useRunningKnown={useRunningKnown} />
 }
 
 function HarnessUserOrigin({ useRenderer, owner, options }: {
@@ -492,12 +493,14 @@ function makeHarness(
       throw new Error('Flow owner data must not replace its rendering or store authority')
     }
     return <HarnessChatFlow standard={props} owner={owner} hookContext={opts.hookContext} renderSlot={renderFlowSlot}
-      useConnectionState={useConnectionState} />
+      useConnectionState={useConnectionState} useRunningKnown={useRunningKnown} />
   }
   // SessionProvider seat arrives with the session-scope child declaration;
   // ChatView never invokes it (pass-through stub).
   const connection = createSnapshotStore<ConnectionState | undefined>('connected')
   const useConnectionState = bindSnapshotSelector(connection)
+  const runningKnown = createSnapshotStore(true)
+  const useRunningKnown = bindSnapshotSelector(runningKnown)
   const SessionProviderStub: ChatViewSlotProps['SessionProvider'] = ({ children }) => <>{children}</>
   const props: HarnessStandardProps = {
     fileDrag,
@@ -583,6 +586,7 @@ function makeHarness(
     set, setSession: session.set, setChat: chatSource.set, ChatView, props,
     setConnection: (state: ConnectionState) => { connection.set(state) },
     setOffline: (value: boolean) => { offline.set(value) },
+    setRunningKnown: (value: boolean) => { runningKnown.set(value) },
     openFile, openUserFile, loadOlder, loadThrough, expandTurn, openView,
     setOutline: (value: unknown) => { outlineValue = value },
     chatScroll, forkAt, toolOwners,
@@ -4768,6 +4772,39 @@ describe('ChatView', () => {
     expect(held?.getAttribute('aria-hidden')).toBe('true')
     expect(within(held!).queryByRole('status')).toBeNull()
     act(() => { h.setChat({ turnEnds: new Map([[1, 2]]) }) })
+    expect(column.querySelector('[data-chat-running]')).toBeNull()
+  })
+
+  it('states that the running state is unknown in an open Turn while the Host is unreachable', () => {
+    const h = makeHarness({ nodes: [user(1, 'do the thing'), assistant(2, 'working')] }, { running: true })
+    const view = render(<h.ChatView {...h.props} />)
+    const column = view.container.querySelector('[data-chat-flow]')!
+    // The running bits clear when the Host becomes unreachable; that says nothing about the open Turn.
+    act(() => {
+      h.setRunningKnown(false)
+      h.setSession({ running: false })
+    })
+    const unknown = column.querySelector<HTMLElement>('[data-chat-running]')!
+    expect(unknown.hasAttribute('data-unknown')).toBe(true)
+    expect(unknown.hasAttribute('data-holding')).toBe(false)
+    expect(unknown.getAttribute('aria-hidden')).toBeNull()
+    expect(within(unknown).getByRole('status').textContent).toBe(zh['chat.runningUnknown'])
+    expect(unknown.querySelector('svg')).toBeNull()
+    // A running bit the Host reports again wins over the notice.
+    act(() => { h.setSession({ running: true }) })
+    expect(column.querySelector('[data-chat-running]')?.hasAttribute('data-unknown')).toBe(false)
+    expect(within(column.querySelector<HTMLElement>('[data-chat-running]')!).getByRole('status').textContent).toBe('深度求索中')
+    // Once the Host answers, a cleared bit in an open Turn holds the slot unseen again.
+    act(() => {
+      h.setRunningKnown(true)
+      h.setSession({ running: false })
+    })
+    expect(column.querySelector('[data-chat-running]')?.hasAttribute('data-holding')).toBe(true)
+    // A closed Turn shows no notice whatever the Host's reachability.
+    act(() => {
+      h.setRunningKnown(false)
+      h.setChat({ turnEnds: new Map([[1, 2]]) })
+    })
     expect(column.querySelector('[data-chat-running]')).toBeNull()
   })
 

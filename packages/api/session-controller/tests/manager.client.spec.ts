@@ -739,6 +739,160 @@ describe('list lifecycle', () => {
   })
 })
 
+describe('running state while the Host is unreachable', () => {
+  function reachability(mock: RemoteMock, remote: ClientTestFixtures['remote']) {
+    mock.load(sessionWorld)
+    const host = { offline: false }
+    const manager = new SessionManager(remote as unknown as SessionRemotes, () => host.offline)
+    onTestFinished(() => manager.dispose())
+    const rows = () => manager.getListSnapshot().items.map(item => [item.sessionId, item.running])
+    return { manager, host, rows }
+  }
+
+  it('clears every running bit for a recorded generation and restores them from the first listing the Host answers', async ({ mock, remote }) => {
+    const { manager, host, rows } = reachability(mock, remote)
+    remote.session.list.mockResolvedValue(ok({ items: [summary(S1, { running: true }), summary(S2)] }))
+    await manager.refreshList()
+    const session = manager.get(S1)
+    expect(session.getSnapshot().running).toBe(true)
+    expect(manager.runningKnown).toBe(true)
+
+    // The record still says S1 runs. The clear does not wait for the recorded listing.
+    host.offline = true
+    manager.handleConnected()
+    expect(manager.runningKnown).toBe(false)
+    expect(session.getSnapshot().running).toBe(false)
+    expect(rows()).toEqual([[S1, false], [S2, false]])
+    await manager.refreshList()
+    expect(manager.runningKnown).toBe(false)
+    expect(session.getSnapshot().running).toBe(false)
+    expect(rows()).toEqual([[S1, false], [S2, false]])
+    expect(manager.get(S2).getSnapshot().running).toBe(false)
+
+    // Reachable again: the bits stay clear until the Host's own listing lands.
+    host.offline = false
+    const live = Promise.withResolvers<Awaited<ReturnType<typeof remote.session.list>>>()
+    remote.session.list.mockReturnValueOnce(live.promise)
+    manager.handleConnected()
+    expect(manager.runningKnown).toBe(false)
+    expect(rows()).toEqual([[S1, false], [S2, false]])
+    live.resolve(ok({ items: [summary(S1, { running: true }), summary(S2)] }))
+    await manager.refreshList()
+    expect(manager.runningKnown).toBe(true)
+    expect(session.getSnapshot().running).toBe(true)
+    expect(rows()).toEqual([[S1, true], [S2, false]])
+  })
+
+  it('takes a listing as recorded when the Host became unreachable while it was in flight', async ({ mock, remote }) => {
+    const { manager, host, rows } = reachability(mock, remote)
+    const address: SubagentAddress = { parentSessionId: S1, childSessionId: S2, mode: 'continuable' }
+    remote.session.list.mockResolvedValueOnce(ok({ items: [summary(S1, { running: true })] }))
+    await manager.refreshList()
+    const session = manager.get(S1)
+    manager.resolveTarget(address)
+    const child = manager.get(S2)
+    manager.handleSessionStatus(S2, true)
+    expect(child.getSnapshot().running).toBe(true)
+
+    const pending = Promise.withResolvers<Awaited<ReturnType<typeof remote.session.list>>>()
+    remote.session.list.mockReturnValueOnce(pending.promise)
+    const refreshing = manager.refreshList()
+    host.offline = true
+    pending.resolve(ok({ items: [summary(S1, { running: true })] }))
+    await refreshing
+    expect(manager.runningKnown).toBe(false)
+    expect(session.getSnapshot().running).toBe(false)
+    expect(child.getSnapshot().running).toBe(false)
+    expect(rows()).toEqual([[S1, false]])
+  })
+
+  it('keeps a running change the Host reports before its listing lands', async ({ mock, remote }) => {
+    const { manager, host } = reachability(mock, remote)
+    remote.session.list.mockResolvedValue(ok({ items: [summary(S1, { running: true })] }))
+    await manager.refreshList()
+    const session = manager.get(S1)
+    host.offline = true
+    manager.handleConnected()
+    await manager.refreshList()
+    host.offline = false
+    const live = Promise.withResolvers<Awaited<ReturnType<typeof remote.session.list>>>()
+    remote.session.list.mockReturnValueOnce(live.promise)
+    manager.handleConnected()
+
+    manager.handleSessionStatus(S1, true)
+    expect(session.getSnapshot().running).toBe(true)
+    expect(manager.runningKnown).toBe(false)
+    live.resolve(ok({ items: [summary(S1)] }))
+    await manager.refreshList()
+    expect(session.getSnapshot().running).toBe(true)
+    expect(manager.runningKnown).toBe(true)
+  })
+
+  it.for(['refused', 'rejected'] as const)('repeats a %s listing the running bits wait for', async (failure, { mock, remote }) => {
+    vi.useFakeTimers()
+    onTestFinished(() => { vi.useRealTimers() })
+    const { manager, host } = reachability(mock, remote)
+    const unavailable = new RemoteError('gateway/internal', 'list unavailable', {})
+    remote.session.list.mockResolvedValue(ok({ items: [summary(S1, { running: true })] }))
+    await manager.refreshList()
+    host.offline = true
+    manager.handleConnected()
+    await manager.refreshList()
+
+    host.offline = false
+    if (failure === 'refused') remote.session.list.mockResolvedValueOnce(err(unavailable))
+    else remote.session.list.mockRejectedValueOnce(unavailable)
+    manager.handleConnected()
+    await manager.refreshList()
+    expect(manager.getListSnapshot().state).toBe('error')
+    expect(manager.runningKnown).toBe(false)
+    const calls = remote.session.list.mock.calls.length
+
+    await vi.advanceTimersByTimeAsync(4_999)
+    expect(remote.session.list).toHaveBeenCalledTimes(calls)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(remote.session.list).toHaveBeenCalledTimes(calls + 1)
+    expect(manager.getListSnapshot().state).toBe('idle')
+    expect(manager.runningKnown).toBe(true)
+    expect(manager.get(S1).getSnapshot().running).toBe(true)
+  })
+
+  it('does not repeat a failed listing while the Host is unreachable, once the bits are known, or after disposal', async ({ mock, remote }) => {
+    vi.useFakeTimers()
+    onTestFinished(() => { vi.useRealTimers() })
+    const { manager, host } = reachability(mock, remote)
+    const unavailable = new RemoteError('gateway/internal', 'list unavailable', {})
+
+    // Known bits: a failed listing leaves them as they are.
+    remote.session.list.mockResolvedValueOnce(err(unavailable))
+    await manager.refreshList()
+    await vi.advanceTimersByTimeAsync(5_000)
+    expect(remote.session.list).toHaveBeenCalledTimes(1)
+
+    // Unreachable Host without a recorded listing: the next generation asks again.
+    host.offline = true
+    remote.session.list.mockResolvedValueOnce(err(unavailable))
+    manager.handleConnected()
+    await manager.refreshList()
+    await vi.advanceTimersByTimeAsync(5_000)
+    expect(remote.session.list).toHaveBeenCalledTimes(2)
+
+    // A pending repeat is withdrawn by a newer request and by disposal.
+    host.offline = false
+    remote.session.list.mockResolvedValue(err(unavailable))
+    manager.handleConnected()
+    await manager.refreshList()
+    expect(remote.session.list).toHaveBeenCalledTimes(3)
+    await manager.refreshList()
+    expect(remote.session.list).toHaveBeenCalledTimes(4)
+    await vi.advanceTimersByTimeAsync(4_999)
+    expect(remote.session.list).toHaveBeenCalledTimes(4)
+    await manager.dispose()
+    await vi.advanceTimersByTimeAsync(5_000)
+    expect(remote.session.list).toHaveBeenCalledTimes(4)
+  })
+})
+
 describe('search', () => {
   it('returns bounded Host results and forwards the caller signal', async ({ mock, remote }) => {
     remote.session.search.mockResolvedValue(ok({

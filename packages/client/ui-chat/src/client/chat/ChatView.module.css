@@ -229,6 +229,11 @@
   opacity: 0;
 }
 
+/* The Host is unreachable: the slot states that the Turn's running state is unknown. */
+.running[data-unknown] {
+  color: var(--dsw-alias-label-tertiary);
+}
+
 /* The last visible row before the status must contain output, not an input.
    Hidden and empty seats do not separate a user message from the status, and
    the steering/Inbox echoes after the status are outside the count. */

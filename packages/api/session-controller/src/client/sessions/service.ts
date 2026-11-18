@@ -23,7 +23,7 @@ import { createScope, scopeIdentityOf, scopeOf as scopeTagOf } from '../scope.ts
 import { WarmSessionPool } from './warm-pool.ts'
 import { WindowMemoryBudget, type BudgetedSession } from './window-budget.ts'
 import { SessionManager } from './manager.ts'
-import type { SessionRemotes } from './remotes.ts'
+import type { SessionsRemote } from './remotes.ts'
 import type { SessionListPhase, SessionSearchResultItem, SessionProjectionSnapshot } from './manager.ts'
 import type { Session } from './session.ts'
 import type { SessionListEntry } from './lineage.ts'
@@ -264,6 +264,7 @@ export class ClientSessions implements ISessions {
   readonly searchResultLimit = SESSION_SEARCH_RESULT_LIMIT
   /** Catalog metadata and local reference-source projection. */
   readonly list: SnapshotStore<SessionListState>
+  readonly runningKnown: SnapshotStore<boolean>
   /** The object-layer instance cluster and frame dispatch entry. */
   private readonly manager: SessionManager
   private readonly scopes = new Map<SessionId, ScopeRecord>()
@@ -278,16 +279,17 @@ export class ClientSessions implements ISessions {
 
   /**
    * @param ctx - client root context (scope fibers mount under it).
-   * @param remote - generated Remote namespaces shared with every Session.
+   * @param remote - generated Remote namespaces shared with every Session, and Host reachability.
    */
   constructor(
     private readonly rootCtx: Context,
-    remote: SessionRemotes,
+    remote: SessionsRemote,
   ) {
-    this.manager = new SessionManager(remote)
+    this.manager = new SessionManager(remote, () => remote.$offline.getSnapshot())
     this.list = createSnapshotStore<SessionListState>({
       ids: [], byId: {}, phase: 'pending', projectionsBySession: {},
     })
+    this.runningKnown = createSnapshotStore(this.manager.runningKnown)
     const disposeManagerProjection = this.manager.subscribe(() => { this.projectList() })
     rootCtx.effect(() => async () => {
       this.closed = true
@@ -840,6 +842,7 @@ export class ClientSessions implements ISessions {
       }
     }
     this.list.set({ ids, byId, phase, projectionsBySession })
+    if (this.runningKnown.getSnapshot() !== this.manager.runningKnown) this.runningKnown.set(this.manager.runningKnown)
   }
 
   private startScopeDrop(
