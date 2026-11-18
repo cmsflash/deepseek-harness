@@ -536,6 +536,65 @@ describe('scope tree', () => {
     expect(binding.eventSource.getSnapshot().entries[1]?.event).toBe(settlement.event)
   })
 
+  it('shows a settlement once when the carrier is lost between its attempt start and first chunk', async ({ bench }) => {
+    const b = bench()
+    const attemptId = LlmAttemptId('started-before-loss-attempt')
+    const prior = {
+      type: 'event' as const,
+      event: { type: 'turn/start', seq: 0, time: 19, data: { turn: 1 } },
+    }
+    const settlement = {
+      type: 'event' as const,
+      event: {
+        type: 'assistant/message', seq: 1, time: 21,
+        data: {
+          turn: 1,
+          step: 1,
+          message: {
+            role: 'assistant',
+            content: [{ type: 'text', text: 'settled' }],
+            source: { kind: 'model', provider: 'p', model: 'm' },
+            id: 'started-before-loss-message',
+          },
+          stream: [{ type: 'text-chunks', time0: 20, index: 0, dt: [], texts: ['settled'] }],
+        },
+        surfaceOp: 'append' as const,
+      },
+    }
+    const stepEnd = {
+      type: 'event' as const,
+      event: { type: 'step/end', seq: 2, time: 22, data: { turn: 1, step: 1 } },
+    }
+    b.mock.stream(FOLLOW, followScript(ok({ cursor: 0, records: [prior] as never[], hasMore: false })))
+    await feedList(b, [{ id: 's1' }])
+    using _reference = b.svc.retain(sid('s1'), { source: 'controllerOperation' })
+    await _reference.ready
+    const binding = b.svc.binding(sid('s1'))
+    if (binding === undefined) throw new Error('expected Session binding')
+    await vi.waitFor(() => { expect(binding.session.getSnapshot().openState).toBe('open') })
+    b.mock.streams.push(FOLLOW, {
+      type: 'assistant-stream',
+      frame: { type: 'start', attemptId, revision: 1, startedAfterSeq: 0, turn: 1, step: 1 },
+    })
+    await b.mock.streams.drained(FOLLOW)
+    // The attempt finished while the carrier was down; the reconnect baseline has no active attempt.
+    b.mock.stream(FOLLOW, async ([request], stream) => {
+      stream.push(followResumed(request as SessionFollowRequest, [settlement, stepEnd] as never[], { revision: 4 }))
+    })
+
+    b.mock.streams.fail(FOLLOW, new RemoteStreamCarrierError('lost'))
+    await vi.waitFor(() => {
+      expect(binding.eventSource.getSnapshot().entries.map(entry => entry.event.seq)).toEqual([0, 1, 2])
+    })
+
+    expect((b.mock.log.requests(FOLLOW)[1] as SessionFollowRequest).resume).toEqual({
+      afterSeq: 0,
+      link: linkFor(0),
+    })
+    expect(binding.eventSource.getSnapshot().entries.map(entry => entry.event.type))
+      .toEqual(['turn/start', 'assistant/message', 'step/end'])
+  })
+
   it('replaces an invalid settlement with the authoritative post-end baseline', async ({ bench }) => {
     const b = bench()
     const attemptId = LlmAttemptId('reconnect-end-index-attempt')
