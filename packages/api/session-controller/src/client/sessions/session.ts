@@ -1330,7 +1330,8 @@ export class Session implements SessionFace {
         if (result === undefined) {
           // The entry is a settlement staged for an attempt whose live frames
           // predate this opening; rebuild through the fold so it becomes visible.
-          this.resumeWindowFromFold(entries.slice(index), projections, assistantStream)
+          // The fold reads it from the staged settlements, so only later entries are passed.
+          this.resumeWindowFromFold(entries.slice(index + 1), projections, assistantStream)
           return
         }
         this.publishAssistantEntry(result)
