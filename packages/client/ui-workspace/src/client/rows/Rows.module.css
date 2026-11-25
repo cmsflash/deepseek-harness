@@ -553,3 +553,24 @@
     transition: none;
   }
 }
+
+/* The owner also contains React events from the Tooltip portal. */
+.detachedIndicatorOwner {
+  display: contents;
+}
+
+.detachedIndicator {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 16px;
+  height: 20px;
+  margin-inline-start: var(--dsh-sidebar-label-gap);
+  color: var(--dsw-alias-label-secondary);
+}
+
+.detachedIndicator:focus-visible {
+  outline: 1px solid var(--dsw-alias-label-secondary);
+  outline-offset: 2px;
+}

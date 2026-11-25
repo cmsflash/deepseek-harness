@@ -10,14 +10,14 @@
  * context; this package's own actions are entries like any plugin's. The
  * session and workspace hover cards are suppressed while a menu is open.
  */
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import type { CSSProperties, RefObject } from 'react'
 import clsx from 'clsx'
 import type { PropsRenderSlots } from '@deepseek-ai/dsh-client-ui-slots'
 import {
   HoverCard, IconArchiveOutlineRegular, IconEditOutlineRegular,
   IconEllipsisOutlineRegular, IconFolderCloseRegular, IconFolderOpenRegular,
-  IconNewChatOutlineRegular, IconPinFillRegular, IconTrashOutlineRegular,
+  IconUserOutlineRegular, IconNewChatOutlineRegular, IconPinFillRegular, IconTrashOutlineRegular,
   IconTriangleRightFillRegular, IconUnarchiveOutlineRegular, Menu, relativeTime, StateDot, Tooltip, useRowDragPreview,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { ShortcutCatalogEntry } from '@deepseek-ai/dsh-client-shortcuts/client'
@@ -517,6 +517,20 @@ function PinnedIndicator({ t }: { t: RowTranslate }) {
   )
 }
 
+/** Reporting indicator only: clicking reveals its explanation, never changes attachment. */
+function DetachedIndicator({ t }: { t: RowTranslate }) {
+  const label = t('row.detached')
+  return (
+    <span className={css.detachedIndicatorOwner} onClick={(event) => { event.stopPropagation() }}>
+      <Tooltip label={label} side="bottom" portal openOnClick>
+        <span className={css.detachedIndicator} role="img" aria-label={label} tabIndex={0}>
+          <IconUserOutlineRegular size={14} />
+        </span>
+      </Tooltip>
+    </span>
+  )
+}
+
 /**
  * Hover-card body: full title, display working directory, relative time, thread spend, the Session's own
  * scheduled-task section, and every relevant live status. The task section sits above the
@@ -574,14 +588,16 @@ function SessionHoverContent({ node, cwd, now, renderSlot, t }: {
  * @returns the result row.
  */
 export function SearchResultItem({
-  result, currentId, onOpen, onUnarchive, useSessionAccess, t,
+  result, detached = false, currentId, onOpen, onUnarchive, useSessionAccess, t,
 }: {
   result: SearchResultNode
+  detached?: boolean
   currentId: string | undefined
   onOpen: (id: SearchResultNode['id']) => void
   onUnarchive: (id: SearchResultNode['id']) => void
   t: RowTranslate
 } & Pick<WorkspaceBrowserProps, 'useSessionAccess'>) {
+  const identity = useId()
   const selected = result.id === currentId
   const canUnarchive = useSessionAccess(result.id, 'workspace/unarchiveSession')
   const statuses = sessionStatuses(result, t)
@@ -591,19 +607,20 @@ export function SearchResultItem({
       className={clsx(css.searchResultRow, selected && css.selected, result.archived && css.archived)}
       role="treeitem"
       aria-selected={selected}
-      aria-description={result.archived ? t('toast.archivedNotOpenable') : undefined}
+      aria-labelledby={detached ? `${identity}-title ${identity}-status ${identity}-meta` : undefined}
+      aria-description={[detached && t('row.detached'), result.archived && t('toast.archivedNotOpenable')]
+        .filter(Boolean).join(' ') || undefined}
       onClick={() => { onOpen(result.id) }}
     >
       <span className={css.searchResultHeading}>
-        {/* Like session rows, the leading slot owns every row marker; on
-            archived rows it stays blank — the grayed row carries the
-            archived look. */}
-        <span className={css.slot}>
+        {/* Archived rows omit status but retain reporting attachment. */}
+        <span id={`${identity}-status`} className={css.slot}>
           {!result.archived && primaryStatus.state !== 'idle' && (
             <SessionStatusDots statuses={statuses} />
           )}
         </span>
-        <span className={css.searchResultTitle}>{result.title || t('session.untitled')}</span>
+        {detached && <DetachedIndicator t={t} />}
+        <span id={`${identity}-title`} className={css.searchResultTitle}>{result.title || t('session.untitled')}</span>
         {result.archived && canUnarchive && (
           <span className={css.rowActions}>
             <Tooltip label={t('actions.unarchive')} side="bottom" align="end" delayMs={500} portal>
@@ -619,7 +636,7 @@ export function SearchResultItem({
           </span>
         )}
       </span>
-      <span className={css.searchResultMeta}>
+      <span id={`${identity}-meta`} className={css.searchResultMeta}>
         <span className={css.searchResultWorkspace}>{result.workspace || t('group.ungrouped')}</span>
         {result.snippet !== undefined && (
           <span className={css.searchResultSnippet}>{result.snippet}</span>
@@ -663,9 +680,10 @@ export function SearchResultItem({
  */
 export function SessionNodeItem({
   node, currentId, now, detail = 'updated', onOpen, onRenameRequest, renderSlot, onReveal, drag, home, useSessionAccess, t,
-  depth, expander,
+  depth, expander, detached = false,
 }: {
   node: SessionNode
+  detached?: boolean
   currentId: string | undefined
   now: number
   detail?: SessionRowDetail | undefined
@@ -690,6 +708,7 @@ export function SessionNodeItem({
   | 'sidebar.session.row.leading'
   | 'sidebar.session.row.hover'
 >) {
+  const identity = useId()
   const row = node
   const title = displayTitle(node, t)
   const selected = node.id === currentId
@@ -736,7 +755,9 @@ export function SessionNodeItem({
       role="treeitem"
       aria-selected={selected}
       aria-expanded={expander?.expanded}
-      aria-description={row.archived ? t('toast.archivedNotOpenable') : undefined}
+      aria-labelledby={detached ? `${identity}-title ${identity}-status${row.blank ? '' : ` ${identity}-resting`}` : undefined}
+      aria-description={[detached && t('row.detached'), row.archived && t('toast.archivedNotOpenable')]
+        .filter(Boolean).join(' ') || undefined}
       tabIndex={0}
       onClick={() => { onOpen(node.id) }}
       onKeyDown={(event) => {
@@ -778,13 +799,15 @@ export function SessionNodeItem({
           and is cleared by opening the session. Archived rows keep the slot
           blank — the grayed row carries the archived look — and their live
           status stays on the hover card only. */}
-      <span className={css.slot}>
+      <span id={`${identity}-status`} className={css.slot}>
         {!row.archived && !row.blank && (showStatus
           ? <SessionStatusDots statuses={statuses} />
           : renderSlot('sidebar.session.row.leading', { sessionId: node.id }))}
       </span>
+      {detached && <DetachedIndicator t={t} />}
       <span
         ref={titleRef}
+        id={`${identity}-title`}
         className={css.title}
         onMouseDown={(e) => {
           if (e.detail !== 1) return
@@ -806,7 +829,7 @@ export function SessionNodeItem({
       {/* Blank rows have no first prompt, so neither trailing details nor
           actions for existing content are available. */}
       {!row.blank && (
-        <span className={css.rowResting}>
+        <span id={`${identity}-resting`} className={css.rowResting}>
           <span
             className={clsx(css.time, primaryStatus.trailingLabel === undefined && detail === 'cost' && css.cost)}
             aria-hidden={primaryStatus.trailingLabel === undefined ? undefined : true}

@@ -184,6 +184,13 @@ describe('WorkspaceBrowser.module.css list', () => {
     expect(dot?.get('align-items')).toBe('center')
   })
 
+  it('keeps the detached indicator owner boxless and the marker fixed outside title clipping', () => {
+    expect(rowDeclarations('.detachedIndicatorOwner')?.get('display')).toBe('contents')
+    expect(rowDeclarations('.detachedIndicator')?.get('flex')).toBe('none')
+    expect(rowDeclarations('.detachedIndicator')?.get('width')).toBe('16px')
+    expect(rowDeclarations('.detachedIndicator')?.get('margin-inline-start')).toBe('var(--dsh-sidebar-label-gap)')
+  })
+
   it('indents nested Session rows and draws their expand control inside the leading padding', () => {
     for (const selector of ['.projectRow', '.sessionRow']) {
       expect(rowDeclarations(selector)?.get('padding-inline-start')).toContain('+ var(--dsh-session-indent, 0px)')

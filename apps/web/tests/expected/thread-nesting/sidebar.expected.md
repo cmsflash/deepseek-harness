@@ -8,12 +8,15 @@
     - text: Untitled 1min
     - button "Hide sessions under Untitled"
   - group:
-    - treeitem "Untitled 1min Hide sessions under Untitled" [expanded]:
+    - treeitem "Untitled 1min" [expanded]:
+      - 'img "Detached: reports to you"'
       - text: Untitled 1min
       - button "Hide sessions under Untitled"
     - group:
       - treeitem "Untitled 1min"
-    - treeitem "Untitled 1min"
+    - treeitem "Untitled 1min":
+      - 'img "Detached: reports to you"'
+      - text: Untitled 1min
   - treeitem "Untitled 1min"
   - treeitem "Untitled 1min"
   - treeitem "Untitled 1min"

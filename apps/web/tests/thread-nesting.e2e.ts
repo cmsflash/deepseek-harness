@@ -82,6 +82,9 @@ describe('web e2e: Sessions nested under Sessions', () => {
     await registry.setSessionParent(mid, top)
     await registry.setSessionParent(sibling, top)
     await registry.setSessionParent(leaf, mid)
+    await registry.setSessionAttachment(mid, top, 'detached')
+    await registry.setSessionAttachment(sibling, top, 'detached')
+    await expect.poll(() => row(mid).getByRole('img', { name: 'Detached: reports to you' }).count()).toBe(1)
     await expect.poll(() => indent(leaf), { timeout: 15_000 }).toBe('24px')
     // Three rows left the top level, so the five-row watermark now reaches every top-level row.
     await expect.poll(() => sidebar().getByText('Untitled', { exact: true }).count()).toBe(SESSION_COUNT)
@@ -92,6 +95,11 @@ describe('web e2e: Sessions nested under Sessions', () => {
     const arrow = await row(top).getByRole('button', { name: 'Hide sessions under Untitled' }).boundingBox()
     const title = await row(top).getByText('Untitled', { exact: true }).boundingBox()
     expect((arrow?.x ?? Infinity) + (arrow?.width ?? 0)).toBeLessThanOrEqual(title?.x ?? -Infinity)
+    const marker = await row(mid).getByRole('img', { name: 'Detached: reports to you' }).boundingBox()
+    const reportTitle = await row(mid).getByText('Untitled', { exact: true }).boundingBox()
+    const reportArrow = await row(mid).getByRole('button', { name: 'Hide sessions under Untitled' }).boundingBox()
+    expect((reportArrow?.x ?? Infinity) + (reportArrow?.width ?? 0)).toBeLessThanOrEqual(marker?.x ?? -Infinity)
+    expect((marker?.x ?? Infinity) + (marker?.width ?? 0)).toBeLessThanOrEqual(reportTitle?.x ?? -Infinity)
     await sidebar().getByRole('treeitem').first().hover()
     await compareOrRefreshGolden(
       join(EXPECTED_DIR, 'sidebar.expected.md'),
@@ -112,6 +120,8 @@ describe('web e2e: Sessions nested under Sessions', () => {
     await registry.setSessionParent(sibling, undefined)
     await expect.poll(() => indent(sibling), { timeout: 15_000 }).toBe('')
     expect(await indent(mid)).toBe('12px')
+    await expect.poll(() => row(sibling).getByRole('img', { name: 'Detached: reports to you' }).count()).toBe(0)
+    expect(await row(mid).getByRole('img', { name: 'Detached: reports to you' }).count()).toBe(1)
 
     await assertFixtureInventory(EXPECTED_DIR, ['sidebar.expected.md'])
     expect(tripwire.pageErrors).toEqual([])

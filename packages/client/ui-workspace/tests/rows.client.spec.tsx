@@ -1864,3 +1864,85 @@ describe('nested Session rows', () => {
     expect(screen.getByRole('treeitem').className).toMatch(/archived/)
   })
 })
+
+describe('detached reporting indicator', () => {
+  const node: SessionNode = {
+    id: sid('report'), title: 'Report title', blank: false, running: false,
+    runningSubagentCount: 0, completed: false, updatedAt: 0, pinned: false, archived: false, costUsd: 0,
+  }
+
+  it.each([false, true])('keeps the marker outside title text, including archived=%s', (archived) => {
+    const open = vi.fn()
+    const { rerender } = render(<SessionNodeItem node={{ ...node, archived }} detached
+      currentId={undefined} now={0} onOpen={open} t={tEn} />)
+    const marker = screen.getByRole('img', { name: 'Detached: reports to you' })
+    const title = screen.getByText('Report title')
+    expect(title.contains(marker)).toBe(false)
+    expect(marker.parentElement?.nextElementSibling).toBe(title)
+    expect(screen.getByRole('treeitem', { name: /^Report title/ }).getAttribute('aria-description'))
+      .toContain('Detached: reports to you')
+    expect(marker.getAttribute('tabindex')).toBe('0')
+    fireEvent.click(marker)
+    expect(open).not.toHaveBeenCalled()
+    expect(screen.getByRole('tooltip').textContent).toBe('Detached: reports to you')
+    fireEvent.keyDown(document, { key: 'Escape' })
+    rerender(<SessionNodeItem node={{ ...node, archived }} currentId={undefined} now={0} onOpen={open} t={tEn} />)
+    expect(screen.queryByRole('img', { name: 'Detached: reports to you' })).toBeNull()
+  })
+
+  it.each([false, true])('names detached search rows by title, including archived=%s', (archived) => {
+    render(<SearchResultItem result={{ ...node, archived, workspace: 'Workspace' }} detached currentId={undefined}
+      onOpen={vi.fn()} onUnarchive={vi.fn()} useSessionAccess={allowAllAccess.useSessionAccess} t={tEn} />)
+    const row = screen.getByRole('treeitem', { name: /^Report title/ })
+    expect(row.getAttribute('aria-description')).toContain('Detached: reports to you')
+    if (archived) expect(row.getAttribute('aria-description')).toContain('Archived sessions cannot be opened.')
+  })
+
+  it.each(['session', 'search'] as const)('retains running status in the detached %s row name', (variant) => {
+    const running = { ...node, running: true }
+    render(variant === 'session'
+      ? <SessionNodeItem node={running} detached currentId={undefined} now={0} onOpen={vi.fn()} t={tEn} />
+      : <SearchResultItem result={{ ...running, workspace: 'Workspace' }} detached currentId={undefined}
+        onOpen={vi.fn()} onUnarchive={vi.fn()} useSessionAccess={allowAllAccess.useSessionAccess} t={tEn} />)
+    expect(screen.getByRole('treeitem', { name: /^Report title Running/ })).toBeTruthy()
+  })
+
+  it.each([
+    ['session', false], ['session', true], ['search', false], ['search', true],
+  ] as const)('contains pinned tooltip clicks for %s, archived=%s', (variant, archived) => {
+    const open = vi.fn()
+    const rename = vi.fn()
+    const unarchive = vi.fn()
+    const toggle = vi.fn()
+    const rowNode = { ...node, archived }
+    render(variant === 'session'
+      ? <SessionNodeItem node={rowNode} detached currentId={undefined} now={0} onOpen={open}
+        onRenameRequest={rename} expander={{ expanded: true, containsCurrent: false, toggle }} t={tEn} />
+      : <SearchResultItem result={{ ...rowNode, workspace: 'Workspace' }} detached currentId={undefined}
+        onOpen={open} onUnarchive={unarchive} useSessionAccess={allowAllAccess.useSessionAccess} t={tEn} />)
+    const marker = screen.getByRole('img', { name: 'Detached: reports to you' })
+    fireEvent.click(marker)
+    const bubble = screen.getByRole('tooltip')
+    expect(bubble.getAttribute('data-pinned')).toBe('true')
+    expect(screen.getByRole('treeitem').contains(bubble)).toBe(false)
+    fireEvent.click(bubble)
+    realDoubleClick(bubble)
+    expect(open).not.toHaveBeenCalled()
+    expect(rename).not.toHaveBeenCalled()
+    expect(unarchive).not.toHaveBeenCalled()
+    expect(toggle).not.toHaveBeenCalled()
+    expect(screen.getByRole('img', { name: 'Detached: reports to you' })).toBe(marker)
+    fireEvent.click(marker)
+    expect(screen.queryByRole('tooltip')).toBeNull()
+    fireEvent.click(screen.getByText('Report title'))
+    expect(open).toHaveBeenCalledOnce()
+  })
+
+  it('shows a localized indicator in a search result independently of archive state', () => {
+    const result: SearchResultNode = { ...node, workspace: 'Workspace', archived: true }
+    render(<SearchResultItem result={result} detached currentId={undefined} onOpen={vi.fn()}
+      onUnarchive={vi.fn()} useSessionAccess={allowAllAccess.useSessionAccess} t={t} />)
+    const marker = screen.getByRole('img', { name: '已脱离：向你汇报' })
+    expect(marker.parentElement?.nextElementSibling?.textContent).toBe('Report title')
+  })
+})
