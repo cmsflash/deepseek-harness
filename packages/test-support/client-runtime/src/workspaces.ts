@@ -209,6 +209,15 @@ export class TestWorkspaces implements IWorkspaces {
   }
 
   /**
+   * Record an attachment command; default does not publish a feed update.
+   * @param request - Child, expected parent, and reporting attachment.
+   */
+  async setSessionAttachment(request: Parameters<IWorkspaces['setSessionAttachment']>[0]): Promise<void> {
+    this.calls.push({ method: 'setSessionAttachment', args: [request] })
+    await (this.stubs.get('setSessionAttachment')?.(request) as Promise<void> | undefined)
+  }
+
+  /**
    * Set or clear a session's parent (recorded). The default mirrors the
    * production face's observable effect: the list state's parent links gain
    * or lose the child's entry.

@@ -10,6 +10,10 @@ import { RemoteError, type PeerId, type Principal, type RemoteInvocation } from 
 import WorkspaceRegistry from '@deepseek-ai/dsh-workspace'
 import type { WorkspaceId } from '@deepseek-ai/dsh-workspace/types'
 import RemoteAccessService, { type RemoteAccessCondition, type RemoteAccessRole } from '@deepseek-ai/dsh-api-remote-access'
+import TypertGatewayService from '@deepseek-ai/dsh-api-gateway'
+import TypertRegistry from '@deepseek-ai/dsh-typert-registry'
+import type { PeerScope } from '@deepseek-ai/dsh-typert-protocol'
+import type { RemoteAccessBinding } from '@deepseek-ai/dsh-api-remote-access'
 import WorkspaceController from '../src/index.ts'
 import { DEFAULT_WORKSPACE_DIRECTORY } from '../src/default-workspace.ts'
 import { WorkspaceFeed } from '../src/feed.ts'
@@ -51,28 +55,33 @@ function deferred<T>(): Deferred<T> {
   return { promise, resolve }
 }
 
-async function harness(options: { systemDocuments?: boolean } = {}) {
+async function harness(options: { systemDocuments?: boolean; gateway?: boolean } = {}) {
   const root = realpathSync.native(mkdtempSync(join(tmpdir(), 'dsh-workspace-controller-')))
   tempDirs.push(root)
   const ctx = new Context()
   roots.push(ctx)
   await ctx.plugin(SessionStore)
   await ctx.plugin(Storage)
-  ctx.storage.backend.register('memory', new MemoryStorageBackend())
+  const backend = new MemoryStorageBackend()
+  ctx.storage.backend.register('memory', backend)
   const storageDomain = new DomainFacility(ctx, { backend: 'memory', routes: {} })
   ctx.storage.mount('domain', storageDomain)
   ctx.provide('storageDomain', storageDomain)
   ctx.provide('sessionPersistence', { list: () => Promise.resolve([]) } as never)
   await ctx.plugin(WorkspaceRegistry)
   const dispose = (): void => {}
-  ctx.provide('typert', {
+  if (options.gateway === true) {
+    await ctx.plugin(TypertRegistry)
+    ctx.typert.resources.register('session', { field: 'sessionId' })
+  } else ctx.provide('typert', {
     lookups: { configure: () => dispose },
     contexts: { configureHost: () => dispose },
     resources: { register: vi.fn(() => dispose) },
   } as never)
   new RemoteAccessService(ctx)
   const controller = new WorkspaceController(ctx, options.systemDocuments === true ? {} : { documentsDirectory: root })
-  return { controller, ctx, root, storageDomain }
+  if (options.gateway === true) await ctx.plugin(TypertGatewayService)
+  return { controller, ctx, root, storageDomain, pool: backend.pool }
 }
 
 declare module '@deepseek-ai/dsh-typert-protocol' {
@@ -333,8 +342,8 @@ describe('WorkspaceController commands', () => {
 
 describe('WorkspaceController setSessionParent', () => {
   /** Two Workspaces: `home` with accounted Sessions a, b, c and a subagent child; `other` with d. */
-  async function nesting() {
-    const base = await harness()
+  async function nesting(gateway = false) {
+    const base = await harness({ gateway })
     const { controller, ctx, root } = base
     const home = await controller.create({ path: stageDir(root, 'nest-home') })
     const other = await controller.create({ path: stageDir(root, 'nest-other') })
@@ -351,6 +360,107 @@ describe('WorkspaceController setSessionParent', () => {
     const d = await account('d', other)
     return { ...base, home, other, account, a, b, c, d }
   }
+
+  it('requires both Session grants through the Gateway and filters nonempty attachment results and frames', async () => {
+    const { controller, ctx, pool, home, a, b, c } = await nesting(true)
+    await controller.setSessionParent({ sessionId: b, parentSessionId: a })
+    await controller.setSessionParent({ sessionId: c, parentSessionId: a })
+    await controller.setSessionAttachment({ sessionId: c, parentSessionId: a, attachment: 'detached' })
+    const editor: RemoteAccessRole<'session'> = {
+      name: 'test:attachment-editor', resource: 'session', actions: ['workspace/setSessionAttachment'],
+    }
+    const bindings: RemoteAccessBinding[] = [
+      { role: editor, resource: { kind: 'session', id: b } },
+      { role: FOLLOWER, resource: { kind: 'global' } },
+      { role: WORKSPACE_VIEWER, resource: { kind: 'workspace', id: home.workspace.workspaceId } },
+      { role: SESSION_VIEWER, resource: { kind: 'session', id: b } },
+    ]
+    ctx.remoteAccess.registerPolicy('test-guest', { bindings: () => bindings })
+    const abort = new AbortController()
+    const peer: PeerScope = {
+      id: 'attachment-peer' as PeerId, ctx, principal: { kind: 'test-guest', guest: 'attachment' },
+      interactions: 'answer', signal: abort.signal, dispose: async () => {},
+    }
+    const request = { sessionId: b, parentSessionId: a, attachment: 'detached' }
+    const invoke = () => ctx.typertGateway.invoke({ peer, namespace: 'workspace', method: 'setSessionAttachment', args: { request } })
+    const saved = structuredClone(pool.media.get('workspace')!.global)
+    const writes = vi.spyOn(pool, 'consumeInjectedFailure')
+    const changes = vi.fn()
+    ctx.on('domain/changed', changes)
+    try {
+      await expect(invoke()).rejects.toMatchObject({ code: 'remote-access/denied', details: { reason: 'no-allow' } })
+      expect(writes).not.toHaveBeenCalled()
+      expect(changes).not.toHaveBeenCalled()
+      expect(pool.media.get('workspace')!.global).toEqual(saved)
+      expect(ctx.workspaceRegistry.detachedSessionIds).toEqual([c])
+
+      bindings.push({ role: editor, resource: { kind: 'session', id: a } })
+      await expect(invoke()).resolves.toEqual({ detachedSessionIds: [b] })
+      expect(writes).toHaveBeenCalledOnce()
+      expect(pool.media.get('workspace')!.global).toMatchObject({ detachedSessionIds: [c, b] })
+      // The parent is admitted for editing, not for follow; the child's marker remains visible.
+      const iterator = (await ctx.typertGateway.stream({
+        peer, namespace: 'workspace', method: 'follow', args: {}, signal: abort.signal,
+      }))[Symbol.asyncIterator]()
+      try {
+        const baseline = await iterator.next()
+        expect(baseline.value).toEqual({ type: 'baseline', value: {
+          items: [expect.objectContaining({ workspaceId: home.workspace.workspaceId, sessionIds: [b] })],
+          archivedSessionIds: [], pinnedSessionIds: [], sessionParents: {}, detachedSessionIds: [b],
+        } })
+        await controller.pinSession({ sessionId: c })
+        expect((await iterator.next()).value).toEqual({ type: 'registry', value: {
+          workspaceIds: [home.workspace.workspaceId], archivedSessionIds: [], pinnedSessionIds: [],
+          sessionParents: {}, detachedSessionIds: [b],
+        } })
+      } finally {
+        abort.abort()
+        await iterator.return?.()
+      }
+    } finally {
+      abort.abort()
+      writes.mockRestore()
+    }
+  })
+
+  it('sets attachment with structured refusals and publishes coupled cleanup', async () => {
+    const { controller, a, b } = await nesting()
+    await expect(controller.setSessionAttachment({ sessionId: b, parentSessionId: a, attachment: 'detached' }))
+      .rejects.toMatchObject({ code: 'workspace/session-attachment-invalid', details: { reason: 'no-parent' } })
+    await controller.setSessionParent({ sessionId: b, parentSessionId: a })
+    await expect(controller.setSessionAttachment({ sessionId: b, parentSessionId: b, attachment: 'detached' }))
+      .rejects.toMatchObject({ code: 'workspace/session-attachment-invalid', details: { reason: 'parent-mismatch' } })
+    await expect(controller.setSessionAttachment({ sessionId: b, parentSessionId: a, attachment: 'detached' }))
+      .resolves.toEqual({ detachedSessionIds: [b] })
+    const abort = new AbortController()
+    const iterator = controller.follow(abort.signal)[Symbol.asyncIterator]()
+    try {
+      await expect(nextFrame(iterator)).resolves.toMatchObject({ type: 'baseline', value: {
+        sessionParents: { [b]: a }, detachedSessionIds: [b],
+      } })
+      await controller.setSessionParent({ sessionId: b, parentSessionId: null })
+      await expect(nextFrame(iterator)).resolves.toMatchObject({ type: 'registry', value: {
+        sessionParents: {}, detachedSessionIds: [],
+      } })
+    } finally {
+      abort.abort()
+      await iterator.return?.()
+    }
+  })
+
+  it('reads committed attachment state in a baseline opened during domain notification', async () => {
+    const { controller, ctx, a, b } = await nesting()
+    await controller.setSessionParent({ sessionId: b, parentSessionId: a })
+    const feed = new WorkspaceFeed(ctx)
+    const observed: unknown[] = []
+    ctx.on('domain/changed', (change) => {
+      if (change.domain === 'workspace' && change.table === '') observed.push(feed.baseline())
+    })
+    await controller.setSessionAttachment({ sessionId: b, parentSessionId: a, attachment: 'detached' })
+    expect(observed).toMatchObject([{ sessionParents: { [b]: a }, detachedSessionIds: [b] }])
+    await controller.setSessionAttachment({ sessionId: b, parentSessionId: a, attachment: 'detached' })
+    expect(observed).toHaveLength(1)
+  })
 
   it('nests, repeats, re-parents and clears, returning the complete links', async () => {
     const { controller, a, b, c } = await nesting()
@@ -427,35 +537,36 @@ describe('WorkspaceController setSessionParent', () => {
         type: 'baseline', value: { sessionParents: { [b]: a } },
       })
       await controller.setSessionParent({ sessionId: b, parentSessionId: null })
-      await expect(nextFrame(iterator)).resolves.toEqual({ type: 'parents', sessionParents: {} })
+      await expect(nextFrame(iterator)).resolves.toMatchObject({ type: 'registry', value: { sessionParents: {} } })
     } finally {
       abort.abort()
       await iterator.return?.()
     }
   })
 
-  it('publishes one parents frame per changed map and none for an equal one', async () => {
+  it('publishes one registry frame per changed map and none for an equal one', async () => {
     const { controller, home, other, a, b, c } = await nesting()
     const abort = new AbortController()
     const iterator = controller.follow(abort.signal)[Symbol.asyncIterator]()
     await expect(nextFrame(iterator)).resolves.toMatchObject({ type: 'baseline', value: { sessionParents: {} } })
 
     await controller.setSessionParent({ sessionId: b, parentSessionId: a })
-    await expect(nextFrame(iterator)).resolves.toEqual({ type: 'parents', sessionParents: { [b]: a } })
+    await expect(nextFrame(iterator)).resolves.toMatchObject({ type: 'registry', value: { sessionParents: { [b]: a } } })
     await controller.setSessionParent({ sessionId: c, parentSessionId: b })
-    await expect(nextFrame(iterator)).resolves.toEqual({ type: 'parents', sessionParents: { [b]: a, [c]: b } })
+    await expect(nextFrame(iterator)).resolves.toMatchObject({ type: 'registry', value: { sessionParents: { [b]: a, [c]: b } } })
     // A re-parent keeps the key count: the frame still follows the changed value.
     await controller.setSessionParent({ sessionId: c, parentSessionId: a })
-    await expect(nextFrame(iterator)).resolves.toEqual({ type: 'parents', sessionParents: { [b]: a, [c]: a } })
+    await expect(nextFrame(iterator)).resolves.toMatchObject({ type: 'registry', value: { sessionParents: { [b]: a, [c]: a } } })
 
     // Neither the repeated call nor the pin's registry write republishes an equal map.
     await controller.setSessionParent({ sessionId: c, parentSessionId: a })
     await controller.pinSession({ sessionId: a })
-    await expect(nextFrame(iterator)).resolves.toEqual({ type: 'pinned', pinnedSessionIds: [a] })
+    await expect(nextFrame(iterator)).resolves.toMatchObject({ type: 'registry', value: { pinnedSessionIds: [a] } })
 
     await controller.delete({ workspaceId: home.workspace.workspaceId })
-    await expect(nextFrame(iterator)).resolves.toEqual({ type: 'order', workspaceIds: [other.workspace.workspaceId] })
-    await expect(nextFrame(iterator)).resolves.toEqual({ type: 'parents', sessionParents: {} })
+    await expect(nextFrame(iterator)).resolves.toMatchObject({ type: 'registry', value: {
+      workspaceIds: [other.workspace.workspaceId], sessionParents: {}, detachedSessionIds: [],
+    } })
     await expect(nextFrame(iterator)).resolves.toEqual({ type: 'remove', workspaceId: home.workspace.workspaceId })
 
     abort.abort()
@@ -500,7 +611,7 @@ describe('WorkspaceController follow', () => {
         type: 'baseline', value: { pinnedSessionIds: [session.id] },
       })
       await controller.unpinSession({ sessionId: session.id })
-      await expect(nextFrame(iterator)).resolves.toEqual({ type: 'pinned', pinnedSessionIds: [] })
+      await expect(nextFrame(iterator)).resolves.toMatchObject({ type: 'registry', value: { pinnedSessionIds: [] } })
     } finally {
       abort.abort()
       await iterator.return?.()
@@ -513,16 +624,15 @@ describe('WorkspaceController follow', () => {
     const iterator = controller.follow(abort.signal)[Symbol.asyncIterator]()
     await expect(nextFrame(iterator)).resolves.toEqual({
       type: 'baseline',
-      value: { items: [], archivedSessionIds: [], pinnedSessionIds: [], sessionParents: {} },
+      value: { items: [], archivedSessionIds: [], pinnedSessionIds: [], sessionParents: {}, detachedSessionIds: [] },
     })
 
     const first = await controller.create({ path: stageDir(root, 'first') })
     await expect(nextFrame(iterator)).resolves.toMatchObject({
       type: 'upsert', workspace: { workspaceId: first.workspace.workspaceId },
     })
-    await expect(nextFrame(iterator)).resolves.toEqual({
-      type: 'order', workspaceIds: [first.workspace.workspaceId],
-    })
+    await expect(nextFrame(iterator)).resolves.toMatchObject({ type: 'registry', value: { workspaceIds: [first.workspace.workspaceId],
+    } })
     await controller.rename({ workspaceId: first.workspace.workspaceId, title: 'renamed' })
     await expect(nextFrame(iterator)).resolves.toMatchObject({
       type: 'upsert', workspace: { title: 'renamed' },
@@ -532,43 +642,36 @@ describe('WorkspaceController follow', () => {
     await expect(nextFrame(iterator)).resolves.toMatchObject({
       type: 'upsert', workspace: { workspaceId: second.workspace.workspaceId },
     })
-    await expect(nextFrame(iterator)).resolves.toEqual({
-      type: 'order', workspaceIds: [second.workspace.workspaceId, first.workspace.workspaceId],
-    })
+    await expect(nextFrame(iterator)).resolves.toMatchObject({ type: 'registry', value: { workspaceIds: [second.workspace.workspaceId, first.workspace.workspaceId],
+    } })
     await controller.insertBefore({
       workspaceId: first.workspace.workspaceId,
       beforeWorkspaceId: second.workspace.workspaceId,
     })
-    await expect(nextFrame(iterator)).resolves.toEqual({
-      type: 'order',
+    await expect(nextFrame(iterator)).resolves.toMatchObject({ type: 'registry', value: {
       workspaceIds: [first.workspace.workspaceId, second.workspace.workspaceId],
-    })
+    } })
 
     const session = ctx.sessions.create(SessionId('archived'), {
       meta: { cwd: first.workspace.path },
     })
     await controller.archiveSession({ sessionId: session.id })
-    await expect(nextFrame(iterator)).resolves.toEqual({
-      type: 'archived', archivedSessionIds: [session.id],
-    })
+    await expect(nextFrame(iterator)).resolves.toMatchObject({ type: 'registry', value: { archivedSessionIds: [session.id],
+    } })
     // Unarchive rides the same complete-set increment: no new frame type.
     await controller.unarchiveSession({ sessionId: session.id })
-    await expect(nextFrame(iterator)).resolves.toEqual({
-      type: 'archived', archivedSessionIds: [],
-    })
+    await expect(nextFrame(iterator)).resolves.toMatchObject({ type: 'registry', value: { archivedSessionIds: [],
+    } })
     await controller.pinSession({ sessionId: session.id })
-    await expect(nextFrame(iterator)).resolves.toEqual({
-      type: 'pinned', pinnedSessionIds: [session.id],
-    })
+    await expect(nextFrame(iterator)).resolves.toMatchObject({ type: 'registry', value: { pinnedSessionIds: [session.id],
+    } })
     // Unpin rides the same complete-set increment: no new frame type.
     await controller.unpinSession({ sessionId: session.id })
-    await expect(nextFrame(iterator)).resolves.toEqual({
-      type: 'pinned', pinnedSessionIds: [],
-    })
+    await expect(nextFrame(iterator)).resolves.toMatchObject({ type: 'registry', value: { pinnedSessionIds: [],
+    } })
     await controller.delete({ workspaceId: second.workspace.workspaceId })
-    await expect(nextFrame(iterator)).resolves.toEqual({
-      type: 'order', workspaceIds: [first.workspace.workspaceId],
-    })
+    await expect(nextFrame(iterator)).resolves.toMatchObject({ type: 'registry', value: { workspaceIds: [first.workspace.workspaceId],
+    } })
     await expect(nextFrame(iterator)).resolves.toEqual({
       type: 'remove', workspaceId: second.workspace.workspaceId,
     })
@@ -616,6 +719,7 @@ describe('WorkspaceController follow', () => {
         pinnedSessionIds: [shared.id],
         // The link whose child is hidden is withheld.
         sessionParents: { [friend.id]: shared.id },
+        detachedSessionIds: [],
       },
     })
 
@@ -625,23 +729,26 @@ describe('WorkspaceController follow', () => {
       type: 'upsert', workspace: { workspaceId: shownId, title: 'renamed', sessionIds: [friend.id, shared.id] },
     })
     await controller.unpinSession({ sessionId: secret.id })
-    await expect(nextFrame(iterator)).resolves.toEqual({ type: 'pinned', pinnedSessionIds: [shared.id] })
+    await expect(nextFrame(iterator)).resolves.toMatchObject({ type: 'registry', value: { pinnedSessionIds: [shared.id] } })
     await controller.setSessionParent({ sessionId: secret.id, parentSessionId: null })
-    await expect(nextFrame(iterator)).resolves.toEqual({ type: 'parents', sessionParents: { [friend.id]: shared.id } })
+    await expect(nextFrame(iterator)).resolves.toMatchObject({ type: 'registry', value: { sessionParents: { [friend.id]: shared.id } } })
     // The link whose parent is hidden is withheld too.
     await controller.setSessionParent({ sessionId: shared.id, parentSessionId: secret.id })
-    await expect(nextFrame(iterator)).resolves.toEqual({ type: 'parents', sessionParents: { [friend.id]: shared.id } })
+    await expect(nextFrame(iterator)).resolves.toMatchObject({ type: 'registry', value: { sessionParents: { [friend.id]: shared.id } } })
+    await controller.setSessionAttachment({ sessionId: shared.id, parentSessionId: secret.id, attachment: 'detached' })
+    await expect(nextFrame(iterator)).resolves.toMatchObject({ type: 'registry', value: {
+      sessionParents: { [friend.id]: shared.id }, detachedSessionIds: [shared.id],
+    } })
     await controller.unpinSession({ sessionId: shared.id })
     await controller.archiveSession({ sessionId: secret.id })
     await controller.archiveSession({ sessionId: shared.id })
-    await expect(nextFrame(iterator)).resolves.toEqual({ type: 'pinned', pinnedSessionIds: [] })
-    await expect(nextFrame(iterator)).resolves.toEqual({ type: 'archived', archivedSessionIds: [] })
-    await expect(nextFrame(iterator)).resolves.toEqual({ type: 'archived', archivedSessionIds: [shared.id] })
+    await expect(nextFrame(iterator)).resolves.toMatchObject({ type: 'registry', value: { pinnedSessionIds: [] } })
+    await expect(nextFrame(iterator)).resolves.toMatchObject({ type: 'registry', value: { archivedSessionIds: [] } })
+    await expect(nextFrame(iterator)).resolves.toMatchObject({ type: 'registry', value: { archivedSessionIds: [shared.id] } })
     await controller.delete({ workspaceId: hiddenId })
-    await expect(nextFrame(iterator)).resolves.toEqual({ type: 'order', workspaceIds: [shownId] })
+    await expect(nextFrame(iterator)).resolves.toMatchObject({ type: 'registry', value: { workspaceIds: [shownId] } })
     await controller.delete({ workspaceId: shownId })
-    await expect(nextFrame(iterator)).resolves.toEqual({ type: 'order', workspaceIds: [] })
-    await expect(nextFrame(iterator)).resolves.toEqual({ type: 'parents', sessionParents: {} })
+    await expect(nextFrame(iterator)).resolves.toMatchObject({ type: 'registry', value: { workspaceIds: [], sessionParents: {}, detachedSessionIds: [] } })
     await expect(nextFrame(iterator)).resolves.toEqual({ type: 'remove', workspaceId: shownId })
 
     abort.abort()
@@ -683,7 +790,7 @@ describe('WorkspaceController follow', () => {
     expect(ids(empty)).toEqual([])
     // A deletion reaches only a Client that received the Workspace.
     await controller.delete({ workspaceId: third })
-    await expect(nextFrame(iterator)).resolves.toEqual({ type: 'order', workspaceIds: [] })
+    await expect(nextFrame(iterator)).resolves.toMatchObject({ type: 'registry', value: { workspaceIds: [] } })
 
     // Restored: the Workspace reappears through an ordinary upsert.
     allowedWorkspaces.add(first)
@@ -714,9 +821,9 @@ describe('WorkspaceController follow', () => {
     const pending = iterator.next()
     const created = await controller.create({ path: stageDir(root, 'visible') })
     await expect(pending).resolves.toMatchObject({ value: { type: 'upsert' } })
-    await expect(iterator.next()).resolves.toEqual({
+    await expect(iterator.next()).resolves.toMatchObject({
       done: false,
-      value: { type: 'order', workspaceIds: [created.workspace.workspaceId] },
+      value: { type: 'registry', value: { workspaceIds: [created.workspace.workspaceId] } },
     })
 
     const closing = iterator.next()

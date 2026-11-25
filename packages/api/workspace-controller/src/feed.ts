@@ -1,6 +1,7 @@
 /** Reconnect-safe Workspace baseline and increment producer. */
 
 import type { Context } from '@deepseek-ai/cordis'
+import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import { Deque } from '@deepseek-ai/dsh-deque'
 import type { DomainChanged } from '@deepseek-ai/dsh-storage-domain'
 import type { Workspace, WorkspaceRecord } from '@deepseek-ai/dsh-workspace'
@@ -53,19 +54,21 @@ function changedWorkspaceView(workspaceId: string, value: unknown): WorkspaceVie
 export class WorkspaceFeed {
   private readonly followers = new Set<WorkspaceFollower>()
   private knownIds: Set<string>
-  private order: readonly string[]
-  private archived: readonly string[]
-  private pinned: readonly string[]
+  private order: readonly WorkspaceId[]
+  private archived: readonly SessionId[]
+  private pinned: readonly SessionId[]
+  private detached: readonly SessionId[]
   private parents: WorkspaceSessionParents
 
   /** @param ctx - Host context containing the authoritative Workspace registry. */
   constructor(private readonly ctx: Context) {
     const baseline = ctx.workspaceRegistry.list()
     this.knownIds = new Set(baseline.map(workspace => String(workspace.id)))
-    this.order = baseline.map(workspace => String(workspace.id))
-    this.archived = ctx.workspaceRegistry.archivedSessionIds.map(String)
-    this.pinned = ctx.workspaceRegistry.pinnedSessionIds.map(String)
+    this.order = baseline.map(workspace => workspace.id)
+    this.archived = ctx.workspaceRegistry.archivedSessionIds
+    this.pinned = ctx.workspaceRegistry.pinnedSessionIds
     this.parents = ctx.workspaceRegistry.sessionParents
+    this.detached = ctx.workspaceRegistry.detachedSessionIds
     ctx.on('domain/changed', (change: DomainChanged) => { this.changed(change) })
     ctx.effect(() => () => {
       for (const follower of this.followers) follower.close()
@@ -79,10 +82,15 @@ export class WorkspaceFeed {
    */
   baseline(): Required<WorkspaceBaseline> {
     return {
-      items: this.ctx.workspaceRegistry.list().map(workspaceView),
-      archivedSessionIds: [...this.ctx.workspaceRegistry.archivedSessionIds],
-      pinnedSessionIds: [...this.ctx.workspaceRegistry.pinnedSessionIds],
-      sessionParents: { ...this.ctx.workspaceRegistry.sessionParents },
+      items: this.order.map((id) => {
+        const workspace = this.ctx.workspaceRegistry.get(id)
+        if (workspace === undefined) throw new Error(`committed Workspace registry references missing Workspace "${id}"`)
+        return workspaceView(workspace)
+      }),
+      archivedSessionIds: [...this.archived],
+      pinnedSessionIds: [...this.pinned],
+      sessionParents: { ...this.parents },
+      detachedSessionIds: [...this.detached],
     }
   }
 
@@ -109,7 +117,7 @@ export class WorkspaceFeed {
     if (change.table === '') {
       if (change.operation !== 'put') return
       const state = workspaceDomainState.parse(change.value)
-      const nextOrder = state.workspaceIds.map(String)
+      const nextOrder = state.workspaceIds
       const orderChanged = !sameStrings(this.order, nextOrder)
       for (const id of state.workspaceIds) {
         if (this.knownIds.has(id)) continue
@@ -120,22 +128,26 @@ export class WorkspaceFeed {
         this.knownIds.add(id)
         this.publish({ type: 'upsert', workspace: workspaceView(workspace) })
       }
+      const registryChanged = orderChanged
+        || !sameStrings(this.archived, state.archivedSessionIds)
+        || !sameStrings(this.pinned, state.pinnedSessionIds)
+        || !sameParents(this.parents, state.sessionParents)
+        || !sameStrings(this.detached, state.detachedSessionIds)
       this.order = nextOrder
-      if (orderChanged) this.publish({ type: 'order', workspaceIds: [...state.workspaceIds] })
-      const nextArchived = state.archivedSessionIds.map(String)
-      if (!sameStrings(this.archived, nextArchived)) {
-        this.archived = nextArchived
-        this.publish({ type: 'archived', archivedSessionIds: [...state.archivedSessionIds] })
-      }
-      const nextPinned = state.pinnedSessionIds.map(String)
-      if (!sameStrings(this.pinned, nextPinned)) {
-        this.pinned = nextPinned
-        this.publish({ type: 'pinned', pinnedSessionIds: [...state.pinnedSessionIds] })
-      }
-      if (!sameParents(this.parents, state.sessionParents)) {
-        this.parents = state.sessionParents
-        this.publish({ type: 'parents', sessionParents: { ...state.sessionParents } })
-      }
+      this.archived = state.archivedSessionIds
+      this.pinned = state.pinnedSessionIds
+      this.parents = state.sessionParents
+      this.detached = state.detachedSessionIds
+      if (registryChanged) this.publish({
+        type: 'registry',
+        value: {
+          workspaceIds: [...state.workspaceIds],
+          archivedSessionIds: [...state.archivedSessionIds],
+          pinnedSessionIds: [...state.pinnedSessionIds],
+          sessionParents: { ...state.sessionParents },
+          detachedSessionIds: [...state.detachedSessionIds],
+        },
+      })
       return
     }
     if (change.table !== 'workspaces') return

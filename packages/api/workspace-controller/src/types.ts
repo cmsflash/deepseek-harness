@@ -6,7 +6,7 @@
  */
 
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
-import type { SessionActivity, SessionParentRefusal, WorkspaceId } from '@deepseek-ai/dsh-workspace/types'
+import type { SessionAttachment, SessionAttachmentRefusal, SessionActivity, SessionParentRefusal, WorkspaceId } from '@deepseek-ai/dsh-workspace/types'
 
 export type { SessionParentRefusal, WorkspaceId } from '@deepseek-ai/dsh-workspace/types'
 export type {
@@ -55,6 +55,12 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
       readonly sessionId: SessionId
       readonly parentSessionId: SessionId
       readonly reason: SessionParentRefusal
+    }
+    /** Attachment was refused before writing; refresh the relationship before retrying. */
+    'workspace/session-attachment-invalid': {
+      readonly sessionId: SessionId
+      readonly parentSessionId: SessionId
+      readonly reason: SessionAttachmentRefusal
     }
     /** The verb needs an interaction the composed backend does not serve. */
     'directory-picker/unavailable': { readonly capability: string }
@@ -171,6 +177,26 @@ export interface WorkspaceSessionParentsValue {
   readonly sessionParents: WorkspaceSessionParents
 }
 
+/** Set reporting attachment while retaining the expected current parent. */
+export interface WorkspaceSetSessionAttachmentRequest {
+  readonly sessionId: SessionId
+  readonly parentSessionId: SessionId
+  readonly attachment: SessionAttachment
+}
+
+/** Complete detached set after an attachment mutation. */
+export interface WorkspaceAttachmentValue {
+  readonly detachedSessionIds: readonly SessionId[]
+}
+
+/** One atomic registry-global commit, including coupled parent and attachment state. */
+export interface WorkspaceRegistryValue extends WorkspaceAttachmentValue {
+  readonly workspaceIds: readonly WorkspaceId[]
+  readonly archivedSessionIds: readonly SessionId[]
+  readonly pinnedSessionIds: readonly SessionId[]
+  readonly sessionParents: WorkspaceSessionParents
+}
+
 /** Complete reconnect baseline for Workspace browser state. */
 export interface WorkspaceBaseline {
   readonly items: readonly WorkspaceView[]
@@ -179,6 +205,8 @@ export interface WorkspaceBaseline {
   readonly pinnedSessionIds: readonly SessionId[]
   /** Complete parent links. The Host always sends it; an absent field means no links. */
   readonly sessionParents?: WorkspaceSessionParents
+  /** Host always sends it; older baselines default to attached. */
+  readonly detachedSessionIds?: readonly SessionId[]
 }
 
 /**
@@ -187,6 +215,7 @@ export interface WorkspaceBaseline {
  * in the generation; it is a change, not a new generation's opening frame.
  */
 export type WorkspaceFollowIncrement =
+  | { readonly type: 'registry'; readonly value: WorkspaceRegistryValue }
   | { readonly type: 'replace'; readonly value: WorkspaceBaseline }
   | { readonly type: 'upsert'; readonly workspace: WorkspaceView }
   | { readonly type: 'remove'; readonly workspaceId: WorkspaceId }

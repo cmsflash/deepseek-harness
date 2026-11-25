@@ -135,7 +135,11 @@ interface Workspace {
 
 ## 会话嵌套
 
-注册表保存一个注册表全局的映射 `sessionParents`，从子会话 id 指向其所嵌套会话的 id；分组界面读取它以把一个会话显示在另一个会话之下，它既不改变工作区记账也不改变顺序。控制器的[传输类型](../../packages/api/workspace-controller/src/types.ts)定义了 `WorkspaceSetSessionParentRequest`（携带子会话的 `sessionId`，以及为会话 id 或以 `null` 清除关联的 `parentSessionId`）和 `WorkspaceSessionParentsValue`（调用之后的完整映射）。再次设置已存的值会成功且不写入。子会话或父会话未知时以 `session/not-found` 失败；其余拒绝以带 `reason` 的 `workspace/session-parent-invalid` 失败：会话以自身为父（`self`）、任一方来源为子代理（`subagent`）、会话不在任何工作区的记账中（`unaccounted`）、两个会话属于不同工作区（`cross-workspace`），或关联会形成环（`cycle`）。不查看归档状态，因此归档保留关联，已归档会话也可以建立关联。任一会话离开其工作区的持久记账时关联即结束：随工作区删除、在解除挂接或清理之后，或在下一次启动时。`workspace/follow` 的 baseline 携带该映射，每次对它的已提交变更之后由 `parents` 帧携带完整映射。
+注册表保存一个注册表全局的映射 `sessionParents`，从子会话 id 指向其所嵌套会话的 id；分组界面读取它以把一个会话显示在另一个会话之下，它既不改变工作区记账也不改变顺序。控制器的[传输类型](../../packages/api/workspace-controller/src/types.ts)定义了 `WorkspaceSetSessionParentRequest`（携带子会话的 `sessionId`，以及为会话 id 或以 `null` 清除关联的 `parentSessionId`）和 `WorkspaceSessionParentsValue`（调用之后的完整映射）。再次设置已存的值会成功且不写入。子会话或父会话未知时以 `session/not-found` 失败；其余拒绝以带 `reason` 的 `workspace/session-parent-invalid` 失败：会话以自身为父（`self`）、任一方来源为子代理（`subagent`）、会话不在任何工作区的记账中（`unaccounted`）、两个会话属于不同工作区（`cross-workspace`），或关联会形成环（`cycle`）。不查看归档状态，因此归档保留关联，已归档会话也可以建立关联。任一会话离开其工作区的持久记账时关联即结束：随工作区删除、在解除挂接或清理之后，或在下一次启动时。`workspace/follow` 的 baseline 携带该映射，每次有变化的提交之后由 `registry` 帧将映射与其他全局字段一起携带。
+
+## 汇报附属状态
+
+`SessionAttachment` 为 `'attached' | 'detached'`。`WorkspaceSetSessionAttachmentRequest` 携带子会话 `sessionId`、其预期当前父会话 `parentSessionId` 与 `attachment`；`WorkspaceAttachmentValue` 返回完整数组 `detachedSessionIds`。`SessionAttachmentRefusal` 为 `'no-parent' | 'parent-mismatch' | 'invalid-child'`。`WorkspaceRegistryValue` 携带同一次提交的工作区顺序、归档与置顶集合、父子关联和脱离 id。[注册表](../../packages/workspace/workspace/README.zh.md#api-behavior)负责校验与持久化；[控制器](../../packages/api/workspace-controller/README.zh.md)负责访问过滤、原子跟随交付以及仅返回回执的 Client 命令。
 
 ## 归档准入
 
@@ -398,6 +402,13 @@ Host service backing the generated `ctx.remote.workspace` namespace.
 @Remote('setSessionParent') setSessionParent(request: WorkspaceSetSessionParentRequest): Promise<WorkspaceSessionParentsValue>
 
 /**
+ * Set whether a nested Session reports to its Manager or to the human.
+ * @param request - Child, expected current parent, and attachment; mismatch refuses without writing.
+ * @returns the complete caller-visible detached set. No authority or notification policy changes.
+ */
+@Remote({ resources: { session: request => [request.sessionId, request.parentSessionId] } }) async setSessionAttachment(request: WorkspaceSetSessionAttachmentRequest): Promise<WorkspaceAttachmentValue>
+
+/**
  * Stream a complete Workspace baseline followed by ordered increments. A
  * non-owner receives only the Workspaces and Sessions `allows()` admits.
  * When a delivered Workspace is no longer admitted at its next change or
@@ -612,6 +623,21 @@ unpinSession(sessionId: SessionId): Promise<void>
  * @throws {WorkspaceSessionParentInvalidError} when the link is refused.
  */
 setSessionParent(sessionId: SessionId, parentSessionId: SessionId | undefined): Promise<void>
+
+/**
+ * Set reporting attachment without changing nesting, order, or descendants.
+ * The expected parent is checked inside the registry queue. Refusals and failed
+ * storage writes publish nothing; a storage rejection may follow replacement,
+ * so reopen the backend/domain and inspect saved state before retrying.
+ * Equal state performs no write. New Sessions
+ * and forks do not inherit attachment. Removing a parent link clears its marker.
+ * @param sessionId - Known, accounted, non-subagent child.
+ * @param parentSessionId - Expected current parent, not a new parent.
+ * @param attachment - Reporting relationship to record.
+ * @returns the complete committed detached set.
+ * @throws {WorkspaceSessionAttachmentInvalidError} when the relationship is absent or invalid.
+ */
+setSessionAttachment( sessionId: SessionId, parentSessionId: SessionId, attachment: SessionAttachment, ): Promise<readonly SessionId[]>
 
 /**
  * Resolve by canonical directory path without creating or mutating a
