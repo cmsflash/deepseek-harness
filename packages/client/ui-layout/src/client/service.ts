@@ -52,11 +52,20 @@ export interface ILayout {
   openRightbar(track: boolean, fullscreen: boolean): void
   /** Report the right panel as hidden: no track, no handle. */
   closeRightbar(): void
+  /**
+   * Register how the right panel's occupant closes it. The phone layout calls
+   * it when a back action leaves the fullscreen panel for the conversation.
+   * A later registration replaces an earlier one.
+   * @param dismiss - closes the shown right panel; a no-op while it is hidden.
+   * @returns the disposer, which removes this registration only.
+   */
+  registerRightbarDismiss(dismiss: () => void): () => void
 }
 
 /** Cross-plugin panel-action face (ctx.layout). */
 export class LayoutController implements ILayout {
   private navigation = new AbortController()
+  private rightbarDismiss: (() => void) | undefined
 
   /**
    * @param panels - actions of the instance shared with the root entry.
@@ -106,5 +115,18 @@ export class LayoutController implements ILayout {
   /** Report the right panel as hidden: no track, no handle. */
   closeRightbar(): void {
     this.panels.closeRightbar()
+  }
+
+  /** @returns the disposer of this dismiss registration. */
+  registerRightbarDismiss(dismiss: () => void): () => void {
+    this.rightbarDismiss = dismiss
+    return () => {
+      if (this.rightbarDismiss === dismiss) this.rightbarDismiss = undefined
+    }
+  }
+
+  /** Close the right panel through its registered occupant, if any. */
+  dismissRightbar(): void {
+    this.rightbarDismiss?.()
   }
 }

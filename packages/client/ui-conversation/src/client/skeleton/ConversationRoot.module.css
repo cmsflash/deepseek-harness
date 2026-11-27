@@ -689,7 +689,7 @@
    This block sits last because it overrides shorthands the base rules set:
    equal specificity, so source order decides. */
 @media (max-width: 640px) {
-  /* The frame's drawer opener floats over this corner. */
+  /* The frame's back button floats over this corner. */
   .header {
     padding-left: 60px;
   }

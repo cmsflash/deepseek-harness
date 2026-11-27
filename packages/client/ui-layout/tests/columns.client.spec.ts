@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  clampWidth, computeColumns, DRAWER_MAX, DRAWER_PEEK, MOBILE_MAX,
+  clampWidth, computeColumns, MOBILE_MAX,
 } from '../src/client/columns.ts'
 
 describe('clampWidth', () => {
@@ -56,32 +56,11 @@ describe('computeColumns — mobile overlay layout', () => {
   // Real device widths: iPhone SE/13 mini, iPhone 14/15, and a large phone.
   const PHONES = [375, 390, 414]
 
-  it('gives center the whole viewport, with no rail and no right track', () => {
+  it('gives the thread list and the conversation the whole viewport each, with no right track', () => {
     for (const viewport of PHONES) {
-      expect(computeColumns(viewport, 0, 0)).toEqual({ sidebar: 0, center: viewport, rightbar: 0, overlay: true })
-    }
-  })
-
-  it('never lets an open sidebar or right panel steal width from the conversation', () => {
-    for (const viewport of PHONES) {
-      const drawerOpen = computeColumns(viewport, 280, 864)
-      expect(drawerOpen.center).toBe(viewport)
-      expect(drawerOpen.rightbar).toBe(0)
-      expect(drawerOpen.overlay).toBe(true)
-      // The drawer floats: it is sized, but it is not part of the flow.
-      expect(drawerOpen.sidebar).toBeGreaterThan(0)
-    }
-  })
-
-  it('sizes the drawer to leave a dismissable strip of the conversation', () => {
-    // Narrow phones are peek-bound; from DRAWER_MAX + DRAWER_PEEK up the
-    // ceiling binds instead, so the drawer never becomes a second column.
-    const narrow = 320
-    expect(computeColumns(narrow, 280, 0).sidebar).toBe(narrow - DRAWER_PEEK)
-    expect(computeColumns(390, 280, 0).sidebar).toBe(DRAWER_MAX)
-    expect(computeColumns(MOBILE_MAX, 280, 0).sidebar).toBe(DRAWER_MAX)
-    for (const viewport of PHONES) {
-      expect(viewport - computeColumns(viewport, 280, 0).sidebar).toBeGreaterThanOrEqual(DRAWER_PEEK)
+      for (const sidebar of [0, 280]) {
+        expect(computeColumns(viewport, sidebar, 864)).toEqual({ sidebar: viewport, center: viewport, rightbar: 0, overlay: true })
+      }
     }
   })
 

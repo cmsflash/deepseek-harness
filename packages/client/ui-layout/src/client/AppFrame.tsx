@@ -16,31 +16,58 @@
  * leave that column uncovered.
  *
  * A mobile solve (columns.ts MOBILE_MAX) collapses the grid to the single
- * center track and moves the sidebar to an overlay drawer with a dismiss
- * scrim. The slot occupants keep their tree positions and React identity
- * across that switch — only the frame's own geometry changes — so nothing
- * remounts when a window crosses the breakpoint.
+ * center track and stacks two full-screen views in it: the thread list (the
+ * sidebar slot) and the thread page (center and right columns). The thread
+ * page slides over the list; its back control and, in an iOS home-screen
+ * app, a swipe from the left edge return one level (phone-history.ts owns
+ * the browser history that the platform back actions use). The slot
+ * occupants keep their tree positions and React identity across that
+ * switch — only the frame's own geometry changes — so nothing remounts when
+ * a window crosses the breakpoint.
  *
  * Everything arrives through the framework shares — zero cordis or framework
  * imports, zero self-made hooks.
  */
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties, ReactNode } from 'react'
-import { IconPanelLeftOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconChevronLeftOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
 import type {
-  PropsLocale, PropsRenderSlots, PropsRuntime, PropsStore,
+  InjectFace, PropsLocale, PropsRenderSlots, PropsRuntime, PropsStore,
 } from '@deepseek-ai/dsh-client-ui-slots'
 import { CENTER_MIN, clampWidth, computeColumns, RIGHTBAR_DEFAULT_RATIO, RIGHTBAR_MAX_RATIO, RIGHTBAR_MIN, SIDEBAR_AUTO_COLLAPSE, SIDEBAR_COLLAPSED, SIDEBAR_DEFAULT } from './columns.ts'
 import { DocumentTitle } from './DocumentTitle.tsx'
 import type { createLayoutStore } from './stores.ts'
 import css from './AppFrame.module.css'
 
-/** Full composed props: runtime share + child-slot render share + store share. */
+/** Frame commands supplied by the layout plugin. */
+export interface AppFrameInjected {
+  /** Leave the phone layout's current view for the one below it. */
+  navigateBack: () => void
+}
+
+/** Full composed props: runtime share + child-slot render share + store share + inject face. */
 export type AppFrameProps =
   & PropsRuntime<'root'>
   & PropsRenderSlots<'sidebar' | 'main' | 'rightbar' | 'shell.bottom' | 'shell.overlay' | 'shell.leading'>
   & PropsStore<ReturnType<typeof createLayoutStore>>
   & PropsLocale<'common'>
+  & InjectFace<AppFrameInjected>
+
+/** Touch distance from the left edge that starts a back swipe. */
+const EDGE_SWIPE_ZONE = 24
+/** Share of the frame width past which a released back swipe completes. */
+const EDGE_SWIPE_COMMIT_RATIO = 0.35
+/** Release speed in px/ms past which a back swipe completes at any distance. */
+const EDGE_SWIPE_FLICK = 0.5
+
+/**
+ * Whether the page runs as an iOS home-screen app, which has no browser edge
+ * swipe of its own. Browsers with their own back gesture reach the phone
+ * views through popstate instead.
+ */
+function standaloneIos(): boolean {
+  return (navigator as Navigator & { standalone?: boolean }).standalone === true
+}
 
 /** Center column grid item (session-body building block). */
 function CenterColumn(props: { children?: ReactNode }) {
@@ -135,6 +162,7 @@ export function AppFrame({
   usePanelInfo,
   actions,
   renderSlot,
+  navigateBack,
   t,
 }: AppFrameProps) {
   const layoutInfo = useStore(state => state.layoutInfo)
@@ -276,6 +304,88 @@ export function AppFrame({
   // --dsh-frame-leading-clearance under the same collapsed condition.
   const leading = useMemo(() => renderSlot('shell.leading', {}), [renderSlot])
   const leadingMounted = darwin && sidebarCollapsed
+  const listShown = cols.overlay && !sidebarCollapsed
+  const threadPageRef = useRef<HTMLDivElement | null>(null)
+  const swipeLevel = cols.overlay && !listShown
+    ? layoutInfo.rightbarShown ? 'panel' : 'thread'
+    : null
+  const navigateBackRef = useRef(navigateBack)
+  navigateBackRef.current = navigateBack
+
+  // The back swipe follows the finger through a frame custom property, not
+  // React state, so a drag renders nothing. Release animates to the end
+  // position, then clears the attributes; a completed swipe leaves the views
+  // in the state the back action selected, so clearing moves nothing.
+  useEffect(() => {
+    const frame = frameRef.current
+    const page = threadPageRef.current
+    /* v8 ignore next -- both refs are attached by effect time: the frame and the thread page render unconditionally. */
+    if (frame === null || page === null) return
+    if (swipeLevel === null || !standaloneIos()) return
+    let gesture: { x: number; y: number; time: number; dx: number; tracking: boolean | null } | null = null
+    let settle: ReturnType<typeof setTimeout> | null = null
+    const clear = () => {
+      delete frame.dataset.swipe
+      delete frame.dataset.swipeRelease
+      frame.style.removeProperty('--dsh-phone-swipe')
+    }
+    const onStart = (event: TouchEvent) => {
+      const touch = event.touches[0]
+      if (event.touches.length !== 1 || touch === undefined || touch.clientX > EDGE_SWIPE_ZONE || settle !== null) return
+      gesture = { x: touch.clientX, y: touch.clientY, time: event.timeStamp, dx: 0, tracking: null }
+    }
+    const onMove = (event: TouchEvent) => {
+      const touch = event.touches[0]
+      if (gesture === null || touch === undefined) return
+      const dx = touch.clientX - gesture.x
+      const dy = touch.clientY - gesture.y
+      if (gesture.tracking === null) {
+        if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return
+        gesture.tracking = dx > Math.abs(dy)
+        if (!gesture.tracking) { gesture = null; return }
+        frame.dataset.swipe = swipeLevel
+      }
+      event.preventDefault()
+      gesture.dx = Math.max(0, dx)
+      gesture.time = event.timeStamp
+      frame.style.setProperty('--dsh-phone-swipe', `${gesture.dx}px`)
+    }
+    const onEnd = (event: TouchEvent) => {
+      const ended = gesture
+      gesture = null
+      if (ended?.tracking !== true) return
+      const width = frame.getBoundingClientRect().width
+      const elapsed = Math.max(1, event.timeStamp - ended.time)
+      const touch = event.changedTouches[0]
+      const speed = touch === undefined ? 0 : (touch.clientX - ended.x - ended.dx) / elapsed
+      const commit = event.type === 'touchend'
+        && (ended.dx > width * EDGE_SWIPE_COMMIT_RATIO || (ended.dx > 0 && speed > EDGE_SWIPE_FLICK))
+      frame.dataset.swipeRelease = ''
+      frame.style.setProperty('--dsh-phone-swipe', commit ? `${width}px` : '0px')
+      if (commit) navigateBackRef.current()
+      settle = setTimeout(() => { settle = null; clear() }, 400)
+    }
+    page.addEventListener('touchstart', onStart, { passive: true })
+    page.addEventListener('touchmove', onMove, { passive: false })
+    page.addEventListener('touchend', onEnd)
+    page.addEventListener('touchcancel', onEnd)
+    return () => {
+      page.removeEventListener('touchstart', onStart)
+      page.removeEventListener('touchmove', onMove)
+      page.removeEventListener('touchend', onEnd)
+      page.removeEventListener('touchcancel', onEnd)
+      // A completed swipe changes the level, which reruns this effect: the
+      // pending settle still owns clearing the attributes it set.
+      if (settle !== null) {
+        const pending = settle
+        settle = null
+        clearTimeout(pending)
+        setTimeout(clear, 400)
+      } else {
+        clear()
+      }
+    }
+  }, [swipeLevel])
 
   return (
     <div
@@ -303,44 +413,40 @@ export function AppFrame({
       <div
         className={css.sidebarCol}
         style={cols.overlay ? { width: cols.sidebar } : undefined}
-        data-open={cols.overlay && !sidebarCollapsed ? true : undefined}
-        // A closed drawer is off-screen decoration: keep it out of the tab
-        // order and off the accessibility tree rather than leaving focusable
-        // controls behind the conversation. React 18's JSX types predate the
-        // `inert` property, so it goes through as the plain DOM attribute.
+        data-open={listShown || undefined}
+        // The view off screen stays out of the tab order and off the
+        // accessibility tree. React 18's JSX types predate the `inert`
+        // property, so it goes through as the plain DOM attribute.
         aria-hidden={cols.overlay && sidebarCollapsed ? true : undefined}
         {...(cols.overlay && sidebarCollapsed ? { inert: '' } : {})}
       >
         {sidebar}
       </div>
-      {/* Scrim: only an open mobile drawer has anything to dismiss. */}
-      {cols.overlay && !sidebarCollapsed && (
-        <div
-          className={css.scrim}
-          role="presentation"
-          onClick={() => { actions.toggleSidebar() }}
-        />
-      )}
-      {/* The mobile drawer leaves no rail behind, so the frame owns the only
-          control that can bring it back. It sits here rather than in the
-          conversation header because the hero state renders no header, and a
-          closed drawer with no opener strands the user in one session. */}
-      {cols.overlay && sidebarCollapsed && (
-        <button
-          type="button"
-          className={css.drawerOpener}
-          aria-label={t('sidebar.open')}
-          onClick={() => { actions.toggleSidebar() }}
-        >
-          <IconPanelLeftOutlineRegular size={18} />
-        </button>
-      )}
-      <>
+      {/* The thread page groups the center and right columns so the phone
+          layout can slide them as one view; elsewhere it generates no box. */}
+      <div
+        ref={threadPageRef}
+        className={css.threadPage}
+        aria-hidden={listShown || undefined}
+        {...(listShown ? { inert: '' } : {})}
+      >
+        {/* The frame owns the back control rather than the conversation
+            header because the hero state renders no header. */}
+        {cols.overlay && (
+          <button
+            type="button"
+            className={css.backButton}
+            aria-label={t('back')}
+            onClick={() => { navigateBack() }}
+          >
+            <IconChevronLeftOutlineRegular size={20} />
+          </button>
+        )}
         <CenterColumn>{main}</CenterColumn>
         <RightbarColumn>
           {renderSlot('rightbar', { width: normal.rightbar, viewportWidth: viewport, canShow: normal.rightbar > 0 })}
         </RightbarColumn>
-      </>
+      </div>
       <div className={css.bottomRow} data-shell-bottom>
         {renderSlot('shell.bottom', {})}
       </div>

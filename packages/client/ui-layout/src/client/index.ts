@@ -16,6 +16,8 @@ import type { HostObservable, SnapshotSelectorHook } from '@deepseek-ai/dsh-clie
 import type { PanelInfo } from './service.ts'
 import { AppFrame } from './AppFrame.tsx'
 import { createLayoutStore } from './stores.ts'
+import { phoneDepth, syncPhoneHistory } from './phone-history.ts'
+import type { AppFrameInjected } from './AppFrame.tsx'
 import { LayoutController } from './service.ts'
 import type { ShortcutCommandId } from '@deepseek-ai/dsh-client-shortcuts/client'
 import { en, ja, es, fr, de, ru, pt, zh } from './shortcut-locales.ts'
@@ -174,6 +176,18 @@ export function apply(ctx: ClientContext): void {
     }
     const layout = new LayoutController(instance.actions, id =>
       ctx.slots.entries('main').some(entry => entry.options.key === id), panelInfo)
+    const readFacts = () => instance.getSnapshot().layoutInfo
+    const navigateBack = (): void => {
+      const depth = phoneDepth(readFacts())
+      if (depth === 2) layout.dismissRightbar()
+      else if (depth === 1) instance.actions.showNarrowSidebar(true)
+    }
+    const disposeHistory = syncPhoneHistory({
+      read: readFacts,
+      subscribe: listener => instance.subscribe(listener),
+      showList: (shown) => { instance.actions.showNarrowSidebar(shown) },
+      dismissRightbar: () => { layout.dismissRightbar() },
+    }, window)
     const disposePanelInfo = ctx.slots.provideRoot({ hooks: { panelInfo: layout.panelInfo } })
     const disposeService = ctx.reflect.provide('layout', layout)
     const disposeRegistration = ctx.slots.register({
@@ -188,6 +202,7 @@ export function apply(ctx: ClientContext): void {
         'shell.leading': { kind: 'single', scope: 'root' },
       },
       store,
+      inject: (): AppFrameInjected => ({ navigateBack }),
     }, AppFrame)
     const disposeShortcut = ctx.shortcuts.register({
       id: 'sidebar.left.toggle' as ShortcutCommandId, label: () => t('toggle'), aliases: ['sidebar', 'toggle left sidebar'],
@@ -205,6 +220,7 @@ export function apply(ctx: ClientContext): void {
     retainMainPanels()
     return () => {
       disposeShortcut()
+      disposeHistory()
       layout.dispose()
       disposePanels()
       disposeRegistration()

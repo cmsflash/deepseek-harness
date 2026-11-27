@@ -132,8 +132,8 @@ it('places dynamic Session menu rows by order among the shipped ones and removes
     })
     try {
       const touchConsole = watchConsole(touchPage)
+      // A phone page opens on the thread list.
       await touchPage.goto(scaffold.authenticatedUrl, { waitUntil: 'load' })
-      await touchPage.getByRole('button', { name: 'Open sidebar', exact: true }).first().click()
       const touchRow = touchPage.getByRole('treeitem').filter({ has: touchPage.getByText(SESSION_TITLE, { exact: true }) })
       const touchTrigger = touchRow.getByRole('button', { name: `Session actions for ${SESSION_TITLE}` })
       await touchTrigger.waitFor()

@@ -234,36 +234,20 @@ export async function connectFreshWorkspace(page: Page, root: string, name = 'wo
 }
 
 /**
- * {@link connectFreshWorkspace} at phone widths, where the overlay layout keeps
- * the workspace picker's entry inside the sidebar drawer: open the drawer,
- * connect, then dismiss it through its scrim so the conversation is
- * pointer-reachable again. A wider frame renders no drawer opener, so the
- * extra round trip is a no-op there.
+ * {@link connectFreshWorkspace} at phone widths, where the workspace picker's
+ * entry lives in the thread list view: return to the list first when the
+ * conversation is on screen. Connecting selects the workspace's session, which
+ * opens the conversation again. A wider frame always shows the sidebar column.
  * @param page - the page under test.
  * @param root - host directory the workspace folder is staged in (the scaffold's `workspaceCwd`).
  * @param name - folder name staged and adopted as the workspace.
  */
 export async function connectFreshWorkspacePhone(page: Page, root: string, name = 'workspace'): Promise<void> {
-  const opener = page.locator('[class*="frame"] [class*="drawerOpener"]')
-  if (!(await opener.isVisible())) {
-    await connectFreshWorkspace(page, root, name)
-    return
-  }
-  await opener.click()
+  const frame = page.locator('[class*="frame"]').first()
+  const listHidden = await frame.evaluate(element => element.hasAttribute('data-overlay')
+    && element.querySelector('[class*="sidebarCol"][data-open]') === null)
+  if (listHidden) await page.getByRole('button', { name: 'Back', exact: true }).click()
   await connectFreshWorkspace(page, root, name)
-  // Picking the workspace selects its session, and the phone layout collapses
-  // the drawer on that navigation. A drawer that stayed open is dismissed
-  // through the scrim's visible strip beside the drawer, the part a user can
-  // reach; the open drawer covers the scrim's middle.
-  const scrim = page.locator('[class*="frame"] > [role="presentation"][class*="scrim"]')
-  if (await scrim.count() !== 0) {
-    const peek = await page.evaluate(() => {
-      const drawer = document.querySelector('[class*="frame"] [class*="sidebarCol"]')!.getBoundingClientRect()
-      return { x: (drawer.right + window.innerWidth) / 2, y: window.innerHeight / 2 }
-    })
-    await scrim.click({ position: peek })
-    await scrim.waitFor({ state: 'detached', timeout: 10_000 })
-  }
 }
 
 /**

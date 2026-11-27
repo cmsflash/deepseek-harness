@@ -42,7 +42,7 @@ Windows Electron 的 `data-windows-titlebar` 标记在所有列上方预留顶�
 
 根元素通过 `--dsh-frame-top-clearance` 发布顶栏占用量（macOS 为 48px，Windows 为标题栏高度），通过 `--dsh-frame-overlay-top` 为弹窗和菜单再留出 20px。原生全屏时浮层起点降为 20px；弹窗仍保留自身 24px 的最小边距。`--dsh-frame-chrome-top` 让模态遮罩不绘制 Windows 顶栏区域，全屏时归零。覆盖整个视口的模态层仍阻挡背景点击。普通浏览器文档不发布这些值。
 
-在不超过 `MOBILE_MAX`（640px）时，求解器不再产生栏式布局：会话占据整个视口，右栏没有轨道，侧边栏脱离网格流，成为一个浮在会话之上、背后带关闭遮罩的抽屉。控制栏没有移动端形态，因此关闭的抽屉解析为零宽度，由框架自行渲染打开控件——hero 状态下不存在会话头部，所以框架掌握着回到会话列表的唯一途径。`Columns.overlay` 标记该布局，此时 `Columns.sidebar` 报告的是抽屉宽度而非轨道宽度；抽屉受 `DRAWER_MAX` 限宽，并始终留出至少 `DRAWER_PEEK` 的会话可触及。没有轨道的右栏仍锚定在框架右边缘、位于会话所在行之上，因此在手机上打开的右侧面板以 ui-sidebar-right 的全屏呈现覆盖会话，所有手机宽度都会选择这一呈现。跨越断点只改变框架几何：槽位占用者保持树位置与 React 身份，任何宽度偏好都不会被改写，因此加宽后恢复先前的栏式布局。每次 `selectPanel` 调用——包括每次会话导航最终到达的 `null`——都会关闭已打开的抽屉，使其不再遮挡目标；在两个断点之间，侧边栏是用户主动打开的一栏，导航不会碰它。
+在不超过 `MOBILE_MAX`（640px）时，求解器不再产生栏式布局：会话列表（`sidebar` slot）与会话页（中栏和右栏）成为单一轨道中的两个全视口视图，同一时刻只显示其中一个。以手机宽度打开的页面从会话列表开始，重新加载则保留其历史记录项所记录的视图；选中会话时会话页滑入并覆盖列表。`Columns.overlay` 标记该布局，此时无论显示哪个视图，`Columns.sidebar` 都报告视口宽度，因此列表不会重新排版。右栏没有轨道，锚定在会话页右边缘，因此在手机上打开的右侧面板以 ui-sidebar-right 的全屏呈现覆盖会话。手机视图构成会话列表、会话、全屏右侧面板三层栈。hero 状态下不存在会话头部，所以框架在会话左上角渲染返回控件。列表之上的每一层视图各占一个浏览器历史记录项，因此 Android 的返回操作和 Safari 的边缘滑动会关闭顶层视图；iOS 主屏幕应用没有浏览器手势，框架自行跟踪从左边缘开始的滑动，并让顶层视图跟随手指移动。关闭全屏右侧面板通过其占用方以 `ctx.layout.registerRightbarDismiss` 注册的回调完成。跨越断点只改变框架几何：槽位占用者保持树位置与 React 身份，任何宽度偏好都不会被改写，因此加宽后恢复先前的栏式布局。每次 `selectPanel` 调用——包括每次会话导航最终到达的 `null`——都会离开会话列表并显示目标；在两个断点之间，侧边栏是用户主动打开的一栏，导航不会碰它。
 
 ### 主题呈现
 
@@ -58,7 +58,7 @@ Windows Electron 的 `data-windows-titlebar` 标记在所有列上方预留顶�
 
 `selectPanel(id)` 在改变选中态前检查实时 `main` 注册表；缺失的 key 会抛错并保留当前面板。`beginNavigation()` 为异步 UI 导航返回 abort signal。后续调用、有效面板选择（包括重复选择）或布局释放会中止该 signal，但不取消底层会话创建。消费方在提交导航或搬移草稿前检查 signal。
 
-一次注册声明框架的子 slot，并绑定 `ctx.layout` 的 `selectPanel`、`toggleSidebar`、`openRightbar(track, fullscreen)` 与 `closeRightbar`。同一个 root 存储把 `panelInfo` 选中态与 `layoutInfo` 测量、宽度偏好、呈现报告分开。`ctx.layout.panelInfo` 与标准 `usePanelInfo` hook 共用同一个选中态来源；AppFrame 订阅引用稳定的布局对象。`rightbar` owner 提供实际 `width`、`viewportWidth`，以及表示能否以普通模式呈现的 `canShow`；占用方在空间不足时执行确定性的收起，变宽不自行重新展开。全屏隐藏宽度手柄，但不自行释放占用方要求保留的轨道。AppFrame 保持各列容器挂载。右栏的 root 控制器仅在选中会话界面时，经 `SessionProvider` 渲染 `rightbar.session`；内容卸载时的报告释放轨道。独立的标题组件仅在会话界面可见时使用所选会话标题，以构建配置的产品标题或本地化 `common.brand.localBuild` 为回退值；语言变化会更新该回退值。主题呈现器是第二个 effect：从解析后的快照做纯 DOM 写入——初始状态经 getter 读取一次，此后仅事件驱动，不经过 React。它先应用调色板、字号、字体列表与 token 变量，再把渲染出的背景测量为唯一的颜色依据。全屏呈现禁用网格和手柄过渡；占用方完全覆盖框架后才报告新的列布局。退出全屏时，框架先保持无过渡并安装目标布局：关闭移除右轨道，恢复保留右轨道。后续普通几何操作恢复正常过渡。
+一次注册声明框架的子 slot，并绑定 `ctx.layout` 的 `selectPanel`、`toggleSidebar`、`openRightbar(track, fullscreen)`、`closeRightbar` 与 `registerRightbarDismiss`。同一个 root 存储把 `panelInfo` 选中态与 `layoutInfo` 测量、宽度偏好、呈现报告分开。`ctx.layout.panelInfo` 与标准 `usePanelInfo` hook 共用同一个选中态来源；AppFrame 订阅引用稳定的布局对象。`rightbar` owner 提供实际 `width`、`viewportWidth`，以及表示能否以普通模式呈现的 `canShow`；占用方在空间不足时执行确定性的收起，变宽不自行重新展开。全屏隐藏宽度手柄，但不自行释放占用方要求保留的轨道。AppFrame 保持各列容器挂载。右栏的 root 控制器仅在选中会话界面时，经 `SessionProvider` 渲染 `rightbar.session`；内容卸载时的报告释放轨道。独立的标题组件仅在会话界面可见时使用所选会话标题，以构建配置的产品标题或本地化 `common.brand.localBuild` 为回退值；语言变化会更新该回退值。主题呈现器是第二个 effect：从解析后的快照做纯 DOM 写入——初始状态经 getter 读取一次，此后仅事件驱动，不经过 React。它先应用调色板、字号、字体列表与 token 变量，再把渲染出的背景测量为唯一的颜色依据。全屏呈现禁用网格和手柄过渡；占用方完全覆盖框架后才报告新的列布局。退出全屏时，框架先保持无过渡并安装目标布局：关闭移除右轨道，恢复保留右轨道。后续普通几何操作恢复正常过渡。
 
 </details>
 

@@ -16,7 +16,7 @@ Web GUI 在任何宽度下都保持分栏布局。`computeColumns` 只有一个�
 
 `computeColumns` 拥有第二个断点 `MOBILE_MAX`（640px，即 deepsuite SM 档位）。在该宽度及以下，求解器不再产出分栏布局：会话栏占据整个 viewport，右栏解析为零，侧边栏离开栅格流成为浮层抽屉。`Columns` 携带 `overlay` 判别字段，在该布局下 `Columns.sidebar` 报告的是抽屉宽度而非栏宽度，因此 AppFrame 不需要第二个几何来源。控制栏没有移动端形态——390px 屏幕上常驻 56px 的框架装饰正是最初的问题——所以关闭的移动端侧边栏解析为零。
 
-抽屉的尺寸会为会话留出一条可见条带：低于上限时按 `DRAWER_PEEK`（56px）计算，高于上限时取 `DRAWER_MAX`（320px）。这条带使遮罩成为明确的关闭目标，而不是一层不可见的全屏浮层；它同时是真实指针实际能触达的区域——点在遮罩的几何中心会落到抽屉上。
+[手机视图栈](2026-11-26-phone-view-stack.zh.md)此后已用全屏视图取代抽屉、它的可见条带、遮罩与打开控件；本决策的其余部分仍然有效。抽屉的尺寸曾为会话留出一条可见条带：低于上限时按 `DRAWER_PEEK`（56px）计算，高于上限时取 `DRAWER_MAX`（320px）。这条带使遮罩成为明确的关闭目标，而不是一层不可见的全屏浮层；它同时是真实指针实际能触达的区域——点在遮罩的几何中心会落到抽屉上。
 
 打开控件由 AppFrame 自身渲染。它更自然的归属是会话头部，但 hero 状态不渲染头部，因而关闭的抽屉会让用户失去返回会话列表的入口。frame 是两种状态下都存在的唯一元素。由于抽屉覆盖会话，从抽屉发起的导航也必须关闭它。每次 UI 导航最终都会调用 `ctx.layout.selectPanel()`——按 id 选中全局面板，或以 `null` 选中会话界面（`uiWorkspace.openSession` 与 `startSession` 都这样调用），因此 `LayoutController.selectPanel` 在提交选择之后通过 store 的 `collapseNarrowSidebar` 动作关闭抽屉，任何导航调用方都无需知道抽屉的存在。
 

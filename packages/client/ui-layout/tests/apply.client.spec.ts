@@ -13,6 +13,7 @@ import { apply, inject, LayoutController } from '@deepseek-ai/dsh-client-ui-layo
 import { apply as nodeApply } from '@deepseek-ai/dsh-client-ui-layout'
 import type { MainPanelId } from '../src/client/service.ts'
 import type { createLayoutStore } from '../src/client/stores.ts'
+import type { AppFrameInjected } from '../src/client/AppFrame.tsx'
 
 const owners = new Set<Fiber>()
 let originalRootStyle: string | null
@@ -98,7 +99,6 @@ describe('ui-layout client apply', () => {
     const fiber = ctx.plugin({ inject: [...inject], apply })
     await fiber.await()
     const entry = slots.entries('root')[0]!
-    expect(entry.inject).toBeUndefined()
     const handle = entry.store as ReturnType<typeof createLayoutStore>
     const instance = handle.create()
     expect(handle.create()).toBe(instance)
@@ -122,6 +122,32 @@ describe('ui-layout client apply', () => {
     const pending = layout.beginNavigation()
     await fiber.dispose()
     expect(pending.aborted).toBe(true)
+  })
+
+  it('injects a phone back action that leaves the top view and does nothing on the list', async () => {
+    const { ctx, slots } = await bench()
+    const fiber = ctx.plugin({ inject: [...inject], apply })
+    await fiber.await()
+    const entry = slots.entries('root')[0]!
+    const instance = (entry.store as ReturnType<typeof createLayoutStore>).create()
+    const injected: unknown = entry.inject!()
+    const { navigateBack } = injected as AppFrameInjected
+    const layout = ctx.get('layout') as LayoutController
+    const dismiss = vi.fn()
+    const disposeDismiss = layout.registerRightbarDismiss(dismiss)
+    instance.actions.setViewportWidth(390)
+    instance.actions.showNarrowSidebar(false)
+    instance.actions.openRightbar(false, true)
+    navigateBack()
+    expect(dismiss).toHaveBeenCalledOnce()
+    instance.actions.closeRightbar()
+    navigateBack()
+    expect(instance.getSnapshot().layoutInfo.narrowExpanded).toBe(true)
+    navigateBack()
+    expect(instance.getSnapshot().layoutInfo.narrowExpanded).toBe(true)
+    expect(dismiss).toHaveBeenCalledOnce()
+    disposeDismiss()
+    await fiber.dispose()
   })
 
   it('theme presenter applies the initial snapshot, follows theme/change, and unwinds on dispose', async () => {

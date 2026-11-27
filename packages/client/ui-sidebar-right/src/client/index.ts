@@ -149,6 +149,9 @@ export function apply(ctx: ClientContext): void {
       show(undefined)
     }
   }, 'ui-sidebar-right: on-screen Session')
+  ctx.effect(() => layout.registerRightbarDismiss(() => {
+    if (controller.isExpanded()) controller.toggleExpanded()
+  }), 'ui-sidebar-right: phone back action')
   const disposeRegistry = ctx.reflect.provide('sidebarRightTabs', tabs)
   const disposeService = ctx.reflect.provide('sidebarRight', controller)
   // Registered first, so it tears down last: the faces outlive every seat and

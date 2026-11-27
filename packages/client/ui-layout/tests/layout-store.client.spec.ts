@@ -25,6 +25,22 @@ describe('createLayoutStore', () => {
     })
   })
 
+  it('starts a phone-width page on the thread list and sets the narrow override directly', () => {
+    vi.stubGlobal('innerWidth', 390)
+    const { store, actions } = createLayoutStore().create()
+    expect(store.getSnapshot().layoutInfo.narrowExpanded).toBe(true)
+    actions.showNarrowSidebar(false)
+    expect(store.getSnapshot().layoutInfo.narrowExpanded).toBe(false)
+    actions.showNarrowSidebar(true)
+    expect(store.getSnapshot().layoutInfo.narrowExpanded).toBe(true)
+  })
+
+  it('restores the conversation when a phone page reloads its history entry', () => {
+    vi.stubGlobal('innerWidth', 390)
+    vi.stubGlobal('history', { state: { dshPhoneDepth: 1 } })
+    expect(createLayoutStore().create().store.getSnapshot().layoutInfo.narrowExpanded).toBe(false)
+  })
+
   it('creates independent instances without browser persistence', () => {
     const write = vi.spyOn(Storage.prototype, 'setItem')
     const a = createLayoutStore().create()
@@ -229,6 +245,14 @@ describe('right panel', () => {
     actions.closeRightbar()
     actions.openRightbar(true, false)
     expect(store.getSnapshot().layoutInfo.narrowExpanded).toBe(false)
+  })
+
+  it('keeps a phone on its thread list when the right panel opens', () => {
+    const { store, actions } = createLayoutStore().create()
+    actions.setViewportWidth(390)
+    actions.showNarrowSidebar(true)
+    actions.openRightbar(false, true)
+    expect(store.getSnapshot().layoutInfo.narrowExpanded).toBe(true)
   })
 
   it('keeps the wide sidebar preference and never opens a closed right panel on resize', () => {

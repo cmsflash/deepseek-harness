@@ -4,6 +4,7 @@
  */
 import { defineStore, type EngineStoreHandle } from '@deepseek-ai/dsh-client-store'
 import type { MainPanelId } from './service.ts'
+import { historyEntryDepth } from './phone-history.ts'
 import {
   clampWidth, MOBILE_MAX, RIGHTBAR_DEFAULT_RATIO, RIGHTBAR_MAX_RATIO, RIGHTBAR_MIN,
   SIDEBAR_AUTO_COLLAPSE, SIDEBAR_DEFAULT, SIDEBAR_MAX, SIDEBAR_MIN,
@@ -26,9 +27,11 @@ type LayoutInfo = {
   /** Last positive frame measurement; window width bootstraps the first render. */
   viewportWidth: number
   /**
-   * Manual re-expansion of the auto-collapsed narrow sidebar. Below MOBILE_MAX
-   * the same override opens the drawer over the conversation instead; that is
-   * the only layout in which navigating away has to close the sidebar.
+   * Manual re-expansion of the auto-collapsed narrow sidebar. At or below
+   * MOBILE_MAX the same flag selects the thread list view over the
+   * conversation view; that is the only layout in which navigating away has
+   * to close the sidebar. A page that opens at a phone width starts on the
+   * thread list, unless it reloads a history entry the conversation owned.
    */
   narrowExpanded: boolean
   /**
@@ -65,6 +68,7 @@ type LayoutActions = {
   retainMainPanels: (draft: LayoutState, panelIds: readonly string[]) => void
   setSidebar: (draft: LayoutState, px: number) => void
   toggleSidebar: (draft: LayoutState) => void
+  showNarrowSidebar: (draft: LayoutState, shown: boolean) => void
   collapseNarrowSidebar: (draft: LayoutState) => void
   setViewportWidth: (draft: LayoutState, width: number) => void
   setRightbar: (draft: LayoutState, px: number) => void
@@ -88,7 +92,7 @@ export function createLayoutStore(): EngineStoreHandle<LayoutState, LayoutAction
       layoutInfo: {
         sidebar: SIDEBAR_DEFAULT,
         viewportWidth: window.innerWidth,
-        narrowExpanded: false,
+        narrowExpanded: window.innerWidth <= MOBILE_MAX && historyEntryDepth(window.history.state) === 0,
         rightbar: null,
         rightbarShown: false,
         rightbarTrack: false,
@@ -116,6 +120,10 @@ export function createLayoutStore(): EngineStoreHandle<LayoutState, LayoutAction
         if (d.layoutInfo.viewportWidth < SIDEBAR_AUTO_COLLAPSE) d.layoutInfo.narrowExpanded = !d.layoutInfo.narrowExpanded
         else d.layoutInfo.sidebar = d.layoutInfo.sidebar === 0 ? SIDEBAR_DEFAULT : 0
       },
+      showNarrowSidebar: (d, shown: boolean) => {
+        d.layoutInfo.rightbarInstant = false
+        d.layoutInfo.narrowExpanded = shown
+      },
       // Navigating dismisses the sidebar only where it COVERS the destination.
       // A narrow-but-not-mobile sidebar is a column the user opened beside the
       // conversation: closing it there would undo a deliberate choice on every
@@ -141,7 +149,9 @@ export function createLayoutStore(): EngineStoreHandle<LayoutState, LayoutAction
         if (!d.layoutInfo.rightbarShown || d.layoutInfo.rightbarTrack !== track || d.layoutInfo.rightbarFullscreen !== fullscreen) {
           d.layoutInfo.rightbarInstant = d.layoutInfo.rightbarFullscreen && !fullscreen
         }
-        if (!d.layoutInfo.rightbarShown && d.layoutInfo.viewportWidth < SIDEBAR_AUTO_COLLAPSE) d.layoutInfo.narrowExpanded = false
+        // A phone's thread list is a separate view, not a column the panel needs room from.
+        if (!d.layoutInfo.rightbarShown && d.layoutInfo.viewportWidth < SIDEBAR_AUTO_COLLAPSE
+          && d.layoutInfo.viewportWidth > MOBILE_MAX) d.layoutInfo.narrowExpanded = false
         d.layoutInfo.rightbar ??= Math.max(RIGHTBAR_MIN, Math.round(d.layoutInfo.viewportWidth * RIGHTBAR_DEFAULT_RATIO))
         d.layoutInfo.rightbarShown = true
         d.layoutInfo.rightbarTrack = track

@@ -14,7 +14,7 @@ Each change is one commit on the `zhuoran` branch, which is rebased onto upstrea
 
 - **Billed cost everywhere**: each model call records its cost in USD when the provider publishes prices. A call through a gateway is priced at the origin model's rates when its model ID names that model, such as `anthropic/claude-opus-5`. A model the installed price list lacks can declare its rates in the profile ([`cost`](packages/llm/llm-pi-ai/README.md)). The Web UI shows cost per turn, per session, and per subagent, and sidebar rows can show each session's total spend including its subagents (View options → Show → Total cost).
 - **Collapsed steps**: a Work details mode that folds the steps behind each reply into one summary row with the time, model calls, tokens, and changed lines and files, while the reply stays visible. In this mode the server sends folded steps only when you expand them, so scrolling back through a long session takes far fewer page loads.
-- **Phone layout**: on screens 640px wide or narrower, the UI is one full-width column and the session list opens as a drawer.
+- **Phone layout**: on screens 640px wide or narrower, the thread list and each thread are separate full-screen views; the back button, Android back, or a swipe from the left edge (iPhone) leaves a thread or a fullscreen panel.
 - **Offline reading**: already-loaded content supports local read-only access.
 - **Image row**: inside the composer's **+** menu, an Image row under File opens a picker limited to PNG, JPEG, WebP, and GIF images, so phones offer their photo library instead of a file browser.
 - **Per-model reasoning effort**: switching to a model restores the effort you last used with it.

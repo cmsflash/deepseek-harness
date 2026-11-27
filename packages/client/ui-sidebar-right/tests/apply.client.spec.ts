@@ -65,8 +65,10 @@ async function boot(shortcuts: Partial<Shortcuts> = {}) {
       return () => { dictionaries.delete(ns) }
     }),
   }
+  const dismissals: Array<() => void> = []
   const layout = {
     openRightbar: vi.fn(), closeRightbar: vi.fn(),
+    registerRightbarDismiss: vi.fn((dismiss: () => void) => { dismissals.push(dismiss); return () => {} }),
     panelInfo: createSnapshotStore<{ activePanelId: string | null }>({ activePanelId: null }),
   }
   const current = createSnapshotStore<{ key: SessionId | undefined }>({ key: undefined })
@@ -90,7 +92,7 @@ async function boot(shortcuts: Partial<Shortcuts> = {}) {
     if (entry.inject === undefined) throw new Error(`expected ${entry.name} to inject`)
     return entry.inject(SESSION)
   }
-  return { ctx, slots, registered, dictionaries, layout, current, resources, fiber, seat, injectedOf }
+  return { ctx, slots, registered, dictionaries, layout, current, resources, fiber, seat, injectedOf, dismissals }
 }
 
 describe('ui-sidebar-right apply', () => {
@@ -160,6 +162,27 @@ describe('ui-sidebar-right apply', () => {
     expect(ctx.sidebarRight.mounted.getSnapshot()).toBe(SESSION)
     current.set({ key: undefined })
     expect(ctx.sidebarRight.mounted.getSnapshot()).toBeUndefined()
+  })
+
+  it('registers a phone back action that collapses only an expanded on-screen panel', async () => {
+    const { ctx, current, seat, dismissals } = await boot()
+    expect(dismissals).toHaveLength(1)
+    const dismiss = dismissals[0]!
+    current.set({ key: SESSION })
+    const handle = seat('rightbar.session').store as ReturnType<typeof createSidebarRightStore>
+    const instance = handle.create(SESSION)
+    instance.actions.open(SESSION)
+    dismiss()
+    expect(ctx.sidebarRight.isExpanded()).toBe(false)
+    instance.actions.setExpanded(SESSION, true)
+    // Collapsing focuses no pane, so the focus helper only receives the document.
+    vi.stubGlobal('document', {})
+    try {
+      dismiss()
+    } finally {
+      vi.unstubAllGlobals()
+    }
+    expect(ctx.sidebarRight.isExpanded()).toBe(false)
   })
 
   it('hands the panel seat the frame report, the room rule, the opens, the observable registry, and the Tab domain', async () => {

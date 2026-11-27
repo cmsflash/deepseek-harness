@@ -214,48 +214,90 @@
   -webkit-app-region: no-drag;
 }
 
-/* Mobile: the sidebar leaves the grid flow and slides over the conversation.
-   The column keeps its own transform transition because the frame's track
-   animation no longer moves it. */
+/* Desktop: the thread page generates no box, so its columns stay grid items. */
+.threadPage {
+  display: contents;
+}
+
+/* Mobile: the thread list and the thread page are two full-screen views in
+   the single track. The thread page slides over the list from the right, and
+   the list moves a fraction of that distance underneath, as on iOS. Each view
+   keeps its own transform transition because the frame's track animation no
+   longer moves it. */
 .frame[data-overlay] .sidebarCol {
   position: absolute;
   grid-area: 1 / 1 / 2 / -1;
   inset-block: 0;
   inset-inline-start: 0;
-  z-index: 30;
-  transform: translateX(-100%);
+  z-index: 1;
+  transform: translateX(-30%);
   border-right: none;
-  box-shadow: var(--dsw-shadow-lv3);
   transition: transform var(--ds-transition-duration-slow) var(--ds-ease-in-out);
 }
 
 .frame[data-overlay] .sidebarCol[data-open] {
-  transform: translateX(0);
+  transform: none;
+}
+
+.frame[data-overlay] .threadPage {
+  position: relative;
+  grid-area: 1 / 1 / 2 / -1;
+  z-index: 2;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+  background: var(--dsw-alias-bg-base);
+  transition: transform var(--ds-transition-duration-slow) var(--ds-ease-in-out);
+}
+
+.frame[data-overlay]:not([data-sidebar-collapsed]) .threadPage {
+  transform: translateX(100%);
 }
 
 /* The solver gives the right column no track on mobile, so the column sits
-   zero-width at the frame's right edge over the conversation's row, where a
-   zero track would put it. An opened panel is fullscreen at every phone width
-   (ui-sidebar-right) and covers the conversation from that edge. */
+   zero-width at the thread page's right edge. An opened panel is fullscreen
+   at every phone width (ui-sidebar-right) and covers the conversation from
+   that edge. */
 .frame[data-overlay] .rightbarCol {
   position: absolute;
-  grid-area: 1 / 1 / 2 / -1;
   inset-block: 0;
   inset-inline-end: 0;
   width: 0;
 }
 
-.scrim {
-  position: absolute;
-  inset: 0;
-  z-index: 25;
-  background: var(--dsw-alias-bg-mask-1);
+/* A back swipe (AppFrame) moves the top view with the finger through
+   --dsh-phone-swipe; the release eases it to the end position. */
+.frame[data-overlay][data-swipe] .threadPage,
+.frame[data-overlay][data-swipe] .sidebarCol,
+.frame[data-overlay][data-swipe] .rightbarCol {
+  transition: none;
+}
+
+.frame[data-overlay][data-swipe='thread'] .threadPage {
+  box-shadow: var(--dsw-shadow-lv3);
+  transform: translateX(var(--dsh-phone-swipe, 0px));
+}
+
+.frame[data-overlay][data-swipe='thread'] .sidebarCol {
+  transform: translateX(calc(-30% + var(--dsh-phone-swipe, 0px) * 0.3));
+}
+
+.frame[data-overlay][data-swipe='panel'] .rightbarCol {
+  z-index: 40;
+  transform: translateX(var(--dsh-phone-swipe, 0px));
+}
+
+.frame[data-overlay][data-swipe][data-swipe-release] .threadPage,
+.frame[data-overlay][data-swipe][data-swipe-release] .sidebarCol,
+.frame[data-overlay][data-swipe][data-swipe-release] .rightbarCol {
+  transition: transform var(--ds-transition-duration-slow) var(--ds-ease-in-out);
 }
 
 /* Floats over the conversation's own top-left chrome: the frame cannot
    reserve a row without knowing what the center column drew there. 44px is
    the minimum comfortable touch target. */
-.drawerOpener {
+.backButton {
   position: absolute;
   top: 8px;
   inset-inline-start: 8px;
@@ -275,13 +317,17 @@
 }
 
 @media (hover: hover) {
-  .drawerOpener:hover {
+  .backButton:hover {
     background: var(--dsw-alias-interactive-bg-hover);
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .frame[data-overlay] .sidebarCol {
+  .frame[data-overlay] .sidebarCol,
+  .frame[data-overlay] .threadPage,
+  .frame[data-overlay][data-swipe][data-swipe-release] .threadPage,
+  .frame[data-overlay][data-swipe][data-swipe-release] .sidebarCol,
+  .frame[data-overlay][data-swipe][data-swipe-release] .rightbarCol {
     transition: none;
   }
 }

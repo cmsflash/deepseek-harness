@@ -1,0 +1,22 @@
+# Bilingual-pair consistency record for 2026-11-26-phone-view-stack.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/architecture/2026-11-26-phone-view-stack.md
+/agent-note-phone-view-stack-with-platform-back-actions:
+  en: 5f87d42a4e48c520
+  zh: 05b51e7aa8ff184d
+/agent-note-phone-view-stack-with-platform-back-actions/problem:
+  en: bc4504a051731c40
+  zh: d7d1ce1cbd67b0e8
+/agent-note-phone-view-stack-with-platform-back-actions/decision:
+  en: 82ab86e152813bfd
+  zh: 452fae2b3a3ba4dc
+/agent-note-phone-view-stack-with-platform-back-actions/alternatives-considered:
+  en: 60967762495726e2
+  zh: ba600d12daa2c2b6
+/agent-note-phone-view-stack-with-platform-back-actions/testing:
+  en: 1f8c61e9e584903b
+  zh: 3ee2341d1dada8f9
+/agent-note-phone-view-stack-with-platform-back-actions/consequences:
+  en: b4369b7cb6309f0a
+  zh: 9729877b635bc446

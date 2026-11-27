@@ -9,6 +9,7 @@ function fakePanels(): PanelActions {
     retainMainPanels: vi.fn(),
     setSidebar: vi.fn(),
     toggleSidebar: vi.fn(),
+    showNarrowSidebar: vi.fn(),
     collapseNarrowSidebar: vi.fn(),
     setViewportWidth: vi.fn(),
     setRightbar: vi.fn(),
@@ -33,6 +34,22 @@ describe('LayoutController', () => {
     expect(panels.closeRightbar).toHaveBeenCalledTimes(1)
     // The drag width stays the frame's own business, never the caller's.
     expect(panels.setRightbar).not.toHaveBeenCalled()
+  })
+
+  it('dismisses the right panel through the latest live registration only', () => {
+    const service = new LayoutController(fakePanels(), () => true, createSnapshotStore({ activePanelId: null }))
+    service.dismissRightbar()
+    const first = vi.fn()
+    const second = vi.fn()
+    const disposeFirst = service.registerRightbarDismiss(first)
+    const disposeSecond = service.registerRightbarDismiss(second)
+    disposeFirst()
+    service.dismissRightbar()
+    expect(first).not.toHaveBeenCalled()
+    expect(second).toHaveBeenCalledOnce()
+    disposeSecond()
+    service.dismissRightbar()
+    expect(second).toHaveBeenCalledOnce()
   })
 
   it('can toggle the sidebar immediately after construction', () => {

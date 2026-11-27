@@ -508,7 +508,6 @@ describe('web e2e: markdown tables fill the column, wide ones break out and scro
     onTestFailed(() => saveFailureShot(touchPage, `markdown-wide-table-touch-${engine}`))
     await touchPage.goto(scaffold.authenticatedUrl, { waitUntil: 'load' })
     const group = touchPage.getByRole('treeitem').first()
-    await touchPage.getByRole('button', { name: 'Open sidebar', exact: true }).first().click()
     await group.click()
     await touchPage.getByRole('treeitem').filter({ hasText: 'Markdown wide tables' }).click()
     await touchPage.getByText(TAIL_MARKER, { exact: true }).waitFor()

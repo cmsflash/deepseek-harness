@@ -36,7 +36,7 @@ afterEach(async () => {
 async function boot() {
   const rt = await SlotTestRuntime.create()
   runtime = rt
-  rt.ctx.provide('layout', { openRightbar: vi.fn(), closeRightbar: vi.fn(), panelInfo: rt.panelInfo } as never)
+  rt.ctx.provide('layout', { openRightbar: vi.fn(), closeRightbar: vi.fn(), registerRightbarDismiss: vi.fn(() => () => {}), panelInfo: rt.panelInfo } as never)
   rt.ctx.provide('shortcuts', {
     register: () => () => {},
     catalog: { getSnapshot: () => SHORTCUT_CATALOG, subscribe: () => () => {} },

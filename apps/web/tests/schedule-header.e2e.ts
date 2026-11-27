@@ -32,7 +32,7 @@ it('keeps the automation title intact before moving New to another line', async 
           for (const width of [1680, 800, 520, 440, 390, 430, 1024]) {
             await page.setViewportSize({ width, height: 1000 })
             // The title keeps its natural width at every viewport width, so New
-            // stays beside it here; the squeeze case below is what moves it down.
+            // stays beside it here.
             await expect.poll(() => header.evaluate((element) => {
               const title = element.querySelector('h1')!
               const button = element.querySelector('button')!
@@ -56,27 +56,6 @@ it('keeps the automation title intact before moving New to another line', async 
               titleSingleLine: true, buttonSingleLine: true, placement: 'beside', contained: true, focused: true,
             })
             facts.push(`${language} ${width}px: title and New single-line, New beside the title; contained; New retains focus`)
-          }
-          if (language === 'en') {
-            // Below 640px the sidebar opens as a drawer over the page, so the page
-            // column keeps its width and New stays beside the title.
-            await page.setViewportSize({ width: 509, height: 1000 })
-            await page.getByRole('button', { name: 'Open sidebar', exact: true }).first().click()
-            await expect.poll(() => header.evaluate((element) => {
-              const title = element.querySelector('h1')!
-              const button = element.querySelector('button')!
-              const titleRect = title.getBoundingClientRect()
-              const buttonRect = button.getBoundingClientRect()
-              const range = document.createRange()
-              range.selectNodeContents(title)
-              return {
-                titleSingleLine: range.getClientRects().length === 1,
-                placement: buttonRect.left >= titleRect.right - 1
-                  ? 'beside' as const
-                  : buttonRect.top >= titleRect.bottom - 1 ? 'below' as const : 'overlapping' as const,
-              }
-            })).toEqual({ titleSingleLine: true, placement: 'beside' })
-            facts.push('en 509px with the sidebar drawer open: title single-line; New stays beside the title')
           }
           expect(consoleWatch.pageErrors).toEqual([])
         } finally {
