@@ -3153,3 +3153,32 @@ describe('nested Session rows', () => {
     expect(vi.mocked(nestSessions).mock.calls).toHaveLength(derivations)
   })
 })
+
+describe('reporting attachment across browser modes', () => {
+  it.each(['workspace', 'workspace-tree', 'flat', 'search', 'archived'] as const)(
+    'shows the Report marker in %s even when its parent is hidden', (mode) => {
+      const preferences = createWorkspaceViewStore().create()
+      preferences.actions.setGroupBy(mode === 'flat' ? 'flat' : mode === 'workspace-tree' ? 'workspace-tree' : 'workspace')
+      preferences.actions.setGroupExpanded('alpha', true)
+      if (mode === 'archived') preferences.actions.setArchivedFilter('only')
+      const archived = mode === 'archived' ? [sid('report')] : [sid('manager')]
+      const b = mount({
+        useSessions: hook(sessionState([summary('manager', 2), summary('report', 1)])),
+        useWorkspaces: hook({
+          ...workspaceState([workspace('alpha', ['manager', 'report'])], archived, [], { report: 'manager' }),
+          detachedSessionIds: [sid('report')],
+        }),
+      })
+      if (mode === 'search') {
+        fireEvent.click(screen.getByRole('button', { name: '搜索会话' }))
+        fireEvent.change(screen.getByPlaceholderText('搜索会话名称'), { target: { value: 'report' } })
+      }
+      expect(screen.getAllByRole('img', { name: '已脱离：向你汇报' })).toHaveLength(1)
+      rerender(b, { useWorkspaces: hook({
+        ...workspaceState([workspace('alpha', ['manager', 'report'])], archived, [], { report: 'manager' }),
+        detachedSessionIds: [],
+      }) })
+      expect(screen.queryByRole('img', { name: '已脱离：向你汇报' })).toBeNull()
+    },
+  )
+})

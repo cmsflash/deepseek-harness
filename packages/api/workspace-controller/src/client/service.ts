@@ -4,7 +4,7 @@ import { Service, type Context } from '@deepseek-ai/cordis'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { RemoteFailure } from '@deepseek-ai/dsh-typert-protocol'
 import type { WorkspaceId } from '@deepseek-ai/dsh-workspace/types'
-import type { WorkspaceView } from '../types.ts'
+import type { WorkspaceSetSessionAttachmentRequest, WorkspaceView } from '../types.ts'
 import type { ClientWorkspaceModel, WorkspaceSnapshot } from './model.ts'
 
 /** Structured create failure for callers that distinguish Host business errors. */
@@ -28,6 +28,16 @@ export class WorkspaceArchiveError extends Error {
   /** @param rpcError - Host business or folded carrier failure. */
   constructor(readonly rpcError: RemoteFailure) {
     super(`workspace session archive failed: ${rpcError.code}: ${rpcError.message}`)
+  }
+}
+
+/** Attachment failed; the Remote failure preserves the refusal reason and expected parent. */
+export class WorkspaceAttachmentError extends Error {
+  override readonly name = 'WorkspaceAttachmentError'
+
+  /** @param rpcError - Host refusal or carrier failure; carrier loss can leave the outcome unknown. */
+  constructor(readonly rpcError: RemoteFailure) {
+    super(`workspace session attachment failed: ${rpcError.code}: ${rpcError.message}`)
   }
 }
 
@@ -108,6 +118,12 @@ export interface IWorkspaces {
    */
   setSessionParent(sessionId: SessionId, parentSessionId: SessionId | null): Promise<void>
   /**
+   * Change reporting attachment without changing visual nesting.
+   * @param request - Child, expected parent, and attachment.
+   * @throws when the Host refuses; the error retains the structured Remote failure.
+   */
+  setSessionAttachment(request: WorkspaceSetSessionAttachmentRequest): Promise<void>
+  /**
    * Move a Session within one Workspace account.
    * @param workspaceId - owning Workspace.
    * @param sessionId - Session to move.
@@ -185,6 +201,11 @@ export class WorkspaceController extends Service implements IWorkspaces {
   async setSessionParent(sessionId: SessionId, parentSessionId: SessionId | null): Promise<void> {
     const result = await this.model.setSessionParent(sessionId, parentSessionId)
     if (!result.ok) throw commandError('session parent', result.error)
+  }
+
+  async setSessionAttachment(request: WorkspaceSetSessionAttachmentRequest): Promise<void> {
+    const result = await this.model.setSessionAttachment(request)
+    if (!result.ok) throw new WorkspaceAttachmentError(result.error)
   }
 
   async insertSessionBefore(

@@ -5,6 +5,7 @@ import {
 import type {
   WorkspaceArchiveSessionRequest,
   WorkspaceArchiveValue,
+  WorkspaceAttachmentValue,
   WorkspaceCreateRequest,
   WorkspaceCreateValue,
   WorkspaceDeleteRequest,
@@ -71,6 +72,7 @@ function deferred<T>(): Deferred<T> {
 }
 
 class FakeWorkspaceRemote implements WorkspaceRemote {
+  readonly setSessionAttachment = vi.fn<WorkspaceRemote['setSessionAttachment']>(async () => remoteOk({ detachedSessionIds: [] }))
   readonly initializeDefault = vi.fn<WorkspaceRemote['initializeDefault']>(async () => remoteOk({ workspace: workspace('default') }))
   readonly calls: Array<{ readonly method: string; readonly request: unknown }> = []
   onCreate: (request: WorkspaceCreateRequest) => Promise<RemoteResult<WorkspaceCreateValue>> = request =>
@@ -585,7 +587,7 @@ describe('ClientWorkspaceModel', () => {
     expect(model.getSnapshot().sessionParents).toEqual({ b: 'c' })
   })
 
-  it('applies parent mutation echoes and leaves failed results unchanged', async () => {
+  it('returns parent mutation receipts without installing partial relationship state', async () => {
     const remote = new FakeWorkspaceRemote()
     const model = modelFor(remote)
     model.replaceParents({ [sid('kept')]: sid('parent') })
@@ -602,7 +604,7 @@ describe('ClientWorkspaceModel', () => {
       sessionParents: { [sid('kept')]: sid('parent'), [request.sessionId]: sid('parent') },
     }))
     await expect(model.setSessionParent(sid('fresh'), sid('parent'))).resolves.toMatchObject({ ok: true })
-    expect(model.getSnapshot().sessionParents).toEqual({ kept: 'parent', fresh: 'parent' })
+    expect(model.getSnapshot().sessionParents).toEqual({ kept: 'parent' })
     expect(remote.calls).toContainEqual({
       method: 'setSessionParent', request: { sessionId: 'fresh', parentSessionId: 'parent' },
     })
@@ -615,7 +617,7 @@ describe('ClientWorkspaceModel', () => {
     })
   })
 
-  it('keeps the latest parent reply when overlapping requests settle out of order', async () => {
+  it('does not install overlapping parent receipts that settle out of order', async () => {
     const remote = new FakeWorkspaceRemote()
     const model = modelFor(remote)
     const firstGate = deferred<RemoteResult<WorkspaceSessionParentsValue>>()
@@ -627,10 +629,10 @@ describe('ClientWorkspaceModel', () => {
     const second = model.setSessionParent(sid('second'), sid('parent'))
     secondGate.resolve(remoteOk({ sessionParents: { [sid('first')]: sid('parent'), [sid('second')]: sid('parent') } }))
     await expect(second).resolves.toMatchObject({ ok: true })
-    expect(model.getSnapshot().sessionParents).toEqual({ first: 'parent', second: 'parent' })
+    expect(model.getSnapshot().sessionParents).toEqual({})
     firstGate.resolve(remoteOk({ sessionParents: { [sid('first')]: sid('parent') } }))
     await expect(first).resolves.toMatchObject({ ok: true })
-    expect(model.getSnapshot().sessionParents).toEqual({ first: 'parent', second: 'parent' })
+    expect(model.getSnapshot().sessionParents).toEqual({})
   })
 
   it('keeps pushed parent links and a newer baseline when a parent reply lands later', async () => {
@@ -717,5 +719,58 @@ describe('ClientWorkspaceModel', () => {
     expect(model.getSnapshot().items).toEqual([])
     model.removeView(wid('gone'))
     expect(model.getSnapshot().items).toEqual([])
+  })
+})
+
+describe('coupled registry commits', () => {
+  it('publishes parent cleanup and attachment removal in one snapshot and rejects a delayed attachment echo', async () => {
+    const remote = new FakeWorkspaceRemote()
+    const model = modelFor(remote)
+    model.replaceBaseline({ items: [], archivedSessionIds: [], pinnedSessionIds: [],
+      sessionParents: { [sid('b')]: sid('a') }, detachedSessionIds: [sid('b')] })
+    await Promise.resolve()
+    const gate = deferred<RemoteResult<WorkspaceAttachmentValue>>()
+    remote.setSessionAttachment.mockReturnValueOnce(gate.promise)
+    const pending = model.setSessionAttachment({ sessionId: sid('b'), parentSessionId: sid('a'), attachment: 'detached' })
+    const observed: unknown[] = []
+    model.subscribe(() => observed.push(model.getSnapshot()))
+    model.replaceRegistry({ workspaceIds: [], archivedSessionIds: [], pinnedSessionIds: [],
+      sessionParents: {}, detachedSessionIds: [] })
+    await Promise.resolve()
+    expect(observed).toHaveLength(1)
+    expect(observed[0]).toMatchObject({ sessionParents: {}, detachedSessionIds: [] })
+    gate.resolve(remoteOk({ detachedSessionIds: [sid('b')] }))
+    await pending
+    expect(model.getSnapshot().detachedSessionIds).toEqual([])
+  })
+
+  it('does not combine a newer attachment commit with a delayed parent receipt', async () => {
+    const remote = new FakeWorkspaceRemote()
+    const model = modelFor(remote)
+    const gate = deferred<RemoteResult<WorkspaceSessionParentsValue>>()
+    remote.onSetSessionParent = () => gate.promise
+    const pending = model.setSessionParent(sid('b'), null)
+    model.replaceRegistry({ workspaceIds: [], archivedSessionIds: [], pinnedSessionIds: [],
+      sessionParents: { [sid('b')]: sid('a') }, detachedSessionIds: [sid('b')] })
+    gate.resolve(remoteOk({ sessionParents: {} }))
+    await pending
+    expect(model.getSnapshot()).toMatchObject({ sessionParents: { b: 'a' }, detachedSessionIds: ['b'] })
+  })
+
+  it('keeps attachment receipts separate from authoritative hidden-parent state', async () => {
+    const remote = new FakeWorkspaceRemote()
+    const model = modelFor(remote)
+    model.replaceBaseline({ items: [], archivedSessionIds: [], pinnedSessionIds: [],
+      sessionParents: {}, detachedSessionIds: [sid('hidden-parent-child')] })
+    expect(model.getSnapshot().detachedSessionIds).toEqual(['hidden-parent-child'])
+    const gate = deferred<RemoteResult<WorkspaceAttachmentValue>>()
+    remote.setSessionAttachment.mockReturnValueOnce(gate.promise)
+    const pending = model.setSessionAttachment({ sessionId: sid('b'), parentSessionId: sid('a'), attachment: 'detached' })
+    await model.setSessionParent(sid('b'), null)
+    gate.resolve(remoteOk({ detachedSessionIds: [sid('b')] }))
+    await pending
+    expect(model.getSnapshot().detachedSessionIds).toEqual(['hidden-parent-child'])
+    model.replaceBaseline({ items: [], archivedSessionIds: [], pinnedSessionIds: [] })
+    expect(model.getSnapshot().detachedSessionIds).toEqual([])
   })
 })

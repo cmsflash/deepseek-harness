@@ -64,6 +64,8 @@ export const workspaceDomainState = z.object({
   archivedSessionIds: z.array(sessionId).default([]),
   pinnedSessionIds: z.array(sessionId).default([]),
   sessionParents: z.record(sessionId, sessionId).default({}),
+  /** Nested Sessions reporting to the human; removing a parent link removes its detached marker. */
+  detachedSessionIds: z.array(sessionId).default([]),
   pendingMutation: workspacePendingMutation.optional(),
 })
 
@@ -81,7 +83,9 @@ export const workspaceDomainSpec = defineDomain({
   version: 2,
   global: {
     schema: workspaceDomainState,
-    initial: { initialized: false, workspaceIds: [], archivedSessionIds: [], pinnedSessionIds: [], sessionParents: {} },
+    initial: {
+      initialized: false, workspaceIds: [], archivedSessionIds: [], pinnedSessionIds: [], sessionParents: {}, detachedSessionIds: [],
+    },
   },
   tables: { workspaces: domainTable<WorkspaceId, WorkspaceRecord>(workspaceRecord) },
 })

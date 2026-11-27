@@ -55,6 +55,7 @@ function accepts(overrides: Partial<WorkspaceFollowSink> = {}): WorkspaceFollowS
   const ignore = (): void => {}
   return {
     replaceBaseline: ignore,
+    replaceRegistry: ignore,
     upsertView: ignore,
     removeView: ignore,
     replaceOrder: ignore,
@@ -152,6 +153,8 @@ describe('Workspace state stream', () => {
     const opening = baseline('one')
     const view = opening.value.items[0]!
     const increments: WorkspaceFollowFrame[] = [
+      { type: 'registry', value: { workspaceIds: [view.workspaceId], archivedSessionIds: [], pinnedSessionIds: [],
+        sessionParents: { [sid('session-two')]: sid('session-one') }, detachedSessionIds: [sid('session-two')] } },
       { type: 'upsert', workspace: view },
       { type: 'remove', workspaceId: view.workspaceId },
       { type: 'order', workspaceIds: [view.workspaceId] },
@@ -167,9 +170,10 @@ describe('Workspace state stream', () => {
     const replaceArchived = vi.fn<WorkspaceFollowSink['replaceArchived']>()
     const replacePinned = vi.fn<WorkspaceFollowSink['replacePinned']>()
     const replaceParents = vi.fn<WorkspaceFollowSink['replaceParents']>()
+    const replaceRegistry = vi.fn<WorkspaceFollowSink['replaceRegistry']>()
     const stream = createWorkspaceStateStream(remote, {
       accept: accepts({
-        replaceBaseline, upsertView, removeView, replaceOrder, replaceArchived, replacePinned, replaceParents,
+        replaceBaseline, upsertView, removeView, replaceOrder, replaceArchived, replacePinned, replaceParents, replaceRegistry,
       }),
       failed: vi.fn(),
     })
@@ -185,6 +189,7 @@ describe('Workspace state stream', () => {
     expect(replaceArchived).toHaveBeenCalledWith(['session-one'])
     expect(replacePinned).toHaveBeenCalledWith(['session-two'])
     expect(replaceParents).toHaveBeenCalledWith({ 'session-two': 'session-one' })
+    expect(replaceRegistry).toHaveBeenCalledWith(expect.objectContaining({ detachedSessionIds: ['session-two'] }))
     await stream.dispose()
     expect(streamStates(mock)).toEqual(['cancelled'])
   })
@@ -380,7 +385,7 @@ describe('WorkspaceController', () => {
     await expect(controller.pinSession(sid('session'))).resolves.toBeUndefined()
     await expect(controller.unpinSession(sid('session'))).resolves.toBeUndefined()
     await expect(controller.setSessionParent(sid('session'), sid('parent'))).resolves.toBeUndefined()
-    expect(model.getSnapshot().sessionParents).toEqual({ session: 'parent' })
+    expect(model.getSnapshot().sessionParents).toEqual({})
     await expect(controller.setSessionParent(sid('session'), null)).resolves.toBeUndefined()
     expect(model.getSnapshot().sessionParents).toEqual({})
     await expect(controller.delete(wid('one'))).resolves.toBeUndefined()
@@ -399,6 +404,22 @@ describe('WorkspaceController', () => {
       { sessionId: 'session', parentSessionId: null },
     ])
     expect(mock.log.requests('workspace/delete')).toEqual([{ workspaceId: 'one' }])
+  })
+
+  it('returns attachment receipts and preserves structured refusal details', async ({ mock, start }) => {
+    const { remote, client } = await gatewayClient(mock, start)
+    const model = new ClientWorkspaceModel(remote.workspace)
+    const controller = new WorkspaceController(client.ctx, model)
+    const request = { sessionId: sid('report'), parentSessionId: sid('manager'), attachment: 'detached' as const }
+    await expect(controller.setSessionAttachment(request)).resolves.toBeUndefined()
+    expect(mock.log.requests('workspace/setSessionAttachment')).toEqual([request])
+    expect(model.getSnapshot().detachedSessionIds).toEqual([])
+    mock.remote.workspace.setSessionAttachment.mockResolvedValueOnce(err(new RemoteError(
+      'workspace/session-attachment-invalid', 'parent changed', { ...request, reason: 'parent-mismatch' },
+    )))
+    await expect(controller.setSessionAttachment(request)).rejects.toMatchObject({
+      name: 'WorkspaceAttachmentError', rpcError: { code: 'workspace/session-attachment-invalid', details: { reason: 'parent-mismatch' } },
+    })
   })
 
   it('maps generated business failures to the command facade errors', async ({ mock, start }) => {

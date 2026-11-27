@@ -12,6 +12,8 @@ import { defaultWorkspaceDirectory, validateDocumentsDirectory } from './default
 import type {
   WorkspaceArchiveSessionRequest,
   WorkspaceArchiveValue,
+  WorkspaceAttachmentValue,
+  WorkspaceSetSessionAttachmentRequest,
   WorkspaceBaseline,
   WorkspaceCreateRequest,
   WorkspaceCreateValue,
@@ -205,6 +207,19 @@ export class WorkspaceController extends TypertRemoteService {
   }
 
   /**
+   * Set whether a nested Session reports to its Manager or to the human.
+   * @param request - Child, expected current parent, and attachment; mismatch refuses without writing.
+   * @returns the complete caller-visible detached set. No authority or notification policy changes.
+   */
+  @Remote({ resources: { session: request => [request.sessionId, request.parentSessionId] } })
+  async setSessionAttachment(request: WorkspaceSetSessionAttachmentRequest): Promise<WorkspaceAttachmentValue> {
+    const value = await this.commands.setSessionAttachment(request)
+    return {
+      detachedSessionIds: value.detachedSessionIds.filter(id => this.ctx.remoteAccess.allows({ kind: 'session', id })),
+    }
+  }
+
+  /**
    * Stream a complete Workspace baseline followed by ordered increments. A
    * non-owner receives only the Workspaces and Sessions `allows()` admits.
    * When a delivered Workspace is no longer admitted at its next change or
@@ -242,6 +257,7 @@ export class WorkspaceController extends TypertRemoteService {
         archivedSessionIds: sessions(value.archivedSessionIds),
         pinnedSessionIds: sessions(value.pinnedSessionIds),
         sessionParents: parents(value.sessionParents),
+        detachedSessionIds: sessions(value.detachedSessionIds),
       }
     }
     for await (const frame of this.feed.follow(signal)) {
@@ -267,6 +283,22 @@ export class WorkspaceController extends TypertRemoteService {
             yield { type: 'replace', value: filtered(this.feed.baseline()) }
           } else {
             yield { type: 'order', workspaceIds: frame.workspaceIds.filter(visible) }
+          }
+          break
+        case 'registry':
+          if ([...delivered].some(workspaceId => !visible(workspaceId))) {
+            yield { type: 'replace', value: filtered(this.feed.baseline()) }
+            break
+          }
+          yield {
+            type: 'registry',
+            value: {
+              workspaceIds: frame.value.workspaceIds.filter(visible),
+              archivedSessionIds: sessions(frame.value.archivedSessionIds),
+              pinnedSessionIds: sessions(frame.value.pinnedSessionIds),
+              sessionParents: parents(frame.value.sessionParents),
+              detachedSessionIds: sessions(frame.value.detachedSessionIds),
+            },
           }
           break
         case 'archived':

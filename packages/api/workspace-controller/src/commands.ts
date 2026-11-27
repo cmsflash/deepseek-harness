@@ -9,6 +9,7 @@ import {
   WorkspaceMoveInvalidError,
   WorkspaceOrderInvalidError,
   WorkspaceSessionParentInvalidError,
+  WorkspaceSessionAttachmentInvalidError,
   WorkspaceUnknownSessionError,
 } from '@deepseek-ai/dsh-workspace'
 import { RemoteError, remoteErrorOf } from '@deepseek-ai/dsh-typert-protocol'
@@ -16,6 +17,8 @@ import { workspaceView } from './feed.ts'
 import type {
   WorkspaceArchiveSessionRequest,
   WorkspaceArchiveValue,
+  WorkspaceAttachmentValue,
+  WorkspaceSetSessionAttachmentRequest,
   WorkspaceCreateRequest,
   WorkspaceCreateValue,
   WorkspaceDeleteRequest,
@@ -257,6 +260,27 @@ export class WorkspaceCommands {
       throw error
     }
     return { sessionParents: { ...this.ctx.workspaceRegistry.sessionParents } }
+  }
+
+  /**
+   * Set reporting attachment after the registry checks the expected parent.
+   * @param request - Child, expected parent, and reporting attachment.
+   * @returns the detached set after a successful registry write.
+   */
+  async setSessionAttachment(request: WorkspaceSetSessionAttachmentRequest): Promise<WorkspaceAttachmentValue> {
+    try {
+      const detachedSessionIds = await this.ctx.workspaceRegistry.setSessionAttachment(
+        request.sessionId, request.parentSessionId, request.attachment,
+      )
+      return { detachedSessionIds: [...detachedSessionIds] }
+    } catch (error) {
+      if (!(error instanceof WorkspaceSessionAttachmentInvalidError)) throw error
+      throw new RemoteError(
+        'workspace/session-attachment-invalid', error.message,
+        { sessionId: error.sessionId, parentSessionId: error.parentSessionId, reason: error.reason },
+        { cause: error },
+      )
+    }
   }
 
   private requireWorkspace(workspaceId: WorkspaceId): Workspace {

@@ -4482,6 +4482,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'the complete resulting parent links.',
       },
       {
+        signature: '@Remote({ resources: { session: request => [request.sessionId, request.parentSessionId] } }) async setSessionAttachment(request: WorkspaceSetSessionAttachmentRequest): Promise<WorkspaceAttachmentValue>',
+        description: 'Set whether a nested Session reports to its Manager or to the human.',
+        parameters: [{ name: 'request', description: 'Child, expected current parent, and attachment; mismatch refuses without writing.' }],
+        returns: 'the complete caller-visible detached set. No authority or notification policy changes.',
+      },
+      {
         signature: '@Remote({ mode: \'stream\' }) async *follow(signal: AbortSignal): AsyncIterable<WorkspaceFollowFrame>',
         description: 'Stream a complete Workspace baseline followed by ordered increments. A non-owner receives only the Workspaces and Sessions `allows()` admits. When a delivered Workspace is no longer admitted at its next change or the next order change, the stream sends a `replace` frame with the complete filtered state instead of a `remove`, because a Client never resurrects a removed Workspace; a `remove` frame reports a deletion and reaches only a Client that received that Workspace.',
         parameters: [{ name: 'signal', description: 'generation cancellation.' }],
@@ -4598,6 +4604,13 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         parameters: [{ name: 'sessionId', description: 'The child session whose parent changes.' }, { name: 'parentSessionId', description: 'The new parent; `undefined` clears the link.' }],
         returns: 'resolution after durability.',
         throws: ['{WorkspaceSessionParentInvalidError} when the link is refused.'],
+      },
+      {
+        signature: 'setSessionAttachment( sessionId: SessionId, parentSessionId: SessionId, attachment: SessionAttachment, ): Promise<readonly SessionId[]>',
+        description: 'Set reporting attachment without changing nesting, order, or descendants. The expected parent is checked inside the registry queue. Refusals and failed storage writes publish nothing; a storage rejection may follow replacement, so reopen the backend/domain and inspect saved state before retrying. Equal state performs no write. New Sessions and forks do not inherit attachment. Removing a parent link clears its marker.',
+        parameters: [{ name: 'sessionId', description: 'Known, accounted, non-subagent child.' }, { name: 'parentSessionId', description: 'Expected current parent, not a new parent.' }, { name: 'attachment', description: 'Reporting relationship to record.' }],
+        returns: 'the complete committed detached set.',
+        throws: ['{WorkspaceSessionAttachmentInvalidError} when the relationship is absent or invalid.'],
       },
       {
         signature: 'async resolveByPath(path: string): Promise<Workspace | undefined>',
@@ -8095,6 +8108,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export type SessionAssistantStreamFrame = {\n    readonly type: \'start\';\n    readonly attemptId: LlmAttemptId;\n    readonly revision: number;\n    readonly startedAfterSeq: SessionSeqCursor;\n    readonly turn: number;\n    readonly step: number;\n} | {\n    readonly type: \'chunk\';\n    readonly attemptId: LlmAttemptId;\n    readonly revision: number;\n    readonly index: number;\n    readonly time: number;\n    readonly chunk: JsonValue;\n} | {\n    readonly type: \'end\';\n    readonly attemptId: LlmAttemptId;\n    readonly revision: number;\n    readonly index: number;\n    readonly outcome: {\n        readonly kind: \'committed\';\n        readonly eventType: \'assistant/message\' | \'assistant/attempt\';\n        readonly seq: number;\n    } | {\n        readonly kind: \'abandoned\';\n    };\n};',
   },
   {
+    name: 'SessionAttachment',
+    declaration: 'export type SessionAttachment = \'attached\' | \'detached\';',
+  },
+  {
     name: 'SessionAttachmentRequest',
     declaration: 'export interface SessionAttachmentRequest {\n    readonly sessionId: SessionId;\n    readonly attachment: ImageAttachmentRef;\n}',
   },
@@ -10019,8 +10036,12 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface WorkspaceArchiveValue {\n    readonly archivedSessionIds: readonly SessionId[];\n}',
   },
   {
+    name: 'WorkspaceAttachmentValue',
+    declaration: 'export interface WorkspaceAttachmentValue {\n    readonly detachedSessionIds: readonly SessionId[];\n}',
+  },
+  {
     name: 'WorkspaceBaseline',
-    declaration: 'export interface WorkspaceBaseline {\n    readonly items: readonly WorkspaceView[];\n    readonly archivedSessionIds: readonly SessionId[];\n    readonly pinnedSessionIds: readonly SessionId[];\n    readonly sessionParents?: WorkspaceSessionParents;\n}',
+    declaration: 'export interface WorkspaceBaseline {\n    readonly items: readonly WorkspaceView[];\n    readonly archivedSessionIds: readonly SessionId[];\n    readonly pinnedSessionIds: readonly SessionId[];\n    readonly sessionParents?: WorkspaceSessionParents;\n    readonly detachedSessionIds?: readonly SessionId[];\n}',
   },
   {
     name: 'WorkspaceByteRange',
@@ -10104,7 +10125,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'WorkspaceFollowIncrement',
-    declaration: 'export type WorkspaceFollowIncrement = {\n    readonly type: \'replace\';\n    readonly value: WorkspaceBaseline;\n} | {\n    readonly type: \'upsert\';\n    readonly workspace: WorkspaceView;\n} | {\n    readonly type: \'remove\';\n    readonly workspaceId: WorkspaceId;\n} | {\n    readonly type: \'order\';\n    readonly workspaceIds: readonly WorkspaceId[];\n} | {\n    readonly type: \'archived\';\n    readonly archivedSessionIds: readonly SessionId[];\n} | {\n    readonly type: \'pinned\';\n    readonly pinnedSessionIds: readonly SessionId[];\n} | {\n    readonly type: \'parents\';\n    readonly sessionParents: WorkspaceSessionParents;\n};',
+    declaration: 'export type WorkspaceFollowIncrement = {\n    readonly type: \'registry\';\n    readonly value: WorkspaceRegistryValue;\n} | {\n    readonly type: \'replace\';\n    readonly value: WorkspaceBaseline;\n} | {\n    readonly type: \'upsert\';\n    readonly workspace: WorkspaceView;\n} | {\n    readonly type: \'remove\';\n    readonly workspaceId: WorkspaceId;\n} | {\n    readonly type: \'order\';\n    readonly workspaceIds: readonly WorkspaceId[];\n} | {\n    readonly type: \'archived\';\n    readonly archivedSessionIds: readonly SessionId[];\n} | {\n    readonly type: \'pinned\';\n    readonly pinnedSessionIds: readonly SessionId[];\n} | {\n    readonly type: \'parents\';\n    readonly sessionParents: WorkspaceSessionParents;\n};',
   },
   {
     name: 'WorkspaceInsertBeforeRequest',
@@ -10127,6 +10148,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface WorkspacePinValue {\n    readonly pinnedSessionIds: readonly SessionId[];\n}',
   },
   {
+    name: 'WorkspaceRegistryValue',
+    declaration: 'export interface WorkspaceRegistryValue extends WorkspaceAttachmentValue {\n    readonly workspaceIds: readonly WorkspaceId[];\n    readonly archivedSessionIds: readonly SessionId[];\n    readonly pinnedSessionIds: readonly SessionId[];\n    readonly sessionParents: WorkspaceSessionParents;\n}',
+  },
+  {
     name: 'WorkspaceRenameRequest',
     declaration: 'export interface WorkspaceRenameRequest {\n    readonly workspaceId: WorkspaceId;\n    readonly title: string;\n}',
   },
@@ -10137,6 +10162,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'WorkspaceSessionParentsValue',
     declaration: 'export interface WorkspaceSessionParentsValue {\n    readonly sessionParents: WorkspaceSessionParents;\n}',
+  },
+  {
+    name: 'WorkspaceSetSessionAttachmentRequest',
+    declaration: 'export interface WorkspaceSetSessionAttachmentRequest {\n    readonly sessionId: SessionId;\n    readonly parentSessionId: SessionId;\n    readonly attachment: SessionAttachment;\n}',
   },
   {
     name: 'WorkspaceSetSessionParentRequest',

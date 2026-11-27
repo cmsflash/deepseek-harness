@@ -8,6 +8,9 @@ import type { RemoteFailure, RemoteResult, TypertClientRemote } from '@deepseek-
 import type {
   WorkspaceArchiveSessionRequest,
   WorkspaceArchiveValue,
+  WorkspaceAttachmentValue,
+  WorkspaceSetSessionAttachmentRequest,
+  WorkspaceRegistryValue,
   WorkspaceBaseline,
   WorkspaceCreateRequest,
   WorkspaceCreateValue,
@@ -39,6 +42,8 @@ export interface WorkspaceSnapshot {
   readonly archivedSessionIds: WorkspaceArchiveValue['archivedSessionIds']
   /** Complete registry-global pin set, most recently pinned first. */
   readonly pinnedSessionIds: WorkspacePinValue['pinnedSessionIds']
+  /** Complete detached set. The Remote-backed model always sets it; absent means all attached. */
+  readonly detachedSessionIds?: readonly SessionId[]
   /** Complete parent links (child to parent). The Remote-backed model always sets it; absent means no links. */
   readonly sessionParents?: WorkspaceSessionParents
   readonly state: 'idle' | 'loading' | 'error'
@@ -48,6 +53,8 @@ export interface WorkspaceSnapshot {
 
 /** State operations emitted by a decoded Workspace follow generation. */
 export interface WorkspaceFollowSink {
+  /** Install every field of one registry commit before notifying readers. */
+  replaceRegistry(value: WorkspaceRegistryValue): void
   /** Replace all state from the generation baseline. */
   replaceBaseline(value: WorkspaceBaseline): void
   /** Merge one Workspace row. */
@@ -72,6 +79,7 @@ export class ClientWorkspaceModel implements WorkspaceFollowSink {
   private archivedSessionIds: WorkspaceArchiveValue['archivedSessionIds'] = []
   private pinnedSessionIds: WorkspacePinValue['pinnedSessionIds'] = []
   private sessionParents: WorkspaceSessionParents = {}
+  private detachedSessionIds: readonly SessionId[] = []
   private state: WorkspaceSnapshot['state'] = 'loading'
   private phase: WorkspaceListPhase = 'pending'
   private error: RemoteFailure | null = null
@@ -81,12 +89,8 @@ export class ClientWorkspaceModel implements WorkspaceFollowSink {
   private orderFrameGeneration = 0
   /** Last complete order accepted from a baseline, increment, or current unary echo. */
   private committedOrder: WorkspaceId[] = []
-  /** Latest archive-set request; a later request or a pushed set supersedes it. */
-  private archiveRequestSeq = 0
-  /** Latest pin-set request; a later request or a pushed set supersedes it. */
-  private pinRequestSeq = 0
-  /** Latest parent-links request; a later request or a pushed map supersedes it. */
-  private parentRequestSeq = 0
+  /** Coupled registry fields share one fence: any request or pushed commit supersedes older unary echoes. */
+  private registryRequestSeq = 0
   /** Host Workspace ids are never reused, so delayed data cannot resurrect a removed row. */
   private readonly removedIds = new Set<WorkspaceId>()
   private readonly listeners = new Set<() => void>()
@@ -141,6 +145,7 @@ export class ClientWorkspaceModel implements WorkspaceFollowSink {
    * @returns generated Remote result.
    */
   async delete(workspaceId: WorkspaceId): Promise<RemoteResult<WorkspaceDeleteValue>> {
+    this.registryRequestSeq++
     const result = await this.remote.delete({ workspaceId })
     if (result.ok) this.remove(workspaceId, true)
     return result
@@ -203,12 +208,12 @@ export class ClientWorkspaceModel implements WorkspaceFollowSink {
     sessionId: WorkspaceArchiveSessionRequest['sessionId'],
     options: Pick<WorkspaceArchiveSessionRequest, 'stopActivity'> = {},
   ): Promise<RemoteResult<WorkspaceArchiveValue>> {
-    const requestSeq = ++this.archiveRequestSeq
+    const requestSeq = ++this.registryRequestSeq
     const result = await this.remote.archiveSession({
       sessionId,
       ...(options.stopActivity === true ? { stopActivity: true } : {}),
     })
-    if (result.ok && requestSeq === this.archiveRequestSeq) {
+    if (result.ok && requestSeq === this.registryRequestSeq) {
       this.installArchived(result.value.archivedSessionIds)
       // The Host drops an archived session's pin in the same durable write;
       // mirror that locally so no frame shows the row both archived and pinned.
@@ -226,9 +231,9 @@ export class ClientWorkspaceModel implements WorkspaceFollowSink {
   async unarchiveSession(
     sessionId: WorkspaceUnarchiveSessionRequest['sessionId'],
   ): Promise<RemoteResult<WorkspaceArchiveValue>> {
-    const requestSeq = ++this.archiveRequestSeq
+    const requestSeq = ++this.registryRequestSeq
     const result = await this.remote.unarchiveSession({ sessionId })
-    if (result.ok && requestSeq === this.archiveRequestSeq) {
+    if (result.ok && requestSeq === this.registryRequestSeq) {
       this.installArchived(result.value.archivedSessionIds)
     }
     return result
@@ -243,9 +248,9 @@ export class ClientWorkspaceModel implements WorkspaceFollowSink {
   async pinSession(
     sessionId: WorkspacePinSessionRequest['sessionId'],
   ): Promise<RemoteResult<WorkspacePinValue>> {
-    const requestSeq = ++this.pinRequestSeq
+    const requestSeq = ++this.registryRequestSeq
     const result = await this.remote.pinSession({ sessionId })
-    if (result.ok && requestSeq === this.pinRequestSeq) {
+    if (result.ok && requestSeq === this.registryRequestSeq) {
       this.installPinned(result.value.pinnedSessionIds)
     }
     return result
@@ -260,17 +265,17 @@ export class ClientWorkspaceModel implements WorkspaceFollowSink {
   async unpinSession(
     sessionId: WorkspaceUnpinSessionRequest['sessionId'],
   ): Promise<RemoteResult<WorkspacePinValue>> {
-    const requestSeq = ++this.pinRequestSeq
+    const requestSeq = ++this.registryRequestSeq
     const result = await this.remote.unpinSession({ sessionId })
-    if (result.ok && requestSeq === this.pinRequestSeq) {
+    if (result.ok && requestSeq === this.registryRequestSeq) {
       this.installPinned(result.value.pinnedSessionIds)
     }
     return result
   }
 
   /**
-   * Set or clear one Session's parent and install the returned complete map.
-   * A reply superseded by a later parent request or a pushed map installs nothing.
+   * Set or clear one Session's parent. Only the ordered feed installs relationship
+   * state: unary replies omit coupled attachment fields and may arrive after later commits.
    * @param sessionId - the child Session whose parent changes.
    * @param parentSessionId - the new parent; `null` clears the link.
    * @returns generated Remote result.
@@ -279,12 +284,33 @@ export class ClientWorkspaceModel implements WorkspaceFollowSink {
     sessionId: WorkspaceSetSessionParentRequest['sessionId'],
     parentSessionId: WorkspaceSetSessionParentRequest['parentSessionId'],
   ): Promise<RemoteResult<WorkspaceSessionParentsValue>> {
-    const requestSeq = ++this.parentRequestSeq
-    const result = await this.remote.setSessionParent({ sessionId, parentSessionId })
-    if (result.ok && requestSeq === this.parentRequestSeq) {
-      this.installParents(result.value.sessionParents)
-    }
-    return result
+    this.registryRequestSeq++
+    return await this.remote.setSessionParent({ sessionId, parentSessionId })
+  }
+
+  /**
+   * Set reporting attachment. The ordered feed publishes it together with parent
+   * links; a unary receipt never overwrites that coherent projection.
+   * @param request - Child, expected parent, and attachment.
+   * @returns generated Remote result; failure installs nothing.
+   */
+  async setSessionAttachment(request: WorkspaceSetSessionAttachmentRequest): Promise<RemoteResult<WorkspaceAttachmentValue>> {
+    this.registryRequestSeq++
+    return await this.remote.setSessionAttachment(request)
+  }
+
+  /**
+   * Install one complete global commit synchronously; notification observes all fields together.
+   * @param value - Host registry state from one durable write.
+   */
+  replaceRegistry(value: WorkspaceRegistryValue): void {
+    this.registryRequestSeq++
+    this.orderFrameGeneration++
+    this.installOrder(value.workspaceIds, true)
+    this.installArchived(value.archivedSessionIds)
+    this.installPinned(value.pinnedSessionIds)
+    this.installParents(value.sessionParents)
+    this.installDetached(value.detachedSessionIds)
   }
 
   /**
@@ -293,13 +319,12 @@ export class ClientWorkspaceModel implements WorkspaceFollowSink {
    */
   replaceBaseline(baseline: WorkspaceBaseline): void {
     this.orderFrameGeneration++
-    this.archiveRequestSeq++
-    this.pinRequestSeq++
-    this.parentRequestSeq++
+    this.registryRequestSeq++
     this.installViews(baseline.items)
     this.installArchived(baseline.archivedSessionIds)
     this.installPinned(baseline.pinnedSessionIds)
     this.installParents(baseline.sessionParents ?? {})
+    this.installDetached(baseline.detachedSessionIds ?? [])
     this.state = 'idle'
     this.phase = 'ready'
     this.error = null
@@ -327,7 +352,7 @@ export class ClientWorkspaceModel implements WorkspaceFollowSink {
    * @param archivedSessionIds - complete Host-confirmed archive set.
    */
   replaceArchived(archivedSessionIds: WorkspaceArchiveValue['archivedSessionIds']): void {
-    this.archiveRequestSeq++
+    this.registryRequestSeq++
     this.installArchived(archivedSessionIds)
   }
 
@@ -336,7 +361,7 @@ export class ClientWorkspaceModel implements WorkspaceFollowSink {
    * @param pinnedSessionIds - complete Host-confirmed pin set, most recently pinned first.
    */
   replacePinned(pinnedSessionIds: WorkspacePinValue['pinnedSessionIds']): void {
-    this.pinRequestSeq++
+    this.registryRequestSeq++
     this.installPinned(pinnedSessionIds)
   }
 
@@ -345,7 +370,7 @@ export class ClientWorkspaceModel implements WorkspaceFollowSink {
    * @param sessionParents - complete Host-confirmed child-to-parent map.
    */
   replaceParents(sessionParents: WorkspaceSessionParents): void {
-    this.parentRequestSeq++
+    this.registryRequestSeq++
     this.installParents(sessionParents)
   }
 
@@ -392,6 +417,7 @@ export class ClientWorkspaceModel implements WorkspaceFollowSink {
       archivedSessionIds: this.archivedSessionIds,
       pinnedSessionIds: this.pinnedSessionIds,
       sessionParents: this.sessionParents,
+      detachedSessionIds: this.detachedSessionIds,
       state: this.state,
       phase: this.phase,
       error: this.error,
@@ -409,6 +435,13 @@ export class ClientWorkspaceModel implements WorkspaceFollowSink {
     if (pinnedSessionIds.length === this.pinnedSessionIds.length
       && pinnedSessionIds.every((id, index) => id === this.pinnedSessionIds[index])) return
     this.pinnedSessionIds = [...pinnedSessionIds]
+    this.invalidate()
+  }
+
+  private installDetached(ids: readonly SessionId[]): void {
+    if (ids.length === this.detachedSessionIds.length
+      && ids.every((id, index) => id === this.detachedSessionIds[index])) return
+    this.detachedSessionIds = [...ids]
     this.invalidate()
   }
 

@@ -59,6 +59,12 @@ export interface SessionActivity {
   readonly items?: readonly SessionActivityItem[]
 }
 
+/** Whether a nested Session reports to its Manager or directly to the human. */
+export type SessionAttachment = 'attached' | 'detached'
+
+/** Attachment requests fail without writing when the expected relationship is absent or invalid. */
+export type SessionAttachmentRefusal = 'no-parent' | 'parent-mismatch' | 'invalid-child'
+
 /** Why the registry refused to nest one Session under another. */
 export type SessionParentRefusal = 'self' | 'subagent' | 'unaccounted' | 'cross-workspace' | 'cycle'
 

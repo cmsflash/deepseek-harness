@@ -135,7 +135,11 @@ The controller's [transport types](../../packages/api/workspace-controller/src/t
 
 ## Session nesting
 
-The registry keeps one registry-global map, `sessionParents`, from a child Session id to the id of the Session it nests under; grouping surfaces read it to show a Session beneath another, and it changes neither Workspace accounting nor order. The controller's [transport types](../../packages/api/workspace-controller/src/types.ts) define `WorkspaceSetSessionParentRequest`, carrying the child's `sessionId` and a `parentSessionId` that is a Session id or `null` to clear the link, and `WorkspaceSessionParentsValue`, the complete map after the call. Setting the stored value again succeeds without a write. An unknown child or parent fails as `session/not-found`; every other refusal fails as `workspace/session-parent-invalid` with a `reason`: a Session as its own parent (`self`), a subagent-origin Session on either side (`subagent`), a Session no Workspace accounts for (`unaccounted`), two Sessions in different Workspaces (`cross-workspace`), or a link that would close a cycle (`cycle`). Archive state is not consulted, so archiving keeps a link and archived Sessions can be linked. A link ends when either Session leaves its Workspace's durable account: with the Workspace's deletion, after a detach or a prune, or at the next start. The `workspace/follow` baseline carries the map, and a `parents` frame carries the complete map after each committed change to it.
+The registry keeps one registry-global map, `sessionParents`, from a child Session id to the id of the Session it nests under; grouping surfaces read it to show a Session beneath another, and it changes neither Workspace accounting nor order. The controller's [transport types](../../packages/api/workspace-controller/src/types.ts) define `WorkspaceSetSessionParentRequest`, carrying the child's `sessionId` and a `parentSessionId` that is a Session id or `null` to clear the link, and `WorkspaceSessionParentsValue`, the complete map after the call. Setting the stored value again succeeds without a write. An unknown child or parent fails as `session/not-found`; every other refusal fails as `workspace/session-parent-invalid` with a `reason`: a Session as its own parent (`self`), a subagent-origin Session on either side (`subagent`), a Session no Workspace accounts for (`unaccounted`), two Sessions in different Workspaces (`cross-workspace`), or a link that would close a cycle (`cycle`). Archive state is not consulted, so archiving keeps a link and archived Sessions can be linked. A link ends when either Session leaves its Workspace's durable account: with the Workspace's deletion, after a detach or a prune, or at the next start. The `workspace/follow` baseline carries the map, and a `registry` frame carries the map together with the other global fields after each changed commit.
+
+## Reporting attachment
+
+`SessionAttachment` is `'attached' | 'detached'`. `WorkspaceSetSessionAttachmentRequest` carries the child `sessionId`, its expected current `parentSessionId`, and `attachment`; `WorkspaceAttachmentValue` returns the complete `detachedSessionIds` array. `SessionAttachmentRefusal` is `'no-parent' | 'parent-mismatch' | 'invalid-child'`. `WorkspaceRegistryValue` carries workspace order, archive and pin sets, parent links, and detached ids from one commit. The [registry](../../packages/workspace/workspace/README.md#api-behavior) owns validation and durability; the [controller](../../packages/api/workspace-controller/README.md) owns access filtering, atomic follow delivery, and receipt-only Client commands.
 
 ## Archive admission
 
@@ -398,6 +402,13 @@ Host service backing the generated `ctx.remote.workspace` namespace.
 @Remote('setSessionParent') setSessionParent(request: WorkspaceSetSessionParentRequest): Promise<WorkspaceSessionParentsValue>
 
 /**
+ * Set whether a nested Session reports to its Manager or to the human.
+ * @param request - Child, expected current parent, and attachment; mismatch refuses without writing.
+ * @returns the complete caller-visible detached set. No authority or notification policy changes.
+ */
+@Remote({ resources: { session: request => [request.sessionId, request.parentSessionId] } }) async setSessionAttachment(request: WorkspaceSetSessionAttachmentRequest): Promise<WorkspaceAttachmentValue>
+
+/**
  * Stream a complete Workspace baseline followed by ordered increments. A
  * non-owner receives only the Workspaces and Sessions `allows()` admits.
  * When a delivered Workspace is no longer admitted at its next change or
@@ -612,6 +623,21 @@ unpinSession(sessionId: SessionId): Promise<void>
  * @throws {WorkspaceSessionParentInvalidError} when the link is refused.
  */
 setSessionParent(sessionId: SessionId, parentSessionId: SessionId | undefined): Promise<void>
+
+/**
+ * Set reporting attachment without changing nesting, order, or descendants.
+ * The expected parent is checked inside the registry queue. Refusals and failed
+ * storage writes publish nothing; a storage rejection may follow replacement,
+ * so reopen the backend/domain and inspect saved state before retrying.
+ * Equal state performs no write. New Sessions
+ * and forks do not inherit attachment. Removing a parent link clears its marker.
+ * @param sessionId - Known, accounted, non-subagent child.
+ * @param parentSessionId - Expected current parent, not a new parent.
+ * @param attachment - Reporting relationship to record.
+ * @returns the complete committed detached set.
+ * @throws {WorkspaceSessionAttachmentInvalidError} when the relationship is absent or invalid.
+ */
+setSessionAttachment( sessionId: SessionId, parentSessionId: SessionId, attachment: SessionAttachment, ): Promise<readonly SessionId[]>
 
 /**
  * Resolve by canonical directory path without creating or mutating a

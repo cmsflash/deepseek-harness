@@ -20,12 +20,12 @@ import { defaultWorkspaceTitle, fullyQualifiedWorkspacePath, realpathNormalize }
 import { workspaceDomainSpec } from './spec.ts'
 import type { WorkspaceDomainState, WorkspaceRecord } from './spec.ts'
 import type {
-  SessionActivity, SessionParentRefusal, Workspace, WorkspaceId as WorkspaceIdBrand,
+  SessionAttachment, SessionAttachmentRefusal, SessionActivity, SessionParentRefusal, Workspace, WorkspaceId as WorkspaceIdBrand,
 } from './types.ts'
 
 export type {
-  SessionActivity, SessionActivityItem, SessionActivityKind, SessionActivityKindMap, SessionParentRefusal,
-  Workspace,
+  SessionAttachment, SessionAttachmentRefusal, SessionActivity, SessionActivityItem, SessionActivityKind, SessionActivityKindMap,
+  SessionParentRefusal, Workspace,
 } from './types.ts'
 export { workspaceDomainState, workspaceRecord, workspaceDomainSpec } from './spec.ts'
 export type { WorkspaceDomainState, WorkspaceRecord } from './spec.ts'
@@ -102,6 +102,23 @@ export class WorkspaceSessionParentInvalidError extends Error {
   ) {
     super(`cannot nest session '${sessionId}' under '${parentSessionId}': ${detail}`)
     this.name = 'WorkspaceSessionParentInvalidError'
+  }
+}
+
+/** An attachment request refused without changing durable or published state. */
+export class WorkspaceSessionAttachmentInvalidError extends Error {
+  /**
+   * @param sessionId - Requested child.
+   * @param parentSessionId - Expected current parent.
+   * @param reason - Stable refusal reason.
+   */
+  constructor(
+    readonly sessionId: SessionId,
+    readonly parentSessionId: SessionId,
+    readonly reason: SessionAttachmentRefusal,
+  ) {
+    super(`cannot set attachment for session '${sessionId}': ${reason}`)
+    this.name = 'WorkspaceSessionAttachmentInvalidError'
   }
 }
 
@@ -560,6 +577,49 @@ export class WorkspaceRegistry extends Service {
     })
   }
 
+  /**
+   * Nested Sessions that report directly to the human. Absence means attached.
+   * @returns the complete detached set; archive and visual reparenting retain it.
+   */
+  get detachedSessionIds(): readonly SessionId[] {
+    return this.requireState().detachedSessionIds
+  }
+
+  /**
+   * Set reporting attachment without changing nesting, order, or descendants.
+   * The expected parent is checked inside the registry queue. Refusals and failed
+   * storage writes publish nothing; a storage rejection may follow replacement,
+   * so reopen the backend/domain and inspect saved state before retrying.
+   * Equal state performs no write. New Sessions
+   * and forks do not inherit attachment. Removing a parent link clears its marker.
+   * @param sessionId - Known, accounted, non-subagent child.
+   * @param parentSessionId - Expected current parent, not a new parent.
+   * @param attachment - Reporting relationship to record.
+   * @returns the complete committed detached set.
+   * @throws {WorkspaceSessionAttachmentInvalidError} when the relationship is absent or invalid.
+   */
+  setSessionAttachment(
+    sessionId: SessionId, parentSessionId: SessionId, attachment: SessionAttachment,
+  ): Promise<readonly SessionId[]> {
+    return this.enqueueOperation(async () => {
+      const state = this.requireState()
+      const refuse = (reason: SessionAttachmentRefusal): never => {
+        throw new WorkspaceSessionAttachmentInvalidError(sessionId, parentSessionId, reason)
+      }
+      if (state.sessionParents[sessionId] === undefined) refuse('no-parent')
+      if (state.sessionParents[sessionId] !== parentSessionId) refuse('parent-mismatch')
+      if (!(await this.sessionKnown(sessionId))
+        || (await this.readSessionHeader(sessionId)).origin === 'subagent'
+        || this.accountingWorkspace(sessionId) === undefined) refuse('invalid-child')
+      if (state.detachedSessionIds.includes(sessionId) === (attachment === 'detached')) return state.detachedSessionIds
+      const detachedSessionIds = attachment === 'detached'
+        ? [...state.detachedSessionIds, sessionId]
+        : state.detachedSessionIds.filter(id => id !== sessionId)
+      await this.setState({ ...state, detachedSessionIds })
+      return detachedSessionIds
+    })
+  }
+
   private accountingWorkspace(id: SessionId): WorkspaceEntity | undefined {
     for (const entity of this.entities.values()) {
       if (entity.sessionIds.includes(id)) return entity
@@ -586,9 +646,9 @@ export class WorkspaceRegistry extends Service {
   }
 
   /**
-   * Drop every link with an end on no durable account; a consistent map
-   * causes no write. A failed write is logged and leaves the links for the
-   * next start, because a leftover link must not keep the registry from starting.
+   * Drop links with an end on no durable account and markers without a link;
+   * consistent links and markers cause no write. A failed write is logged and
+   * retains the cached links and markers until the next start retries repair.
    */
   private async repairSessionParents(): Promise<void> {
     const accounted = new Set<SessionId>()
@@ -597,7 +657,8 @@ export class WorkspaceRegistry extends Service {
     }
     const state = this.requireState()
     const sessionParents = withoutSessions(state.sessionParents, id => !accounted.has(id))
-    if (sessionParents === state.sessionParents) return
+    if (sessionParents === state.sessionParents
+      && state.detachedSessionIds.every(id => sessionParents[id] !== undefined)) return
     try {
       await this.setState({ ...state, sessionParents })
     } catch (error: unknown) {
@@ -876,6 +937,7 @@ export class WorkspaceRegistry extends Service {
         archivedSessionIds: state.archivedSessionIds,
         pinnedSessionIds: state.pinnedSessionIds,
         sessionParents: state.sessionParents,
+        detachedSessionIds: state.detachedSessionIds,
       })
     }
     await this.setState({
@@ -884,6 +946,7 @@ export class WorkspaceRegistry extends Service {
       archivedSessionIds: state.archivedSessionIds,
       pinnedSessionIds: state.pinnedSessionIds,
       sessionParents: state.sessionParents,
+      detachedSessionIds: state.detachedSessionIds,
     })
   }
 
@@ -1033,6 +1096,9 @@ export class WorkspaceRegistry extends Service {
   }
 
   private async setState(state: WorkspaceDomainState): Promise<void> {
+    if (state.detachedSessionIds.some(id => state.sessionParents[id] === undefined)) {
+      state = { ...state, detachedSessionIds: state.detachedSessionIds.filter(id => state.sessionParents[id] !== undefined) }
+    }
     await (this.global as DomainGlobal<WorkspaceDomainState>).set(state)
     this.state = state
   }

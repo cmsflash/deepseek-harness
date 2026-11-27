@@ -60,6 +60,7 @@ const SESSION_WATERMARK_BASE = 5
 const SESSION_WATERMARK_AUTO_MAX = 50
 /** Stable selector fallback for a Workspace snapshot that carries no parent links. */
 const NO_SESSION_PARENTS: SessionParents = {}
+const NO_DETACHED_SESSIONS: readonly SessionId[] = []
 /** Stable selector fallback for view state persisted before nested Session rows existed. */
 const NO_SESSION_EXPANSION: SessionExpansion = {}
 
@@ -315,6 +316,7 @@ type SessionTreeProps = Pick<
   groupExpansion: Readonly<Record<string, boolean>>
   /** Persist one Workspace group's expansion. */
   setGroupExpanded: (key: string, expanded: boolean) => void
+  detachedSessionIds: readonly SessionId[]
   /** Parent links published by the Workspace model: child Session id to the Session it nests under. */
   sessionParents: SessionParents
   /** Saved expansion of Sessions that have nested Sessions; an absent id reads as expanded. */
@@ -364,7 +366,7 @@ function SessionTree({
   renderSlot,
   insertWorkspaceBefore,
   nestWorkspaces, groupExpansion, setGroupExpanded,
-  sessionParents, sessionExpansion, setSessionExpanded,
+  sessionParents, detachedSessionIds, sessionExpansion, setSessionExpanded,
   setSessionOrder, home, rowDetail, t,
   revealSessionId, onSessionRevealed, shortcuts,
 }: SessionTreeProps) {
@@ -572,6 +574,7 @@ function SessionTree({
       <Fragment key={node.id}>
         <SessionNodeItem
           node={node}
+          detached={detachedSessionIds.includes(node.id)}
           currentId={current}
           now={now}
           detail={rowDetail}
@@ -797,12 +800,13 @@ function SessionTree({
 
 /** The flat "In one list" body: every session is one draggable top-level row. */
 function FlatList({
-  list, sessionIds, rowState, onLeaveArchivedOnly, useSessionStatus, useSessionAccess, open, onSessionRenameRequest,
+  list, sessionIds, detachedSessionIds, rowState, onLeaveArchivedOnly, useSessionStatus, useSessionAccess, open, onSessionRenameRequest,
   usePanelInfo, setSessionOrder, rowDetail, workspaceReady, animationResetKey,
   revealSessionId, onSessionRevealed, renderSlot, home, t,
 }: Pick<
   SessionTreeProps,
   | 'rowDetail'
+  | 'detachedSessionIds'
   | 'useSessionStatus'
   | 'useSessionAccess'
   | 'open'
@@ -863,6 +867,7 @@ function FlatList({
             <SessionNodeItem
               key={node.id}
               node={node}
+              detached={detachedSessionIds.includes(node.id)}
               currentId={currentId}
               now={now}
               detail={rowDetail}
@@ -920,6 +925,7 @@ function SearchResults({
   onUnarchive,
   workspaces,
   archivedSessionIds,
+  detachedSessionIds,
   archivedFilter,
   query,
   remote,
@@ -930,6 +936,7 @@ function SearchResults({
 }: Pick<WorkspaceBrowserProps, 'useSessions' | 'useSessionStatus' | 'open' | 't' | 'usePanelInfo' | 'useSessionAccess'> & {
   workspaces: readonly WorkspaceView[]
   archivedSessionIds: readonly SessionNode['id'][]
+  detachedSessionIds: readonly SessionId[]
   /** Search matches follow the archived filter selected for the list. */
   archivedFilter: ArchivedFilter
   /** Unarchive an archived result row in place. */
@@ -970,6 +977,7 @@ function SearchResults({
             <SearchResultItem
               key={result.id}
               result={result}
+              detached={detachedSessionIds.includes(result.id)}
               currentId={currentId}
               onOpen={open}
               onUnarchive={onUnarchive}
@@ -1068,6 +1076,7 @@ export function WorkspaceBrowser({
   const workspaceStreamState = useWorkspaces(state => state.state)
   const archivedSessionIds = useWorkspaces(state => state.archivedSessionIds)
   const pinnedSessionIds = useWorkspaces(state => state.pinnedSessionIds)
+  const detachedSessionIds = useWorkspaces(state => state.detachedSessionIds ?? NO_DETACHED_SESSIONS)
   // Live occupancy of this surface's directory-flow hole (the same source the
   // flow reads): a composition without a picking affordance can add nothing.
   const directoryFlowAvailable = useDirectoryFlow(occupied => occupied)
@@ -1558,6 +1567,7 @@ export function WorkspaceBrowser({
         {wide && (normalizedQuery !== ''
           ? (
             <SearchResults
+              detachedSessionIds={detachedSessionIds}
               usePanelInfo={usePanelInfo}
               useSessionAccess={useSessionAccess}
               useSessions={useSessions}
@@ -1576,6 +1586,7 @@ export function WorkspaceBrowser({
           : groupBy === 'flat'
             ? (
               <FlatList
+                detachedSessionIds={detachedSessionIds}
                 useSessionAccess={useSessionAccess}
                 usePanelInfo={usePanelInfo}
                 list={list}
@@ -1598,6 +1609,7 @@ export function WorkspaceBrowser({
             )
             : (
               <SessionTree
+                detachedSessionIds={detachedSessionIds}
                 useRemoteAccess={useRemoteAccess}
                 useSessionAccess={useSessionAccess}
                 useWorkspaceAccess={useWorkspaceAccess}

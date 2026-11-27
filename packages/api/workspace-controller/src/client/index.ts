@@ -15,7 +15,7 @@ export { ClientWorkspaceModel } from './model.ts'
 export type {
   WorkspaceFollowSink, WorkspaceListPhase, WorkspaceRemote, WorkspaceSnapshot,
 } from './model.ts'
-export { WorkspaceArchiveError, WorkspaceController, WorkspaceCreateError } from './service.ts'
+export { WorkspaceAttachmentError, WorkspaceArchiveError, WorkspaceController, WorkspaceCreateError } from './service.ts'
 export type { IWorkspaces, WorkspaceSource } from './service.ts'
 export type {
   SessionActivity, SessionActivityItem, SessionActivityKind, SessionActivityKindMap, SessionParentRefusal,
@@ -98,6 +98,9 @@ export function createWorkspaceStateStream(
 
 function acceptIncrement(accept: WorkspaceFollowSink, frame: WorkspaceFollowIncrement): void {
   switch (frame.type) {
+    case 'registry':
+      accept.replaceRegistry(frame.value)
+      return
     case 'replace':
       accept.replaceBaseline(frame.value)
       return
