@@ -46,6 +46,8 @@ export interface PhoneHistoryHost {
   showList(shown: boolean): void
   /** Close the right panel through its occupant, if one registered how. */
   dismissRightbar(): void
+  /** Called before a platform back or forward action changes the view on screen. */
+  willTraverse(): void
 }
 
 /** The parts of `window` the controller uses. */
@@ -108,9 +110,11 @@ export function syncPhoneHistory(host: PhoneHistoryHost, target: PhoneHistoryTar
     if (depth === null) return
     const entries = historyEntryDepth(history.state)
     if (entries < depth) {
+      host.willTraverse()
       if (depth === 2 && entries <= 1) host.dismissRightbar()
       if (entries === 0) host.showList(true)
     } else if (entries > depth && depth === 0) {
+      host.willTraverse()
       host.showList(false)
     }
   }

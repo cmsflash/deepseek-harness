@@ -85,6 +85,14 @@
   --dsh-dockkit-dock-layer: 40;
 }
 
+/* A phone back action whose platform animation already showed the
+   conversation (ui-layout marks the root element) hides the panel at once. */
+:global(html[data-dsh-phone-pop]) .panel :global([data-dockkit-host='dock']),
+:global(html[data-dsh-phone-pop]) .panel :global([data-dockkit-empty]),
+:global(html[data-dsh-phone-pop]) .panel :global([data-dockkit-divider]) {
+  transition: none;
+}
+
 /* Once the frame reports the fullscreen panel (data-rightbar-fullscreen,
    ui-layout), the main conversation docks its composer along the bottom of the
    covered area and publishes its height on the document root (ui-conversation).

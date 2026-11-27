@@ -47,8 +47,10 @@ function fakeLayout(facts: PhoneLayoutFacts) {
     for (const listener of listeners) listener()
   }
   const dismissRightbar = vi.fn(() => { set({ rightbarShown: false }) })
+  const willTraverse = vi.fn()
   return {
     host: {
+      willTraverse,
       read: () => state,
       subscribe: (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener) } },
       showList: (shown: boolean) => { set({ narrowExpanded: shown }) },
@@ -56,6 +58,7 @@ function fakeLayout(facts: PhoneLayoutFacts) {
     },
     set,
     dismissRightbar,
+    willTraverse,
     read: () => state,
   }
 }
@@ -88,6 +91,8 @@ describe('syncPhoneHistory', () => {
     browser.flush()
     expect(browser.depth()).toBe(0)
     expect(layout.dismissRightbar).not.toHaveBeenCalled()
+    // Rewinds the page started itself change no view.
+    expect(layout.willTraverse).not.toHaveBeenCalled()
   })
 
   it('closes the top view on a platform back action without rewinding twice', () => {
@@ -105,6 +110,7 @@ describe('syncPhoneHistory', () => {
     browser.flush()
     expect(layout.read().narrowExpanded).toBe(true)
     expect(browser.history.go).toHaveBeenCalledTimes(2)
+    expect(layout.willTraverse).toHaveBeenCalledTimes(2)
   })
 
   it('leaves the panel shown while the right panel reports its closing later', () => {
@@ -143,6 +149,7 @@ describe('syncPhoneHistory', () => {
     browser.traverse(1)
     browser.flush()
     expect(layout.read().narrowExpanded).toBe(false)
+    expect(layout.willTraverse).toHaveBeenCalledTimes(2)
     expect(browser.length()).toBe(2)
   })
 

@@ -14,7 +14,7 @@ At or below `MOBILE_MAX` the frame stacks three full-screen views: the thread li
 
 Each view above the list owns one browser history entry, marked with its depth in `history.state`. `phone-history.ts` reconciles entries with the views on transitions only: a rise in the on-screen depth pushes entries, and a fall rewinds the entries above it. A popstate below the on-screen depth asks the views to close and leaves the entries alone while they catch up, because the right panel reports its closing a render later; comparing levels instead of transitions would push the popped entry back during that render. Android's back action, Safari's edge swipe, and the browser's forward action all go through this path, so the frame needs no platform detection for them.
 
-An iOS home-screen app has no browser gesture, so the frame tracks a swipe from the left 24px itself, only when `navigator.standalone` is true. The top view follows the finger through a CSS custom property, and a release past 35% of the width or a flick runs the same back action as the frame's back control.
+iOS needs no gesture code: Safari and home-screen apps both turn a swipe from the left edge into a history traversal and animate it with a snapshot of the destination entry. A frame-owned swipe for home-screen apps was built first, on the belief that they have no such gesture, and on an iPhone both ran at once: the page slid under the finger while the frame slid its own view inside it. Because iOS has already shown the destination when `popstate` arrives, the frame marks the root element for 300ms around a traversal-driven view change, and the frame and the right panel skip their slide while the mark is set. The mark is set only where `navigator.standalone` is defined, which identifies iOS WebKit; Android's back action shows no preview, so the slide stays there.
 
 Closing the right panel belongs to ui-sidebar-right, which owns its expanded state. The panel registers a dismiss callback through `ctx.layout.registerRightbarDismiss`; ui-layout calls it for a back action from the panel and imports nothing from that package.
 
@@ -22,11 +22,11 @@ Closing the right panel belongs to ui-sidebar-right, which owns its expanded sta
 
 **URL routes per thread.** A route would give each thread a shareable address, but the client has no router and Session selection does not live in the URL. Depth markers in `history.state` give the back actions without changing how Sessions are opened.
 
-**An edge-swipe handler on every touch device.** Safari tabs and Android already turn edge gestures into history traversals; a second handler would run the same back action twice or fight the browser's own animation.
+**An edge-swipe handler.** iOS and Android already turn edge gestures into history traversals; a second handler runs beside the platform's own animation.
 
 ## Testing
 
-`phone-history.client.spec.ts` drives an in-memory history with asynchronous traversal: pushes and rewinds, platform back from each level, a panel that reports its closing late, a two-level jump, forward, a reload that restores its views, and the column layout. `app-frame.client.spec.tsx` covers the inert views, the back control, and the swipe thresholds; `apps/web/tests/mobile-viewport.e2e.ts` covers both views at full width, the back control, browser back from the conversation and from the right panel.
+`phone-history.client.spec.ts` drives an in-memory history with asynchronous traversal: pushes and rewinds, platform back from each level, a panel that reports its closing late, a two-level jump, forward, a reload that restores its views, and the column layout. `app-frame.client.spec.tsx` covers the inert views and the back control, and `apply.client.spec.ts` the traversal mark; `apps/web/tests/mobile-viewport.e2e.ts` covers both views at full width, the back control, browser back from the conversation and from the right panel.
 
 ## Consequences
 

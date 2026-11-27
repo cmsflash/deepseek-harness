@@ -266,32 +266,11 @@
   width: 0;
 }
 
-/* A back swipe (AppFrame) moves the top view with the finger through
-   --dsh-phone-swipe; the release eases it to the end position. */
-.frame[data-overlay][data-swipe] .threadPage,
-.frame[data-overlay][data-swipe] .sidebarCol,
-.frame[data-overlay][data-swipe] .rightbarCol {
+/* A platform back action whose own animation already showed the destination
+   (phone-history.ts marks the root element) lands without a second slide. */
+:global(html[data-dsh-phone-pop]) .frame[data-overlay] .sidebarCol,
+:global(html[data-dsh-phone-pop]) .frame[data-overlay] .threadPage {
   transition: none;
-}
-
-.frame[data-overlay][data-swipe='thread'] .threadPage {
-  box-shadow: var(--dsw-shadow-lv3);
-  transform: translateX(var(--dsh-phone-swipe, 0px));
-}
-
-.frame[data-overlay][data-swipe='thread'] .sidebarCol {
-  transform: translateX(calc(-30% + var(--dsh-phone-swipe, 0px) * 0.3));
-}
-
-.frame[data-overlay][data-swipe='panel'] .rightbarCol {
-  z-index: 40;
-  transform: translateX(var(--dsh-phone-swipe, 0px));
-}
-
-.frame[data-overlay][data-swipe][data-swipe-release] .threadPage,
-.frame[data-overlay][data-swipe][data-swipe-release] .sidebarCol,
-.frame[data-overlay][data-swipe][data-swipe-release] .rightbarCol {
-  transition: transform var(--ds-transition-duration-slow) var(--ds-ease-in-out);
 }
 
 /* Floats over the conversation's own top-left chrome: the frame cannot
@@ -324,10 +303,7 @@
 
 @media (prefers-reduced-motion: reduce) {
   .frame[data-overlay] .sidebarCol,
-  .frame[data-overlay] .threadPage,
-  .frame[data-overlay][data-swipe][data-swipe-release] .threadPage,
-  .frame[data-overlay][data-swipe][data-swipe-release] .sidebarCol,
-  .frame[data-overlay][data-swipe][data-swipe-release] .rightbarCol {
+  .frame[data-overlay] .threadPage {
     transition: none;
   }
 }

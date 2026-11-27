@@ -150,6 +150,40 @@ describe('ui-layout client apply', () => {
     await fiber.dispose()
   })
 
+  it('marks a platform back action only where the browser animates the history swipe itself', async () => {
+    for (const webkit of [false, true]) {
+      if (webkit) Object.defineProperty(navigator, 'standalone', { configurable: true, value: false })
+      vi.useFakeTimers()
+      const { ctx, slots } = await bench()
+      const fiber = ctx.plugin({ inject: [...inject], apply })
+      await fiber.await()
+      try {
+        const instance = (slots.entries('root')[0]!.store as ReturnType<typeof createLayoutStore>).create()
+        const pop = (): void => {
+          instance.actions.setViewportWidth(390)
+          instance.actions.showNarrowSidebar(false)
+          window.history.replaceState(null, '')
+          window.dispatchEvent(new PopStateEvent('popstate'))
+        }
+        pop()
+        expect(instance.getSnapshot().layoutInfo.narrowExpanded).toBe(true)
+        expect('dshPhonePop' in document.documentElement.dataset).toBe(webkit)
+        vi.advanceTimersByTime(200)
+        pop()
+        vi.advanceTimersByTime(200)
+        expect('dshPhonePop' in document.documentElement.dataset).toBe(webkit)
+        vi.advanceTimersByTime(100)
+        expect('dshPhonePop' in document.documentElement.dataset).toBe(false)
+        pop()
+      } finally {
+        await fiber.dispose()
+        vi.useRealTimers()
+        if (webkit) Reflect.deleteProperty(navigator, 'standalone')
+      }
+      expect('dshPhonePop' in document.documentElement.dataset).toBe(false)
+    }
+  })
+
   it('theme presenter applies the initial snapshot, follows theme/change, and unwinds on dispose', async () => {
     const { ctx } = await bench()
     const fiber = ctx.plugin({ inject: [...inject], apply })

@@ -182,11 +182,29 @@ export function apply(ctx: ClientContext): void {
       if (depth === 2) layout.dismissRightbar()
       else if (depth === 1) instance.actions.showNarrowSidebar(true)
     }
+    // iOS WebKit, the engine that defines `navigator.standalone`, animates a
+    // history swipe itself and shows the destination before popstate fires,
+    // so the frame's own slide would replay the move. The marker spans the
+    // right panel's closing report, which arrives a render later.
+    const webkitHistorySwipe = 'standalone' in navigator
+    let traverseMark: ReturnType<typeof setTimeout> | undefined
+    const clearTraverseMark = (): void => {
+      clearTimeout(traverseMark)
+      traverseMark = undefined
+      delete document.documentElement.dataset.dshPhonePop
+    }
+    const willTraverse = (): void => {
+      if (!webkitHistorySwipe) return
+      clearTimeout(traverseMark)
+      document.documentElement.dataset.dshPhonePop = ''
+      traverseMark = setTimeout(clearTraverseMark, 300)
+    }
     const disposeHistory = syncPhoneHistory({
       read: readFacts,
       subscribe: listener => instance.subscribe(listener),
       showList: (shown) => { instance.actions.showNarrowSidebar(shown) },
       dismissRightbar: () => { layout.dismissRightbar() },
+      willTraverse,
     }, window)
     const disposePanelInfo = ctx.slots.provideRoot({ hooks: { panelInfo: layout.panelInfo } })
     const disposeService = ctx.reflect.provide('layout', layout)
@@ -221,6 +239,7 @@ export function apply(ctx: ClientContext): void {
     return () => {
       disposeShortcut()
       disposeHistory()
+      clearTraverseMark()
       layout.dispose()
       disposePanels()
       disposeRegistration()
