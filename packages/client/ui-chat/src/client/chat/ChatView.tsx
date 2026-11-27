@@ -194,6 +194,8 @@ export function ChatView({
   const latestSteering = pendingInputs.findLast(item => 'source' in item)
   const steeringId = latestSteering?.source.kind === 'user' && 'rpcId' in latestSteering.source
     ? latestSteering.source.rpcId : latestSteering?.id ?? null
+  // A saved offset can lie below the row's estimate and outside the observer's reveal margin.
+  const [restoreAnchorKey] = useState(() => chatScroll.read()?.anchorKey)
   const scroll = useChatScroll({
     ready: openState === 'open',
     order, firstSeq, lastKey, running, loadingOlder, hasMore, chatScroll, loadOlder, loadThrough, deferCompletedTurns,
@@ -229,7 +231,7 @@ export function ChatView({
         />
       )}
       <div className={css.root} data-chat-following-tail={scroll.followingTail ? '' : undefined}>
-        <div ref={scroll.listRef} className={css.scroll}>
+        <div ref={scroll.listRef} className={css.scroll} data-chat-scroll="">
           <div ref={scroll.columnRef} className={css.column} data-chat-flow=""
             data-chat-motion={deferCompletedTurns && scroll.initialized
               && (running || motionTail || pendingInputs.length > 0) ? '' : undefined}>
@@ -248,7 +250,7 @@ export function ChatView({
             )}
             <MarkdownDelegateProvider openFile={requestOpenFile} openExternalLink={openExternalLink} fileImages={fileImages}>
               {renderSlot('conversation.chat.flow', {
-                entries, pendingInputs, lastInputTurn, deferCollapse,
+                entries, pendingInputs, lastInputTurn, deferCollapse, restoreAnchorKey, commitHistory: scroll.commitHistory,
                 cwd, openFile: requestOpenFile, inspectCall, forkAt, loadImage, fileMentions,
               }, { hookContext: flowContext })}
             </MarkdownDelegateProvider>

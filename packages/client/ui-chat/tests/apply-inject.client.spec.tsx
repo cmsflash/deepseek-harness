@@ -141,6 +141,24 @@ async function bench(initialSettings?: ChatSettings, withBrowserRegistry = true,
 }
 
 describe('Chat inject API', () => {
+  it('projects the validated history quiet delay as a stable readonly source, including zero', async () => {
+    const b = await bench()
+    try {
+      const source = b.chatFlowApi(b.rootReference).injected.hooks.historyRenderQuietMs
+      expect(source.getSnapshot()).toBe(500)
+      expect(b.chatFlowApi(b.rootReference).injected.hooks.historyRenderQuietMs).toBe(source)
+      const changed = vi.fn()
+      const unsubscribe = source.subscribe(changed)
+      try {
+        b.chatSettings.publish({ value: { linkOpening: 'sidebar', performanceUsage: 'detailed', historyRenderQuietMs: 0 } })
+        expect(source.getSnapshot()).toBe(0)
+        expect(changed).toHaveBeenCalled()
+        b.chatSettings.publish({ value: { linkOpening: 'sidebar', performanceUsage: 'detailed', historyRenderQuietMs: 750 } })
+        expect(source.getSnapshot()).toBe(750)
+      } finally { unsubscribe() }
+    } finally { await b.runtime.dispose() }
+  })
+
   it('routes text gestures from each Chat view to the registered consumer with its own Session', async () => {
     const b = await bench()
     try {

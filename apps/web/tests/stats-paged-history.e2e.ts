@@ -138,6 +138,7 @@ describe('web e2e: whole-session stats survive history paging', () => {
 
   it('matches the paged-stats aria golden', async () => {
     onTestFailed(() => saveFailureShot(page, 'web-e2e-stats-paged-aria'))
+    await expect.poll(() => page.locator('[data-chat-window-placeholder]').count(), { timeout: 30_000 }).toBe(0)
     const snapshot = (await captureStableAria(page, '[class*="centerCol"]', scaffold.workspaceCwd))
       .split(SEED_ID).join('{{seededId}}')
     await compareOrRefreshGolden(UI_EXPECTED, snapshot, MODE)

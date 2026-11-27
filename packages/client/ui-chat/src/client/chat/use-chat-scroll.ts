@@ -45,6 +45,7 @@ interface ChatScrollState extends ChatReadingState {
   readonly navigateToTurn: ChatNavigation['navigateToTurn']
   readonly loadEarlier: ChatNavigation['loadEarlier']
   readonly returnToBottom: () => void
+  readonly commitHistory: (commit: () => void) => void
   readonly motion: FlowMotionRows
 }
 
@@ -84,7 +85,8 @@ export function useChatScroll(input: ChatScrollInput): ChatScrollState {
     if (!content.current.opened) return
     const now = Date.now()
     if (now - lastViewReport.current < VIEW_REPORT_INTERVAL_MS) return
-    const bounds = list.getBoundingClientRect()
+    const scroller = list.closest<HTMLElement>('[data-conversation-scroll]') ?? list
+    const bounds = scroller.getBoundingClientRect()
     let from: number | null = null
     let to: number | null = null
     for (const row of list.querySelectorAll<HTMLElement>('[data-chat-anchor-key]:not([hidden]):not([hidden] *)')) {
@@ -235,5 +237,6 @@ export function useChatScroll(input: ChatScrollInput): ChatScrollState {
     navigateToTurn: navigation.navigateToTurn,
     loadEarlier: navigation.loadEarlier,
     returnToBottom,
+    commitHistory: viewport.commitHistory,
   }
 }

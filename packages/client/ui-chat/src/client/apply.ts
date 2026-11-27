@@ -42,7 +42,9 @@ import { TranscriptViewRow, type TranscriptViewRowInjected } from './settings/Tr
 import { createChatStore } from './stores.ts'
 import { TranscriptViewPolicy } from './transcript-view.ts'
 import { derivePresentationPolicy } from './presentation-policy.ts'
-import { CHAT_SETTINGS_NAMESPACE, DEFAULT_LINK_OPENING, DEFAULT_TRANSCRIPT_VIEW_MODE, type ChatSettings } from '../chat-settings.ts'
+import {
+  CHAT_SETTINGS_NAMESPACE, DEFAULT_HISTORY_RENDER_QUIET_MS, DEFAULT_LINK_OPENING, DEFAULT_TRANSCRIPT_VIEW_MODE, type ChatSettings,
+} from '../chat-settings.ts'
 import { LinkOpeningRow, type LinkOpeningRowInjected } from './settings/LinkOpeningRow.tsx'
 import { PerformanceUsageRow, type PerformanceUsageRowInjected } from './settings/PerformanceUsageRow.tsx'
 import { PerformanceUsagePolicy } from './performance-usage.ts'
@@ -139,6 +141,10 @@ export function apply(ctx: Context): void {
   const chatStore = createChatStore()
   const chatScrollPositions = new Map<SessionId, ChatScrollPosition>()
   const chatSettings = ctx.configForms.get<ChatSettings>(CHAT_SETTINGS_NAMESPACE)
+  const historyRenderQuietMs: ObservableSnapshot<number> = {
+    getSnapshot: () => chatSettings.getSnapshot().value?.historyRenderQuietMs ?? DEFAULT_HISTORY_RENDER_QUIET_MS,
+    subscribe: listener => chatSettings.subscribe(listener),
+  }
   const linkOpening = createSnapshotStore(chatSettings.getSnapshot().value?.linkOpening ?? DEFAULT_LINK_OPENING)
   ctx.effect(() => chatSettings.subscribe(() => {
     const accepted = chatSettings.getSnapshot().value?.linkOpening
@@ -240,7 +246,10 @@ export function apply(ctx: Context): void {
     inject: (sessionId: SessionId): ChatFlowDataInjected => {
       const binding = ctx.sessions.binding(sessionId)
       if (binding === undefined) throw new Error(`ui-chat: unknown session "${sessionId}"`)
-      return { ...nodeSources(binding), hooks: { presentation, connectionState, runningKnown: ctx.sessions.runningKnown } }
+      return {
+        ...nodeSources(binding),
+        hooks: { presentation, connectionState, runningKnown: ctx.sessions.runningKnown, historyRenderQuietMs },
+      }
     },
   }, ChatFlow))
 

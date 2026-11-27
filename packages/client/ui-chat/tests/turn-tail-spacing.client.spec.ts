@@ -27,22 +27,23 @@ describe('Turn tail slot spacing', () => {
 
   it('keeps the tail slot above a marked steering batch start and out of neighbour gaps', () => {
     const view = read('ChatView.module.css')
-    const marked = String.raw`:has\(> \[data-slot="conversation\.chat\.node"\] > \[data-chat-steering-batch`
-    expect(view).toMatch(new RegExp(String.raw`\.flowItem${marked}="start"\]\)\s*\{\s*--dsh-chat-flow-gap:\s*calc\(44px \+ var\(--dsh-content-font-delta, 0px\)\);`))
-    expect(view).toMatch(new RegExp(String.raw`:not\(\.running\):not\(${marked}\]\)\)\s*\{\s*--dsh-chat-flow-gap:\s*12px;`))
-    expect(view).toMatch(new RegExp(String.raw`:not\(\.running\):not\(\[data-submission-echo\], \[data-pending-steering\]\):not\(${marked}\]\)\)\s*\{\s*--dsh-chat-flow-gap:\s*16px;`))
+    expect(view).toMatch(new RegExp(String.raw`\.flowItem\[data-chat-row-steering-start\]\s*\{\s*--dsh-chat-flow-gap:`
+      + String.raw`\s*calc\(44px \+ var\(--dsh-content-font-delta, 0px\)\);`))
+    expect(view).toMatch(/:not\(\.running\):not\(\[data-chat-row-steering\]\)\s*\{\s*--dsh-chat-flow-gap:\s*12px;/)
+    expect(view).toMatch(new RegExp(String.raw`:not\(\.running\):not\(\[data-submission-echo\], \[data-pending-steering\]\)`
+      + String.raw`:not\(\[data-chat-row-steering\]\)\s*\{\s*--dsh-chat-flow-gap:\s*16px;`))
   })
 
   it('keeps echoes after a running Turn\'s empty control at the input gap', () => {
     const view = read('ChatView.module.css')
     const header = view.slice(view.indexOf('/* The Turn header has 16px clearance'))
     const rule = header.slice(0, header.indexOf('}') + 1)
-    const empty = String.raw`:empty, :has(> [data-slot="conversation.chat.node"]:empty)`
+    const empty = '[data-chat-row-empty]'
     // A visible control keeps its 16px clearance for every following row, echoes included.
     expect(rule).toContain(String.raw`[data-chat-flow-kind="turn-process"]:not(${empty}) + :not([hidden])`)
     // After any control, including an empty running one, the 16px clearance skips local echoes,
     // which stay at the input gap until their durable rows replace them.
-    expect(rule).toContain(String.raw`[data-chat-flow-kind="turn-process"] + :not([hidden]):not(.flowItem:is(${empty}))`
+    expect(rule).toContain(String.raw`[data-chat-flow-kind="turn-process"] + :not([hidden]):not(.flowItem${empty})`
       + ':not(.running):not([data-submission-echo], [data-pending-steering])')
   })
 })

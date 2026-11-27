@@ -143,11 +143,13 @@ interface OwnedBox {
  * @param driver - the viewport's driver for the next batch; null while detached.
  * @param foldingChanged - disable or restore this viewport's native scroll anchoring.
  * @param beforeInstantHide - measures the layout before a row hides at once outside a motion scope.
+ * @param beforeMeasure - synchronizes DOM-derived row styling before box measurements; omitted owners need no synchronization.
  * @returns stable callbacks and cleanup for this viewport's animations.
  */
 export function createFlowMotion(
   driver: () => InputFoldDriver | null, foldingChanged: (active: boolean) => void,
   beforeInstantHide?: (element: HTMLElement) => void,
+  beforeMeasure?: () => void,
 ): FlowMotion {
   const running = new Map<HTMLElement, () => void>()
   let folding = 0
@@ -179,6 +181,7 @@ export function createFlowMotion(
 
   /** @returns whether a batch started; without a closing member the caller settles held rows itself. */
   function runBatch(current: InputFoldDriver): boolean {
+    beforeMeasure?.()
     // Every member continues from the size it has now, so the driver's measured layout and its change
     // amounts describe the same boxes: a closing box may have moved on its own transition, and a revealing
     // box may have grown part of the way on its own transition.
@@ -382,6 +385,7 @@ export function createFlowMotion(
 
   function collapse(element: HTMLElement, done: () => void): void {
     cancelMotion(element)
+    beforeMeasure?.()
     const height = element.offsetHeight
     const marginTop = Number.parseFloat(getComputedStyle(element).marginTop) || 0
     if (height === 0 && marginTop === 0) {
@@ -431,6 +435,7 @@ export function createFlowMotion(
 
   function reveal(element: HTMLElement): void {
     cancelMotion(element)
+    beforeMeasure?.()
     const height = element.offsetHeight
     if (height === 0) return
     const marginTop = Number.parseFloat(getComputedStyle(element).marginTop) || 0
@@ -451,6 +456,7 @@ export function createFlowMotion(
     }
     let timer: ReturnType<typeof setTimeout> | undefined
     const startTransition = (): void => {
+      beforeMeasure?.()
       void element.offsetHeight
       style.transition = `height ${CLOSE_MS}ms ${EASING} ${CLOSE_DELAY_MS}ms, margin-top ${CLOSE_MS}ms ${EASING} ${CLOSE_DELAY_MS}ms, `
         + `opacity ${CLOSE_MS}ms ${EASING} ${CLOSE_DELAY_MS}ms`

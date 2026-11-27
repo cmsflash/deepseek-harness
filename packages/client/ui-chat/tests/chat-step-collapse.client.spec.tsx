@@ -65,6 +65,7 @@ interface MountOptions {
   readonly entries?: readonly RenderEntry[]
   /** Process groups the root references name. */
   readonly groups?: readonly GroupSnapshot<ProcessGroupData>[]
+  readonly restoreAnchorKey?: string
 }
 
 /**
@@ -108,6 +109,8 @@ function mount(nodes: readonly ChatConversationViewNode[], mode: TranscriptViewM
     pendingInputs: [],
     lastInputTurn: undefined,
     deferCollapse: false,
+    restoreAnchorKey: options.restoreAnchorKey,
+    commitHistory: (commit: () => void) => { commit() },
     cwd: undefined,
     openFile: vi.fn(),
     inspectCall: vi.fn(),
@@ -125,6 +128,7 @@ function mount(nodes: readonly ChatConversationViewNode[], mode: TranscriptViewM
     usePresentation: bindSnapshotSelector(presentation),
     useConnectionState: bindSnapshotSelector(createSnapshotStore<ConnectionState | undefined>('connected')),
     useRunningKnown: bindSnapshotSelector(createSnapshotStore(true)),
+    useHistoryRenderQuietMs: bindSnapshotSelector(createSnapshotStore(0)),
     useGroupAction: CHAT_FLOW_INJECT.hooks.groupAction(hookStandard, { motion: MOTION }),
     useGroupHeaderAction: CHAT_FLOW_INJECT.hooks.groupHeaderAction(hookStandard, { motion: MOTION }),
     useStore: bindSnapshotSelector(store),
@@ -150,6 +154,47 @@ function digests(...entries: StepDigest[]): StepDigestsByTurn {
 }
 
 describe('ChatFlow step collapse', () => {
+  it.each([undefined, 'response', 'custom'])('keeps only the exact saved node part eager (%s)', (groupPart) => {
+    class IntersectionObserverStub {
+      observe(): void {}
+      unobserve(): void {}
+      disconnect(): void {}
+    }
+    vi.stubGlobal('IntersectionObserver', IntersectionObserverStub)
+    try {
+      const nodes = Array.from({ length: 12 }, (_, i) => stepNode(`s${i}`, 1, i + 1, 'reply'))
+      const entries = nodes.map(node => ({ kind: 'node' as const, key: node.key as NodeKey,
+        ...groupPart === undefined ? {} : { groupPart } }))
+      const restoreAnchorKey = groupPart === undefined || groupPart === 'response' ? 's0' : JSON.stringify(['s0', groupPart])
+      const view = mount(nodes, 'verbose', { entries, restoreAnchorKey })
+      expect(flow(view)).toEqual(['s0', 's11'])
+      expect(view.container.querySelectorAll('[data-chat-window-placeholder]')).toHaveLength(10)
+      view.unmount()
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('keeps the newest eligible body eager even when noneligible rows follow it', () => {
+    class IntersectionObserverStub {
+      observe(): void {}
+      unobserve(): void {}
+      disconnect(): void {}
+    }
+    vi.stubGlobal('IntersectionObserver', IntersectionObserverStub)
+    try {
+      const reasoning = chatNode({ key: 'reasoning', data: {
+        ...settledAssistant(), blocks: [{ kind: 'reasoning', text: 'Details' }],
+      } })
+      const view = mount([stepNode('older', 1, 1, 'Older reply'), stepNode('newest', 1, 2, 'Newest reply'), reasoning], 'verbose')
+      expect(flow(view)).toEqual(['newest', 'reasoning'])
+      expect(view.container.querySelectorAll('[data-chat-window-placeholder]')).toHaveLength(1)
+    } finally {
+      cleanup()
+      vi.unstubAllGlobals()
+    }
+  })
+
   it.each(['compact', 'standard', 'detailed', 'verbose'] as const)('renders every step in %s mode', (mode) => {
     const view = mount(THREE_STEPS, mode)
     expect(flow(view)).toEqual(['s1', 's2', 's3'])

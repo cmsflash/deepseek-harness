@@ -1,0 +1,19 @@
+# Bilingual-pair consistency record for 2026-11-24-progressive-chat-rendering.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/architecture/2026-11-24-progressive-chat-rendering.md
+/agent-note-progressive-chat-rendering:
+  en: 3cae3d904dad7098
+  zh: 9fe5198b439640f0
+/agent-note-progressive-chat-rendering/problem:
+  en: f7c0bc0fcafb4b70
+  zh: ee88bb06ee7e5243
+/agent-note-progressive-chat-rendering/decision:
+  en: 809778d55a9c716b
+  zh: 62d48c3c0ac9426f
+/agent-note-progressive-chat-rendering/alternatives-considered:
+  en: 1dab5d069be6cdcb
+  zh: 277c4629035e4575
+/agent-note-progressive-chat-rendering/consequences:
+  en: 8567730b60eb824c
+  zh: 6222b20fe693c24e

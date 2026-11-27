@@ -4,11 +4,13 @@ import type { PendingSubmission } from '@deepseek-ai/dsh-api-session-controller/
 import type { ConversationGroupedView, RenderEntry } from '@deepseek-ai/dsh-client-ui-conversation/client'
 import { assertNever } from '@deepseek-ai/dsh-util-values'
 import type { ChatFlowSlotProps } from '../contract/slots.ts'
+import type { ChatNode } from '../contract/chat-nodes.ts'
 import { ChatNodeSeat } from './ChatNodeSeat.tsx'
 import { ChatGroupSeat } from './ChatGroupSeat.tsx'
 import { CollapsedStepsRow } from './CollapsedStepsRow.tsx'
 import { PendingSteeringBubble, PendingSubmissionBubble } from './MessageItem.tsx'
 import { chatRenderKey } from './render-entry.ts'
+import { estimateChatBody, TranscriptWindow } from './transcript-window.ts'
 import { RunningStatus } from './RunningStatus.tsx'
 import { collapseSettledSteps, type ChatFlowRow } from './step-collapse.ts'
 import css from './ChatView.module.css'
@@ -47,9 +49,9 @@ function isTranscriptEcho(item: PendingInput): boolean {
 
 /** Render the flow without adding a DOM parent or changing keyed row positions. */
 export const ChatFlow = memo(function ChatFlow({
-  entries, pendingInputs, lastInputTurn, deferCollapse, useConversation,
+  entries, pendingInputs, lastInputTurn, deferCollapse, restoreAnchorKey, commitHistory, useConversation,
   useSession, useChat, useChatNode, useChatNodeBottom, useChatNodeProcess, useChatGroup, usePresentation, useConnectionState,
-  useRunningKnown,
+  useRunningKnown, useHistoryRenderQuietMs,
   useStore, actions, renderSlot, renderFactorySlot, t, useGroupAction, useGroupHeaderAction, expandTurn,
   cwd, openFile, inspectCall, forkAt, loadImage, fileMentions,
 }: ChatFlowSlotProps) {
@@ -103,11 +105,20 @@ export const ChatFlow = memo(function ChatFlow({
     useStore, actions, renderSlot, t, useGroupAction, deferCollapse,
     cwd, openFile, inspectCall, forkAt, loadImage, fileMentions,
   }
-  const rows = flow.map((entry) => {
+  const quietMs = useHistoryRenderQuietMs(value => value)
+  const transcriptWindow = useMemo(() => new TranscriptWindow(quietMs, commitHistory), [quietMs, commitHistory])
+  // The newest rich body paints before the first viewport observation or tail landing.
+  const eagerBody = flow.findLastIndex(entry => entry.kind === 'node'
+    && estimateChatBody(nodeStore.get(entry.key) as ChatNode | undefined, entry.groupPart) !== null)
+  const rows = flow.map((entry, index) => {
     switch (entry.kind) {
-      case 'node':
+      case 'node': {
+        const anchorKey = entry.groupPart === undefined || entry.groupPart === 'response'
+          ? entry.key : JSON.stringify([entry.key, entry.groupPart])
         return <ChatNodeSeat {...seatProps} key={chatRenderKey(entry)} nodeKey={entry.key}
+          transcriptWindow={index !== eagerBody && anchorKey !== restoreAnchorKey ? transcriptWindow : undefined}
           {...entry.groupPart === undefined ? {} : { groupPart: entry.groupPart }} />
+      }
       case 'group':
         return <ChatGroupSeat {...seatProps} key={chatRenderKey(entry)} groupKey={entry.key}
           useChatGroup={useChatGroup} useGroupHeaderAction={useGroupHeaderAction} />

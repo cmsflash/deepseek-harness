@@ -10,10 +10,12 @@ import { isAtOrOutside } from '../contract/group-tree.ts'
 import { turnProcessAlwaysOpen } from '../contract/turn-process.ts'
 import { turnProcessOpen } from '../stores.ts'
 import { hiddenOrCollapsing } from './flow-motion.ts'
+import { estimateChatBody, useChatBodyHeight, type TranscriptWindow } from './transcript-window.ts'
 import css from './ChatView.module.css'
 
 interface ChatNodeSeatProps extends ChatNodeOwnerProps {
   readonly nodeKey: string
+  readonly transcriptWindow?: TranscriptWindow | undefined
   /** A replaced Builder must rebind keyed hooks even when references and keys survive. */
   readonly nodeStore: ChatNodeStore
   readonly useChatNode: ChatFlowSlotProps['useChatNode']
@@ -48,7 +50,7 @@ function turnOf(node: ChatNode | undefined): number | undefined {
  * only seats whose visibility actually changes.
  */
 export const ChatNodeSeat = memo(function ChatNodeSeat({
-  nodeKey, groupPart, useChatNode, useChatNodeProcess, usePresentation,
+  nodeKey, groupPart, transcriptWindow, useChatNode, useChatNodeProcess, usePresentation,
   cwd, openFile, inspectCall, forkAt,
   loadImage, fileMentions, useStore, actions, renderSlot, t, useChatNodeBottom, deferCollapse, useGroupAction,
 }: ChatNodeSeatProps) {
@@ -119,6 +121,12 @@ export const ChatNodeSeat = memo(function ChatNodeSeat({
     if (processMember) setOpen(true)
   }, [processMember, setOpen])
   const wrapperRef = useGroupAction(processHidden, revealProcess)
+  // The latest exchange may fold on the next input; its participants need their real boxes before that commit.
+  const estimate = useMemo(
+    () => transcriptWindow === undefined || processHidden || bottom === true ? null : estimateChatBody(routedNode, groupPart),
+    [transcriptWindow, processHidden, bottom, routedNode, groupPart],
+  )
+  const bodyHeight = useChatBodyHeight(transcriptWindow, wrapperRef, estimate)
   const [disclosureReset] = useState(() => createSnapshotStore(0))
   const turnData = turnDataOf(routedNode)
   const hookContext = useMemo<ChatNodeHookContext>(
@@ -158,23 +166,26 @@ export const ChatNodeSeat = memo(function ChatNodeSeat({
       data-chat-flow-key={flowKey}
       data-chat-paging-anchor={routedNode.kind !== 'turn-process' || undefined}
       data-chat-node-key={routedNode.key}
+      data-chat-steering-batch-start={bodyHeight !== null && routedNode.kind === 'steering' && routedNode.data.batchStart || undefined}
       data-chat-group-part={groupPart}
       data-chat-flow-kind={routedNode.kind}
       data-chat-turn={turn}
       data-turn-process-member={processMember || undefined}
       data-turn-process-hidden={processHidden || undefined}
     >
-      {renderSlot('conversation.chat.node', routedOwner, {
-        entryKey: routedNode.kind,
-        hookContext,
-        fallback: (
-          <JsonBlock
-            label={t('message.unknownSurface', { type: routedNode.kind })}
-            payload={routedNode.data}
-            truncatedLabel={total => t('json.truncated', { total })}
-          />
-        ),
-      })}
+      {bodyHeight !== null
+        ? <div aria-hidden="true" data-chat-window-placeholder="" style={{ height: bodyHeight }} />
+        : renderSlot('conversation.chat.node', routedOwner, {
+          entryKey: routedNode.kind,
+          hookContext,
+          fallback: (
+            <JsonBlock
+              label={t('message.unknownSurface', { type: routedNode.kind })}
+              payload={routedNode.data}
+              truncatedLabel={total => t('json.truncated', { total })}
+            />
+          ),
+        })}
     </div>
   )
 })

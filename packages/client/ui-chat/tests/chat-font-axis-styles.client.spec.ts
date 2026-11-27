@@ -157,7 +157,7 @@ describe('chat flow font-size axis', () => {
 
   it('keeps empty outer Seats in flow without adding height or sibling gaps', () => {
     const css = read('ChatView.module.css')
-    const emptySelector = '.flowItem:is(:empty, :has(> [data-slot="conversation.chat.node"]:empty))'
+    const emptySelector = '.flowItem[data-chat-row-empty]'
     const empty = declarationsFrom(css, emptySelector)
     expect(empty).toContain('height: 0')
     expect(empty).not.toContain('display: none')

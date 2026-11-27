@@ -6,6 +6,7 @@ import type {
   ConversationTurnDataMap, StepLocation, TurnLocation,
 } from '@deepseek-ai/dsh-client-ui-conversation/client'
 import { SessionSeq } from '@deepseek-ai/dsh-session/types'
+import { MessageId } from '@deepseek-ai/dsh-llm'
 import type { ObservableSnapshot } from '@deepseek-ai/dsh-client-store'
 import type { KeyedSnapshotSelectorHook, SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
 import { bindSnapshotSelector } from '@deepseek-ai/dsh-client-test-runtime'
@@ -78,7 +79,11 @@ export function chatNode(options: {
   return {
     key: options.key, kind, id: options.key, target: 'chat', anchorSeq: options.anchorSeq ?? 0,
     visibility: 'visible', location,
-    data: options.data ?? (kind === 'assistant-step' ? settledAssistant({ turn: turn ?? 1, step: step ?? 1 }) : undefined),
+    data: options.data ?? (kind === 'assistant-step'
+      ? settledAssistant({ turn: turn ?? 1, step: step ?? 1 })
+      : kind === 'user' || kind === 'steering'
+        ? { kind, messageId: MessageId(options.key), seq: options.anchorSeq ?? 0, time: 0, content: [], source: { kind: 'user' } }
+        : undefined),
   }
 }
 

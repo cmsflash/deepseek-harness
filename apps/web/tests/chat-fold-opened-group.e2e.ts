@@ -272,8 +272,11 @@ async function sendFromOpenedGroup(browser: Browser, id: string, answerParagraph
     })
     // A failure before the release awaits nothing; the success path awaits and rethrows this rejection.
     ended.catch(() => undefined)
-    await startTrace(page)
     await page.locator(`${ROOT} [data-composer-input][contenteditable="true"]`).last().fill(NEXT_INPUT)
+    // Raw scroll offsets isolate the fold only when deferred history has finished changing earlier heights.
+    await expect.poll(() => page.locator(`${ROOT} [data-chat-window-placeholder]`).count(), { timeout: 30_000 }).toBe(0)
+    await stableScroll(page)
+    await startTrace(page)
     await page.locator(ROOT).getByRole('button', { name: 'Send message', exact: true }).click()
     await page.locator(`${ROOT} [data-submission-echo]`).waitFor()
     await stableScroll(page)

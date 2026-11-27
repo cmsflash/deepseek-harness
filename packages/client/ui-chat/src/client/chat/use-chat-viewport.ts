@@ -3,6 +3,7 @@ import { useLayoutEffect, useRef, useState, type RefObject } from 'react'
 import type { ChatScrollPosition } from '../contract/slots.ts'
 import type { ChatSnapshot } from '../contract/snapshot.ts'
 import { createFlowMotion, type InputFoldBox, type InputFoldDriver } from './flow-motion.ts'
+import { observeFlowRowState } from './flow-row-state.ts'
 import { scrollMetrics, ScrollFollow, type ViewportMetrics } from './use-scroll-follow.ts'
 export type { ViewportMetrics } from './use-scroll-follow.ts'
 
@@ -64,6 +65,7 @@ interface ClosingLayout {
 
 interface PagingPosition {
   readonly row: HTMLElement
+  readonly deferredOnly: boolean
   readonly position: ChatScrollPosition
   readonly group: { readonly body: HTMLElement; readonly content: HTMLElement; readonly top: number } | null
 }
@@ -75,6 +77,7 @@ const SCROLL_KEYS = new Set(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home
 export class ChatViewport {
   private elements: ViewportElements | null = null
   private observer: ResizeObserver | null = null
+  private rowState: ReturnType<typeof observeFlowRowState> | null = null
   private events: ViewportEvents | null = null
   private turns: ReturnType<ChatSnapshot['navigation']['items']> = []
   private observation: { top: number; landing: ViewportLanding | null } = { top: 0, landing: null }
@@ -84,7 +87,7 @@ export class ChatViewport {
   private closing: ClosingLayout | null = null
   /** Discards a closing measurement that no size observation consumed by the end of its frame. */
   private closingFrame: number | null = null
-  /** Content height without fold room at the latest size observation: the content that frame painted. */
+  /** Content height without fold room at the latest size observation or compensated history commit. */
   private settledContent = 0
   /** The pending or running fold batch lands at the tail. */
   private tailRequested = false
@@ -92,6 +95,7 @@ export class ChatViewport {
   private tailInput = false
   /** Switches the running batch to a tail landing; null while no batch runs. */
   private retarget: (() => void) | null = null
+  private rebaseHistory: ((scrollDelta: number, heightDelta: number) => void) | null = null
   /** Transition state and row callbacks owned by this viewport's attachment. */
   readonly motion = createFlowMotion(
     () => this.foldDriver(),
@@ -99,7 +103,40 @@ export class ChatViewport {
       if (this.elements !== null) this.elements.scroller.style.overflowAnchor = active ? 'none' : ''
     },
     (element) => { this.measureClosing(element) },
+    () => { this.rowState?.flush() },
   )
+
+  /**
+   * Commit deferred renderer DOM while preserving existing visual content and foreground scroll intent.
+   * @param commit - synchronous body mount and row-state update.
+   */
+  readonly commitHistory = (commit: () => void): void => {
+    this.rowState?.flush()
+    const elements = this.elements
+    if (elements === null) { commit(); return }
+    const { scroller, column } = elements
+    const reference = this.readingReference(true)
+    const referenceTop = reference === null ? 0 : reference.getBoundingClientRect().top - scroller.getBoundingClientRect().top
+    const beforeTop = scroller.scrollTop
+    const beforeHeight = column.offsetHeight
+    const room = this.spacerHeight()
+    commit()
+    if (this.elements !== elements || !scroller.isConnected) return
+    this.rowState?.flush()
+    if (reference !== null && column.contains(reference) && !reference.hasAttribute('data-chat-row-empty')
+      && reference.closest('[hidden]') === null) {
+      const top = reference.getBoundingClientRect().top - scroller.getBoundingClientRect().top
+      const target = Math.max(0, scroller.scrollTop + top - referenceTop)
+      const content = scroller.scrollHeight - this.spacerHeight()
+      this.setSpacer(Math.max(room, target + scroller.clientHeight - content))
+      if (target !== scroller.scrollTop) scroller.scrollTop = target
+    }
+    const scrollDelta = scroller.scrollTop - beforeTop
+    // Shift the attribution baseline, not the reader's pending movement relative to it.
+    this.observation = { top: this.observation.top + scrollDelta, landing: null }
+    this.settledContent = scroller.scrollHeight - this.spacerHeight()
+    this.rebaseHistory?.(scrollDelta, column.offsetHeight - beforeHeight)
+  }
 
   /**
    * Bind to the containing scrollport and observe content and viewport sizes.
@@ -113,6 +150,7 @@ export class ChatViewport {
     const spacer = list.querySelector<HTMLElement>('[data-chat-turn-spacer]')
     const elements = { list, column, scroller, composer, spacer }
     this.elements = elements
+    this.rowState = observeFlowRowState(column)
     if (spacer !== null) spacer.style.height = ''
     scroller.addEventListener('scroll', this.onScroll, { passive: true })
     scroller.addEventListener('scrollend', this.onScrollEnd, { passive: true, capture: true })
@@ -120,6 +158,7 @@ export class ChatViewport {
     if (typeof ResizeObserver !== 'undefined') {
       this.observer = new ResizeObserver(() => {
         if (this.elements !== elements) return
+        this.rowState?.flush()
         // Read while layout is still clean, before this callback writes room or scroll positions. Those writes
         // leave the content height unchanged, so it is also the content this frame paints.
         this.settledContent = elements.scroller.scrollHeight - this.spacerHeight()
@@ -145,11 +184,14 @@ export class ChatViewport {
     for (const type of READING_INTENTS) this.elements?.scroller.removeEventListener(type, this.onIntent, true)
     this.observer?.disconnect()
     this.observer = null
+    this.rowState?.dispose()
+    this.rowState = null
     this.elements = null
     this.events = null
     this.tailRequested = false
     this.tailInput = false
     this.retarget = null
+    this.rebaseHistory = null
     this.turns = []
     this.observation = { top: 0, landing: null }
   }
@@ -231,6 +273,7 @@ export class ChatViewport {
    * @returns the batch driver, or null while detached or without a reading policy.
    */
   private foldDriver(): InputFoldDriver | null {
+    this.rowState?.flush()
     const elements = this.elements
     const reader = this.reader
     if (elements === null || reader === null) return null
@@ -277,6 +320,7 @@ export class ChatViewport {
     )
     return {
       begin: (boxes) => {
+        this.rowState?.flush()
         // Own input lands at the tail; otherwise an unsampled reading movement outranks follow intent.
         tail = this.tailRequested || (follow.active && !reader.pending())
         const input = this.tailInput
@@ -332,6 +376,7 @@ export class ChatViewport {
         if (tail) follow.setFollowing(true)
         // A newer tail request also takes over a batch whose target a reading gesture cancelled.
         this.retarget = () => {
+          this.rowState?.flush()
           tail = true
           follow.setFollowing(true)
           this.motion.resumeInput()
@@ -346,9 +391,19 @@ export class ChatViewport {
         }
         // Scrolling forward past closing rows shows them shrinking; faded rows would leave their space empty.
         if (tail && target > start) for (const element of below) travelling.add(element)
+        this.rebaseHistory = (scrollDelta, heightDelta) => {
+          start += scrollDelta
+          base = Math.max(0, base + scrollDelta)
+          segmentTop += scrollDelta
+          written += scrollDelta
+          initialHeight += heightDelta
+          previousColumnHeight += heightDelta
+          aim()
+        }
         return travelling
       },
       prepare: (progress, cancelled) => {
+        this.rowState?.flush()
         if (this.elements !== elements) return
         if (!tail) {
           // Reader scrolling between frames moves the reading position the batch keeps still.
@@ -372,6 +427,7 @@ export class ChatViewport {
         this.setSpacer(Math.max(this.spacerHeight(), room(top, progress, cancelled)))
       },
       frame: (progress, cancelled) => {
+        this.rowState?.flush()
         if (this.elements !== elements) return 0
         const top = position(progress, cancelled)
         elements.scroller.scrollTop = top
@@ -385,7 +441,9 @@ export class ChatViewport {
         return written - start
       },
       finish: (cancelled) => {
+        this.rowState?.flush()
         this.retarget = null
+        this.rebaseHistory = null
         this.tailRequested = false
         this.tailInput = false
         if (this.elements !== elements) return
@@ -428,9 +486,11 @@ export class ChatViewport {
   /**
    * Find the first visible top-level row at or below the scrollport top that holds no batch box.
    * Binary search over the ordered top-level rows reads O(log n) boxes.
-   * @returns the reference row, or null when every visible row folds.
+   * @param includeBelow - allow the first surviving row below the viewport when visible rows all fold.
+   * @returns the reference row, or null when no eligible row remains.
    */
-  private readingReference(): HTMLElement | null {
+  private readingReference(includeBelow = false): HTMLElement | null {
+    this.rowState?.flush()
     const elements = this.elements
     if (elements === null) return null
     const viewport = elements.scroller.getBoundingClientRect()
@@ -447,7 +507,7 @@ export class ChatViewport {
       const row = rows[index] as HTMLElement
       if (row.hasAttribute('hidden')) continue
       const rect = row.getBoundingClientRect()
-      if (rect.top >= viewport.bottom) return null
+      if (!includeBelow && rect.top >= viewport.bottom) return null
       if (rect.height === 0 || rect.bottom <= viewport.top) continue
       if (row.hasAttribute('data-chat-motion') || row.querySelector('[data-chat-motion]') !== null) continue
       return row
@@ -467,6 +527,7 @@ export class ChatViewport {
    * @param element - the first row of this commit to close.
    */
   private measureClosing(element: HTMLElement): void {
+    this.rowState?.flush()
     const elements = this.elements
     const reader = this.reader
     if (elements === null || reader === null || this.closing !== null || !element.isConnected) return
@@ -546,6 +607,7 @@ export class ChatViewport {
    */
   private keepAboveClosing(): void {
     const closing = this.closing
+    this.rowState?.flush()
     const elements = this.elements
     const reader = this.reader
     if (closing === null) return
@@ -587,6 +649,7 @@ export class ChatViewport {
    * Holds still during folds and unsampled movement; following includes the room that remains.
    */
   reclaimBelow(): void {
+    this.rowState?.flush()
     const elements = this.elements
     if (elements === null || elements.spacer === null) return
     const current = this.spacerHeight()
@@ -633,6 +696,7 @@ export class ChatViewport {
   }
 
   private metrics(): ViewportMetrics | null {
+    this.rowState?.flush()
     const scroller = this.elements?.scroller
     if (scroller === undefined) return null
     return scrollMetrics(scroller)
@@ -654,6 +718,7 @@ export class ChatViewport {
    * @returns a visible semantic anchor, or null when no anchor can be resolved.
    */
   capturePosition(): ChatScrollPosition | null {
+    this.rowState?.flush()
     const elements = this.elements
     if (elements === null) return null
     const { list, scroller, composer } = elements
@@ -707,6 +772,7 @@ export class ChatViewport {
   readVisibleTurn(metrics = this.metrics()): number | null {
     const knownTurn = this.observation.landing?.turn
     if (knownTurn != null && metrics?.top === this.observation.top) return knownTurn
+    this.rowState?.flush()
     const elements = this.elements
     const first = this.turns[0]
     if (elements === null || metrics === null || first === undefined) return null
@@ -769,6 +835,11 @@ export class ChatViewport {
     return metrics === null ? null : this.write(position.scrollTop, metrics, null)
   }
 
+  /** Whether a jump can still move as nearby rich bodies acquire their natural heights. */
+  get hasWindowedBodies(): boolean {
+    return this.elements?.column.querySelector('[data-chat-window-placeholder]') != null
+  }
+
   /** Retain the first eligible transcript seat in DOM order; selection reads no geometry. */
   beginPaging(): void {
     this.stopPreserving()
@@ -781,16 +852,18 @@ export class ChatViewport {
   /**
    * Retain one old row and its inner/outer offsets for paging and later content growth.
    * @param position - an explicit landing to retain; omitted callers capture the current reading position.
+   * @param deferredOnly - release on independent scrolling after deferred bodies finish; false retains legacy paging/restore ownership.
    */
-  beginPreserving(position: ChatScrollPosition | null = this.capturePosition()): void {
+  beginPreserving(position: ChatScrollPosition | null = this.capturePosition(), deferredOnly = false): void {
     this.stopPreserving()
     if (position === null) return
     const row = this.anchor(position.anchorKey)
     if (row === null) return
-    this.retain(row, position)
+    this.retain(row, position, undefined, deferredOnly)
   }
 
-  private retain(row: HTMLElement, position?: ChatScrollPosition, groupTop?: number): PagingPosition | null {
+  private retain(row: HTMLElement, position?: ChatScrollPosition, groupTop?: number, deferredOnly = false): PagingPosition | null {
+    this.rowState?.flush()
     const elements = this.elements
     const key = row.dataset.chatAnchorKey
     if (elements === null || key === undefined) return null
@@ -802,7 +875,7 @@ export class ChatViewport {
     const group = body === null || content == null ? null
       : { body, content, top: groupTop ?? top - body.getBoundingClientRect().top }
     this.paging = {
-      row, group,
+      row, group, deferredOnly,
       position: position ?? {
         anchorKey: key,
         anchorTop: top - elements.scroller.getBoundingClientRect().top,
@@ -833,6 +906,7 @@ export class ChatViewport {
    */
   preserve(): ViewportLanding | null {
     let paging = this.paging
+    this.rowState?.flush()
     const elements = this.elements
     if (paging === null || elements === null) return null
     if (!elements.list.contains(paging.row)) {
@@ -842,7 +916,7 @@ export class ChatViewport {
         this.stopPreserving()
         return null
       }
-      paging = this.retain(replacement, paging.position, paging.group?.top)
+      paging = this.retain(replacement, paging.position, paging.group?.top, paging.deferredOnly)
       if (paging === null) return null
     }
     const { row, group, position } = paging
@@ -923,6 +997,7 @@ export class ChatViewport {
     if (this.elements === null || event.target !== this.elements.scroller) return
     if (this.observation.landing !== null && this.elements.scroller.scrollTop === this.observation.top) return
     this.invalidate()
+    if (this.paging?.deferredOnly === true && !this.hasWindowedBodies) this.stopPreserving()
     if (this.paging !== null) {
       this.events?.resize()
       return

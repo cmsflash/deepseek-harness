@@ -74,6 +74,9 @@ export type LinkOpening = 'sidebar' | 'new-tab'
 /** Preserve the built-in browser for users without an explicit preference. */
 export const DEFAULT_LINK_OPENING: LinkOpening = 'sidebar'
 
+/** Foreground quiet time before offscreen history rendering resumes, in milliseconds. */
+export const DEFAULT_HISTORY_RENDER_QUIET_MS = 500
+
 /** Durable Chat section shared by the Host schema and browser scope. */
 export interface ChatSettings {
   /** Work-details preference; absence uses the client default, and legacy saved values remain accepted. */
@@ -86,10 +89,13 @@ export interface ChatSettings {
   performanceUsage: PerformanceUsageMode
   /** Default destination for Chat HTTP(S) links. */
   linkOpening: LinkOpening
+  /** Quiet milliseconds before offscreen history mounts; absence uses 500, and zero disables the wait. */
+  historyRenderQuietMs?: number
 }
 
 /** Durable Chat schema; also the wire envelope the browser scope validates against. */
 export const ChatSettingsFields = {
+  historyRenderQuietMs: z.natural().max(2_147_483_647).default(DEFAULT_HISTORY_RENDER_QUIET_MS),
   [COLLAPSE_TIMING_FIELD]: z.union([...COLLAPSE_TIMINGS]).default(DEFAULT_COLLAPSE_TIMING),
   [FOLDED_REPLIES_FIELD]: z.union([...FOLDED_REPLIES]).default(DEFAULT_FOLDED_REPLIES),
   linkOpening: z.union(['sidebar', 'new-tab']).default(DEFAULT_LINK_OPENING),

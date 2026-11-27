@@ -21,10 +21,10 @@ afterEach(async () => {
 
 function ScrollHarness({ input, onMotion }: {
   readonly input: ChatScrollInput
-  readonly onMotion: (motion: FlowMotionRows) => void
+  readonly onMotion: (motion: FlowMotionRows, commitHistory: ReturnType<typeof useChatScroll>['commitHistory']) => void
 }) {
   const state = useChatScroll(input)
-  useLayoutEffect(() => { onMotion(state.motion) }, [onMotion, state.motion])
+  useLayoutEffect(() => { onMotion(state.motion, state.commitHistory) }, [onMotion, state.motion, state.commitHistory])
   return <>
     <div ref={state.listRef} data-testid="scrollport" data-initialized={state.initialized}>
       <div ref={state.columnRef} data-testid="column" data-chat-flow="" />
@@ -34,7 +34,7 @@ function ScrollHarness({ input, onMotion }: {
   </>
 }
 
-function mountScroll(deferCompletedTurns = true, initial: Partial<ChatScrollInput> = {}) {
+function mountScroll(deferCompletedTurns = true, initial: Partial<ChatScrollInput> = {}, outerScrollport = false) {
   let input: ChatScrollInput = {
     ready: true,
     order: [],
@@ -64,8 +64,13 @@ function mountScroll(deferCompletedTurns = true, initial: Partial<ChatScrollInpu
   }
   vi.stubGlobal('ResizeObserver', Observer)
   const onMotion = (motion: FlowMotionRows): void => { callbacks.motion = motion }
-  const view = render(<ScrollHarness input={input} onMotion={onMotion} />)
-  const scroller = within(view.container).getByTestId('scrollport')
+  const renderHarness = () => {
+    const child = <ScrollHarness input={input} onMotion={onMotion} />
+    return outerScrollport ? <div data-conversation-scroll="" data-testid="outer-scrollport">{child}</div> : child
+  }
+  const view = render(renderHarness())
+  const list = within(view.container).getByTestId('scrollport')
+  const scroller = outerScrollport ? within(view.container).getByTestId('outer-scrollport') : list
   const spacer = scroller.querySelector<HTMLElement>('[data-chat-turn-spacer]')
   if (spacer === null) throw new Error('Missing fold spacer')
   let height = 1_000
@@ -81,12 +86,12 @@ function mountScroll(deferCompletedTurns = true, initial: Partial<ChatScrollInpu
   Object.defineProperty(row, 'offsetHeight', { value: 80 })
   within(view.container).getByTestId('column').append(row)
   return {
-    view, scroller, scrollTo, row,
+    view, list, scroller, scrollTo, row,
     resize: () => { act(() => { callbacks.resize?.() }) },
     grow: (next: number) => { height = next },
     update: (patch: Partial<ChatScrollInput>) => {
       input = { ...input, ...patch }
-      view.rerender(<ScrollHarness input={input} onMotion={onMotion} />)
+      view.rerender(renderHarness())
     },
     startFold: () => {
       const motion = callbacks.motion
@@ -107,7 +112,11 @@ function mountScroll(deferCompletedTurns = true, initial: Partial<ChatScrollInpu
 
 /** A scrollport of stacked rows whose boxes follow scrollTop; closing a row clamps like a browser. */
 function mountRows(heights: readonly number[]) {
-  const callbacks: { motion?: FlowMotionRows; resize?: () => void } = {}
+  const callbacks: {
+    motion?: FlowMotionRows
+    resize?: () => void
+    commitHistory?: ReturnType<typeof useChatScroll>['commitHistory']
+  } = {}
   class Observer implements ResizeObserver {
     constructor(callback: ResizeObserverCallback) { callbacks.resize = () => { callback([], this) } }
     observe(): void {}
@@ -121,7 +130,10 @@ function mountRows(heights: readonly number[]) {
     transcriptView: 'standard', loadedTurns: [], hasMore: false, loadingOlder: false,
     loadOlder: vi.fn(), loadThrough: vi.fn(async () => {}), chatScroll: { read: () => null, save: vi.fn() },
   }
-  const view = render(<ScrollHarness input={input} onMotion={(motion) => { callbacks.motion = motion }}
+  const view = render(<ScrollHarness input={input} onMotion={(motion, commitHistory) => {
+    callbacks.motion = motion
+    callbacks.commitHistory = commitHistory
+  }}
   />)
   const scroller = within(view.container).getByTestId('scrollport')
   const column = within(view.container).getByTestId('column')
@@ -169,6 +181,11 @@ function mountRows(heights: readonly number[]) {
   }
   return {
     scroller, row, room, resize,
+    commitHistory: (commit: () => void) => {
+      const run = callbacks.commitHistory
+      if (run === undefined) throw new Error('History commit callback is not bound')
+      act(() => { run(commit) })
+    },
     top: () => top,
     screenTop: (row: HTMLElement) => docTop(row) - top,
     grow: (row: HTMLElement, by: number) => { sizes.set(row, (sizes.get(row) ?? 0) + by) },
@@ -191,6 +208,160 @@ function mountRows(heights: readonly number[]) {
     },
   }
 }
+
+describe('Chat scroll: progressive history keeps the settled reader anchor', () => {
+  function readableRows() {
+    const h = mountRows([500, 500, 500])
+    for (let index = 0; index < 3; index++) {
+      const row = h.row(index)
+      row.dataset.chatAnchorKey = `row-${index}`
+      row.dataset.chatFlowKey = `row-${index}`
+      row.textContent = `Visible row ${index}`
+    }
+    return h
+  }
+
+  it.each(['pointerdown', 'touchstart'])('does not reacquire between scroll samples of one continuous %s gesture', (intent) => {
+    const h = readableRows()
+    const placeholder = document.createElement('div')
+    placeholder.dataset.chatWindowPlaceholder = ''
+    h.row(0).append(placeholder)
+    fireEvent(h.scroller, new Event(intent, { bubbles: true }))
+    h.scroller.scrollTop = 600
+    fireEvent.scroll(h.scroller)
+    act(() => { vi.advanceTimersByTime(500) })
+    h.scroller.scrollTop = 800
+    fireEvent.scroll(h.scroller)
+    expect(h.top()).toBe(800)
+    act(() => { vi.advanceTimersByTime(500) })
+    h.scroller.scrollTop = 900
+    fireEvent.scroll(h.scroller)
+    expect(h.top()).toBe(900)
+    fireEvent(h.scroller, new Event('scrollend'))
+    h.grow(h.row(0), 100)
+    h.resize()
+    expect(h.screenTop(h.row(1))).toBe(-400)
+    expect(h.top()).toBe(1_000)
+  })
+
+  it('allows browser-driven scrolling after the last deferred body without a page input event', () => {
+    const h = readableRows()
+    const placeholder = document.createElement('div')
+    placeholder.dataset.chatWindowPlaceholder = ''
+    h.row(0).append(placeholder)
+    fireEvent.wheel(h.scroller, { deltaY: -500 })
+    h.scroller.scrollTop = 600
+    fireEvent.scroll(h.scroller)
+    fireEvent(h.scroller, new Event('scrollend'))
+    placeholder.remove()
+    h.grow(h.row(0), 100)
+    h.resize()
+    expect(h.top()).toBe(700)
+    h.scroller.scrollTop = 100
+    fireEvent.scroll(h.scroller)
+    expect(h.top()).toBe(100)
+    act(() => { vi.advanceTimersByTime(500) })
+    expect(h.top()).toBe(100)
+  })
+
+  it('reacquires after each settled reading gesture and preserves the final deferred commit', () => {
+    const h = readableRows()
+    const placeholder = document.createElement('div')
+    placeholder.dataset.chatWindowPlaceholder = ''
+    h.row(0).append(placeholder)
+    fireEvent.wheel(h.scroller, { deltaY: -500 })
+    h.scroller.scrollTop = 600
+    fireEvent.scroll(h.scroller)
+    act(() => { vi.advanceTimersByTime(500) })
+    fireEvent(h.scroller, new Event('scrollend'))
+    const anchor = h.row(1)
+    expect(h.screenTop(anchor)).toBe(-100)
+    h.grow(h.row(0), 200)
+    h.resize()
+    expect(h.screenTop(anchor)).toBe(-100)
+
+    fireEvent.wheel(h.scroller, { deltaY: 100 })
+    h.scroller.scrollTop = 900
+    fireEvent.scroll(h.scroller)
+    fireEvent(h.scroller, new Event('scrollend'))
+    expect(h.screenTop(anchor)).toBe(-200)
+    placeholder.remove()
+    h.grow(h.row(0), 100)
+    h.resize()
+    expect(h.screenTop(anchor)).toBe(-200)
+    expect(h.top()).toBe(1_000)
+  })
+
+  it('retains the outer reading position when inner scrolling ends with bodies still pending', () => {
+    const h = readableRows()
+    fireEvent.wheel(h.scroller, { deltaY: -500 })
+    h.scroller.scrollTop = 600
+    fireEvent.scroll(h.scroller)
+    fireEvent(h.scroller, new Event('scrollend'))
+    const placeholder = document.createElement('div')
+    placeholder.dataset.chatWindowPlaceholder = ''
+    h.row(0).append(placeholder)
+    const body = document.createElement('div')
+    body.dataset.stepProcessBody = ''
+    h.row(1).append(body)
+    fireEvent.wheel(body, { deltaY: -100 })
+    fireEvent(body, new Event('scrollend', { bubbles: true }))
+    h.grow(h.row(0), 200)
+    h.resize()
+    expect(h.screenTop(h.row(1))).toBe(-100)
+    expect(h.top()).toBe(800)
+  })
+})
+
+describe('Chat scroll: deferred rendering preserves fold room and reader intent', () => {
+  it('keeps existing fold room when historical content above the reader grows', () => {
+    const h = mountRows([400, 300, 100, 200])
+    h.close(h.row(2))
+    expect(h.top()).toBe(600)
+    expect(h.room()).toBe(100)
+    expect(h.screenTop(h.row(1))).toBe(-200)
+    h.commitHistory(() => { h.grow(h.row(0), 60) })
+    expect(h.top()).toBe(660)
+    expect(h.room()).toBe(100)
+    expect(h.screenTop(h.row(1))).toBe(-200)
+    h.resize()
+    expect(h.top()).toBe(660)
+    expect(h.room()).toBe(100)
+  })
+
+  it('still lets growth below the reading anchor consume fold room', () => {
+    const h = mountRows([400, 300, 100, 200])
+    h.close(h.row(2))
+    h.commitHistory(() => { h.grow(h.row(3), 60) })
+    h.resize()
+    expect(h.top()).toBe(600)
+    expect(h.room()).toBe(40)
+    expect(h.screenTop(h.row(1))).toBe(-200)
+  })
+
+  it('preserves pending reader movement while compensating history within a continuous gesture', () => {
+    const h = mountRows([500, 500, 500])
+    for (let index = 0; index < 3; index++) {
+      h.row(index).dataset.chatAnchorKey = `row-${index}`
+      h.row(index).dataset.chatFlowKey = `row-${index}`
+      h.row(index).textContent = `Row ${index}`
+    }
+    fireEvent.pointerDown(h.scroller)
+    h.scroller.scrollTop = 600
+    fireEvent.scroll(h.scroller)
+    const pending = vi.getTimerCount()
+    expect(pending).toBeGreaterThan(0)
+    h.commitHistory(() => { h.grow(h.row(0), 100) })
+    expect(h.top()).toBe(700)
+    expect(vi.getTimerCount()).toBe(pending)
+    act(() => { vi.advanceTimersByTime(500) })
+    expect(h.top()).toBe(700)
+    h.scroller.scrollTop = 800
+    fireEvent.scroll(h.scroller)
+    act(() => { vi.advanceTimersByTime(500) })
+    expect(h.top()).toBe(800)
+  })
+})
 
 describe('Chat scroll: a closing shrink keeps the content above still', () => {
   it('keeps the first visible row still and fills the gap below with room', () => {
@@ -285,7 +456,12 @@ function mountVisibleFold(test: typeof visibleFoldCases[number], reduced: boolea
   let submission = 0
   let top: number = test.top
   let motion: FlowMotionRows | undefined
-  const onMotion = (value: FlowMotionRows): void => { motion = value }
+  let history: ReturnType<typeof useChatScroll>['commitHistory'] | undefined
+  let earlierHeight: number = test.earlier
+  const onMotion = (value: FlowMotionRows, commitHistory: ReturnType<typeof useChatScroll>['commitHistory']): void => {
+    motion = value
+    history = commitHistory
+  }
   let input: ChatScrollInput = {
     ready: false, order: [], firstSeq: null, lastKey: null, lastIsUser: false,
     steeringId: null, submissionId: null, submissionSteers: false, running: false, deferCompletedTurns: true,
@@ -305,7 +481,7 @@ function mountVisibleFold(test: typeof visibleFoldCases[number], reduced: boolea
   const rowHeight = () => row.hidden ? 0 : (row.style.transition !== '' && row.style.transition !== 'none') || row.style.height === ''
     ? test.steps : Number.parseFloat(row.style.height)
   const room = () => Number.parseFloat(spacer.style.height) || 0
-  const contentHeight = () => test.earlier + rowHeight() + test.body + inputHeight + (row.hidden ? finalSiblingGrowth : 0)
+  const contentHeight = () => earlierHeight + rowHeight() + test.body + inputHeight + (row.hidden ? finalSiblingGrowth : 0)
   const floor = () => Math.max(0, contentHeight() + room() - test.viewport)
   const scrollTo = vi.fn((options: ScrollToOptions) => {
     scroller.scrollTop = options.top ?? scroller.scrollTop
@@ -322,12 +498,19 @@ function mountVisibleFold(test: typeof visibleFoldCases[number], reduced: boolea
   })
   Object.defineProperties(row, {
     offsetHeight: { get: rowHeight },
-    getBoundingClientRect: { value: () => ({ top: test.earlier - top, bottom: test.earlier - top + rowHeight(), height: rowHeight() }) },
+    getBoundingClientRect: { value: () => ({ top: earlierHeight - top, bottom: earlierHeight - top + rowHeight(), height: rowHeight() }) },
   })
   Object.defineProperties(column, {
     offsetHeight: { get: contentHeight },
     getBoundingClientRect: { value: () => ({ top: -top, bottom: contentHeight() - top, height: contentHeight() }) },
   })
+  const body = document.createElement('div')
+  body.textContent = 'surviving answer'
+  Object.defineProperty(body, 'getBoundingClientRect', { value: () => {
+    const y = earlierHeight + rowHeight() - top
+    return { top: y, bottom: y + test.body, height: test.body }
+  } })
+  column.append(body)
   input = { ...input, ready: true }
   view.rerender(<ScrollHarness input={input} onMotion={onMotion} />)
   top = test.top
@@ -359,7 +542,12 @@ function mountVisibleFold(test: typeof visibleFoldCases[number], reduced: boolea
       input = { ...input, submissionId: null, lastKey: 'durable-input', lastIsUser: true }
       view.rerender(<ScrollHarness input={input} onMotion={onMotion} />)
     },
-    bodyTop: () => test.earlier + rowHeight() - top,
+    bodyTop: () => earlierHeight + rowHeight() - top,
+    growHistory(height: number) {
+      const commit = history
+      if (commit === undefined) throw new Error('History commit callback is not bound')
+      act(() => { commit(() => { earlierHeight += height }) })
+    },
     submit() {
       inputHeight += test.input
       row.hidden = false
@@ -407,6 +595,26 @@ describe.each([false, true])('visible input-fold matrix (reduced=%s)', (reduced)
     act(() => { vi.advanceTimersByTime(500) })
     expect(h.bodyTop()).toBe(end)
   })
+})
+
+it.each([false, true])('rebases an active fold when deferred history above its surviving reply changes height (interrupted=%s)', async (interrupted) => {
+  const test = visibleFoldCases.find(test => test.name === 'B/B')!
+  const h = mountVisibleFold(test, false)
+  h.submit()
+  await act(async () => { await Promise.resolve() })
+  act(() => { vi.advanceTimersByTime(112) })
+  const readingTop = interrupted ? h.cancelReading() : null
+  const before = h.bodyTop()
+  h.growHistory(60)
+  expect(h.bodyTop()).toBeCloseTo(before, 5)
+  const positions = [h.bodyTop()]
+  for (let frame = 0; frame < 12; frame++) {
+    act(() => { vi.advanceTimersByTime(16) })
+    positions.push(h.bodyTop())
+  }
+  expect(h.scroller.scrollTop).toBe((readingTop ?? test.target) + 60)
+  if (readingTop === null) expect(h.room()).toBe(0)
+  for (let index = 1; index < positions.length; index++) expect(positions[index]!).toBeLessThanOrEqual(positions[index - 1]! + 0.01)
 })
 
 it('consumes a prior legal fold deficit instead of accumulating whole steps on the next input', async () => {
@@ -798,6 +1006,24 @@ describe('Chat scroll reader-range reporting', () => {
     if (turn !== undefined) row.dataset.chatTurn = String(turn)
     return row
   }
+
+  it.each([false, true])('uses the physical scrollport clip for memory retention (outer=%s)', (outerScrollport) => {
+    const markViewed = vi.fn()
+    const positions = new Map([['oldest', 1], ['above', 2], ['visible-first', 200], ['visible-last', 300], ['below', 999]])
+    const seqOfRow = vi.fn((key: string) => positions.get(key) ?? null)
+    const h = mountScroll(true, { markViewed, seqOfRow }, outerScrollport)
+    const rows = [...positions.keys()].map(key => anchorRow(key))
+    appendRows(h.view, ...rows)
+    stubRects(h.scroller, rows.map((element, index) => ({ element, top: [-4_500, -50, 100, 300, 800][index]! })))
+    if (outerScrollport) {
+      vi.spyOn(h.list, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, -4_600, 100, 5_000))
+    }
+    vi.advanceTimersByTime(1_000)
+    h.scroller.scrollTop = 120
+    fireEvent.scroll(h.scroller)
+    expect(seqOfRow.mock.calls.map(([key]) => key)).toEqual(['visible-first', 'visible-last'])
+    expect(markViewed).toHaveBeenCalledExactlyOnceWith(200, 300)
+  })
 
   it('reports the first and last visible mapped rows once when the transcript opens', () => {
     const markViewed = vi.fn()

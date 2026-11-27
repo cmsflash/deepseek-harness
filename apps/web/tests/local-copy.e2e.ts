@@ -466,7 +466,8 @@ describe('web e2e: local thread copy', () => {
       expect(clicks).toBeGreaterThan(1)
       expect(await loadEarlier.count()).toBe(0)
       expect(await rows()).toBeGreaterThan(opened)
-      expect(await page.getByText(LONG_FIXTURE.markers.user(1), { exact: false }).count()).toBeGreaterThan(0)
+      // Paging reaches the first semantic user row independently of its deferred offscreen text.
+      expect(await page.locator('[data-chat-flow-kind="user"][data-chat-turn="1"]').count()).toBe(1)
 
       // Once the loads' protection ends, the budget trims them, and loading earlier reads the trimmed pages again.
       memoryLines.length = 0

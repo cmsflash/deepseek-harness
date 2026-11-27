@@ -397,6 +397,44 @@ function longHistoryFixture(): string {
   return fixtureLog(session)
 }
 
+interface SwitchFixture {
+  readonly id: string
+  readonly title: string
+  readonly turns: number
+  readonly steering: boolean
+}
+
+const SHORT_SWITCH: SwitchFixture = { id: 'perf-switch-short', title: 'Compact switch fixture', turns: 2, steering: false }
+
+function switchHistory(spec: SwitchFixture): string {
+  const session = Session.create(SessionId(spec.id))
+  for (let turn = 1; turn <= spec.turns; turn++) {
+    session.append('turn/start', { turn })
+    const steps = spec.steering ? 4 + turn % 2 : 1
+    for (let step = 1; step <= steps; step++) {
+      session.append('step/start', { turn, step })
+      if (step === 1 && turn === 1) appendSystemPrompt(session, turn, step)
+      const body = step === 1 ? `Check synthetic batch ${turn}.` : Array.from(
+        { length: 12 + (turn + step) % 16 },
+        (_, line) => `- Check ${turn}.${step}.${line}: compare the generated summary with the sample and record the difference.`,
+      ).join('\n')
+      const message = createUserMessage({ content: text(body), source: { kind: 'user' } })
+      if (step > 1) {
+        session.append('agent/inbox/spliced', { target: 'next-step', start: 0, inserted: [message] })
+        session.append('agent/inbox/spliced', { target: 'next-step', start: 0, removedCount: 1, inserted: [] })
+      }
+      const user = session.append('user/message', message, { surfaceOp: 'append' })
+      if (step === 1 && turn === 1) appendTitle(session, spec.title, user.seq)
+      appendRequestHeader(session, turn, step)
+      appendAssistant(session, turn, step, step === steps && turn === spec.turns
+        ? `Finished ${spec.id}.` : `Checked synthetic batch ${turn}.${step}.`)
+      session.append('step/end', { turn, step })
+    }
+    session.append('turn/end', { turn, reason: { kind: 'completed' } })
+  }
+  return fixtureLog(session)
+}
+
 function textStream(deltas: readonly string[], inputTokens: number): StreamChunk[] {
   const response = deltas.join('')
   return [
@@ -925,8 +963,8 @@ async function openPerformancePage(
   await world.page.goto(world.scaffold.authenticatedUrl, { waitUntil: 'load' })
   await world.page.waitForSelector('[class*="frame"]', { timeout: 30_000 })
   const group = world.page.getByRole('treeitem').first()
-  await expect.poll(() => group.textContent(), { timeout: 30_000 })
-    .toContain(`${String(expectedSessions)} ${expectedSessions === 1 ? 'session' : 'sessions'}`)
+  await expect.poll(() => group.getAttribute('aria-description'), { timeout: 30_000 })
+    .toBe(`${String(expectedSessions)} ${expectedSessions === 1 ? 'session' : 'sessions'}`)
   return group
 }
 
@@ -1192,6 +1230,424 @@ function summarizeTurnWindows(
   return windows
 }
 
+const SWITCH_MESSAGE_ROWS = ':is([data-chat-flow-kind="user"],[data-chat-flow-kind="steering"],[data-chat-flow-kind="assistant-step"])'
+
+interface SwitchMountProbe {
+  readonly markViewport: () => void
+  readonly stop: () => void
+  readonly richRows: Set<Element>
+  readonly expectedRows: number
+  readonly frameGaps: { at: number; duration: number }[]
+  readonly longTasks: { at: number; duration: number }[]
+  readonly tasks: PerformanceObserver
+  clickAt?: number
+  viewportAt?: number
+  rowsAtViewport?: number
+  keydownAt?: number
+  inputAt?: number
+  inputEventType?: string
+  nativeInputAt?: number
+  inputVisibleAt?: number
+  rowsAtInput?: number
+  trustedKey?: boolean
+  trustedInput?: boolean
+  fullDomAt?: number
+  fullPaintAt?: number
+  removedRichRows: number
+}
+
+function switchExpectedTextRows(spec: SwitchFixture): number {
+  return spec.steering ? 2 * (4 * spec.turns + Math.ceil(spec.turns / 2)) : 2 * spec.turns
+}
+
+async function startSwitchMountProbe(page: Page, spec: SwitchFixture): Promise<void> {
+  await page.evaluate(({ selector, expectedRows, id }) => {
+    const clock = globalThis.performance
+    const richRows = new Set<Element>()
+    const fixtureText = /Check synthetic batch|Check \d+\.\d+\.\d+:|Checked synthetic batch|Finished perf-switch-/
+    const controller = new AbortController()
+    let frameId = 0
+    let previousFrame = 0
+    let fullFrames = 0
+    let inputFrames = 0
+    const tasks = new PerformanceObserver((list) => {
+      for (const entry of list.getEntries()) probe.longTasks.push({ at: entry.startTime, duration: entry.duration })
+    })
+    tasks.observe({ type: 'longtask' })
+    const updateRows = (records: MutationRecord[]): void => {
+      const changed = new Set<Element>()
+      const collect = (node: Node): void => {
+        const element = node instanceof Element ? node : node.parentElement
+        if (!element) return
+        const row = element.closest(selector)
+        if (row) changed.add(row)
+        for (const descendant of element.querySelectorAll(selector)) changed.add(descendant)
+      }
+      for (const record of records) {
+        // Only changed subtrees are inspected; animation frames never scan history.
+        if (record.target instanceof Element) {
+          const row = record.target.closest(selector)
+          if (row) changed.add(row)
+        } else collect(record.target)
+        for (const node of record.addedNodes) collect(node)
+        for (const node of record.removedNodes) collect(node)
+      }
+      for (const row of changed) {
+        if (row.isConnected && row.closest('[data-conversation-scroll]') && fixtureText.test(row.textContent ?? '')) {
+          richRows.add(row)
+        } else if (richRows.delete(row) && probe.viewportAt !== undefined) {
+          probe.removedRichRows++
+        }
+      }
+      if (richRows.size === expectedRows && probe.fullDomAt === undefined) probe.fullDomAt = clock.now()
+      if (richRows.size !== expectedRows) {
+        delete probe.fullDomAt
+        delete probe.fullPaintAt
+        fullFrames = 0
+      }
+    }
+    const mutations = new MutationObserver(updateRows)
+    const frame = (): void => {
+      const now = clock.now()
+      probe.frameGaps.push({ at: now, duration: now - previousFrame })
+      previousFrame = now
+      if (probe.viewportAt !== undefined && richRows.size === expectedRows && probe.fullPaintAt === undefined) {
+        if (++fullFrames === 2) probe.fullPaintAt = now
+      }
+      if (probe.inputAt !== undefined && probe.inputVisibleAt === undefined) {
+        const composer = document.querySelector('[data-composer-input][contenteditable="true"]')
+        const walker = composer && document.createTreeWalker(composer, NodeFilter.SHOW_TEXT)
+        let visible = false
+        if (walker && composer) {
+          for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+            if (!node.textContent?.includes('x')) continue
+            const range = document.createRange()
+            range.selectNodeContents(node)
+            const rect = range.getBoundingClientRect()
+            const x = (rect.left + rect.right) / 2, y = (rect.top + rect.bottom) / 2
+            visible = rect.width > 0 && rect.height > 0 && composer.contains(document.elementFromPoint(x, y))
+            if (visible) break
+          }
+        }
+        inputFrames = visible ? inputFrames + 1 : 0
+        if (inputFrames === 2) probe.inputVisibleAt = now
+      }
+      if (probe.fullPaintAt === undefined || probe.inputVisibleAt === undefined) frameId = requestAnimationFrame(frame)
+    }
+    const probe: SwitchMountProbe = {
+      richRows, expectedRows, tasks, frameGaps: [], longTasks: [], removedRichRows: 0,
+      markViewport() {
+        probe.viewportAt = clock.now()
+        probe.rowsAtViewport = richRows.size
+        if (richRows.size === expectedRows && probe.fullDomAt === undefined) probe.fullDomAt = probe.viewportAt
+        const composer = document.querySelector<HTMLElement>('[data-composer-input][contenteditable="true"]')
+        if (!composer) throw new Error('Switch probe composer is unavailable')
+        composer.focus({ preventScroll: true })
+      },
+      stop() {
+        mutations.disconnect()
+        tasks.disconnect()
+        controller.abort()
+        cancelAnimationFrame(frameId)
+      },
+    }
+    document.addEventListener('click', (event) => {
+      if (!event.isTrusted || !(event.target instanceof Element)
+        || !event.target.closest(`[data-row-key="session:${id}"]`)) return
+      probe.clickAt = event.timeStamp
+      previousFrame = event.timeStamp
+      for (const row of document.querySelectorAll(`[data-conversation-scroll] ${selector}`)) {
+        if (fixtureText.test(row.textContent ?? '')) richRows.add(row)
+      }
+      mutations.observe(document.body, { subtree: true, childList: true, characterData: true })
+      frameId = requestAnimationFrame(frame)
+    }, { capture: true, signal: controller.signal })
+    document.addEventListener('keydown', (event) => {
+      if (event.key !== 'x' || probe.viewportAt === undefined || probe.keydownAt !== undefined) return
+      probe.keydownAt = event.timeStamp
+      probe.trustedKey = event.isTrusted
+    }, { capture: true, signal: controller.signal })
+    const admitInput = (event: Event): void => {
+      if (!(event.target instanceof Element) || !event.target.matches('[data-composer-input]')
+        || probe.keydownAt === undefined) return
+      if (event.type === 'input') probe.nativeInputAt = event.timeStamp
+      if (probe.inputAt !== undefined) return
+      // Controlled editors can cancel beforeinput and render the edit without a native input event.
+      probe.inputAt = event.timeStamp
+      probe.inputEventType = event.type
+      probe.rowsAtInput = richRows.size
+      probe.trustedInput = event.isTrusted
+    }
+    document.addEventListener('beforeinput', admitInput, { capture: true, signal: controller.signal })
+    document.addEventListener('input', admitInput, { capture: true, signal: controller.signal })
+    Reflect.set(globalThis, '__dshPerfSwitchMount', probe)
+  }, { selector: SWITCH_MESSAGE_ROWS, expectedRows: switchExpectedTextRows(spec), id: spec.id })
+}
+
+async function stopSwitchMountProbe(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const probe = Reflect.get(globalThis, '__dshPerfSwitchMount') as SwitchMountProbe | undefined
+    probe?.stop()
+    Reflect.deleteProperty(globalThis, '__dshPerfSwitchMount')
+  })
+}
+
+async function switchDiagnosticDeadline<T>(action: Promise<T>, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      action,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => { reject(new Error(`${label} exceeded 5000ms`)) }, 5_000)
+      }),
+    ])
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+async function responsiveSwitch(page: Page, spec: SwitchFixture) {
+  await startSwitchMountProbe(page, spec)
+  try {
+    const viewport = await switchToVisibleReply(page, spec, true)
+    await page.waitForFunction(() => {
+      const probe = Reflect.get(globalThis, '__dshPerfSwitchMount') as SwitchMountProbe
+      return probe.fullPaintAt !== undefined && probe.inputVisibleAt !== undefined
+    }, undefined, { polling: 'raf', timeout: 60_000 }).catch(async (cause: unknown) => {
+      const diagnostic = await switchDiagnosticDeadline(page.evaluate(() => {
+        const probe = Reflect.get(globalThis, '__dshPerfSwitchMount') as SwitchMountProbe
+        const composer = document.querySelector('[data-composer-input][contenteditable="true"]')
+        const rect = composer?.getBoundingClientRect()
+        const bounds = (element: Element) => {
+          const { x, y, width, height } = element.getBoundingClientRect()
+          return { x, y, width, height }
+        }
+        return {
+          expectedRows: probe.expectedRows, trackedRows: probe.richRows.size,
+          connectedRows: [...probe.richRows].filter(row => row.isConnected).length,
+          rowsAtViewport: probe.rowsAtViewport, rowsAtInput: probe.rowsAtInput,
+          clickAt: probe.clickAt, viewportAt: probe.viewportAt, keydownAt: probe.keydownAt,
+          inputAt: probe.inputAt, inputEventType: probe.inputEventType, nativeInputAt: probe.nativeInputAt,
+          inputVisibleAt: probe.inputVisibleAt,
+          fullDomAt: probe.fullDomAt, fullPaintAt: probe.fullPaintAt,
+          trustedKey: probe.trustedKey, trustedInput: probe.trustedInput,
+          frameCount: probe.frameGaps.length, removedRichRows: probe.removedRichRows,
+          composerCandidates: [...document.querySelectorAll('[data-composer-input]')].map(element => ({
+            editable: element.getAttribute('contenteditable'), text: element.textContent,
+            rect: bounds(element), focused: document.activeElement === element,
+          })),
+          activeElement: document.activeElement?.outerHTML.slice(0, 400),
+          composerText: composer?.textContent, composerFocused: document.activeElement === composer,
+          composerRect: composer ? bounds(composer) : null,
+          composerCenterHit: rect
+            ? document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2)?.outerHTML.slice(0, 300) : null,
+          placeholders: document.querySelectorAll('[data-chat-window-placeholder]').length,
+        }
+      }), 'Switch timeout diagnostic').catch((error: unknown) => ({ diagnosticError: String(error) }))
+      console.info(`WEB_PERF_TIMEOUT ${JSON.stringify({ fixture: spec.id, ...diagnostic })}`)
+      throw new Error(`Switch completion ${spec.id}: ${JSON.stringify(diagnostic)}`, { cause })
+    })
+    const completion = await page.evaluate(async () => {
+      const probe = Reflect.get(globalThis, '__dshPerfSwitchMount') as SwitchMountProbe
+      // Cross a task boundary after the final rendering frame so its long task is observable.
+      await new Promise<void>(resolve => setTimeout(resolve, 0))
+      for (const entry of probe.tasks.takeRecords()) probe.longTasks.push({ at: entry.startTime, duration: entry.duration })
+      const { clickAt, viewportAt, keydownAt, inputAt, inputVisibleAt, fullDomAt, fullPaintAt, rowsAtViewport, rowsAtInput } = probe
+      if (clickAt === undefined || viewportAt === undefined || keydownAt === undefined || inputAt === undefined
+        || inputVisibleAt === undefined || fullDomAt === undefined || fullPaintAt === undefined
+        || rowsAtViewport === undefined || rowsAtInput === undefined) throw new Error('Incomplete switch probe')
+      const frameGaps = probe.frameGaps.filter(entry => entry.at <= fullPaintAt)
+      const longTasks = probe.longTasks.filter(entry => entry.at + entry.duration > clickAt && entry.at <= fullPaintAt)
+      return {
+        expectedTextRows: probe.expectedRows, mountedTextRows: probe.richRows.size,
+        rowsAtViewport, pendingAtViewport: probe.expectedRows - rowsAtViewport,
+        rowsAtInput, pendingAtInput: probe.expectedRows - rowsAtInput,
+        inputDuringMounting: rowsAtInput < probe.expectedRows,
+        trustedKey: probe.trustedKey, trustedInput: probe.trustedInput,
+        inputEventType: probe.inputEventType,
+        nativeInputObserved: probe.nativeInputAt !== undefined,
+        keyToNativeInputMs: probe.nativeInputAt === undefined ? null : probe.nativeInputAt - keydownAt,
+        clickToFullDomMs: fullDomAt - clickAt, clickToFullRenderMs: fullPaintAt - clickAt,
+        viewportToFullRenderMs: fullPaintAt - viewportAt,
+        viewportToKeyMs: keydownAt - viewportAt, keyToInputMs: inputAt - keydownAt,
+        keyToVisibleEditMs: inputVisibleAt - keydownAt,
+        inputToVisibleEditMs: inputVisibleAt - inputAt,
+        maxFrameGapMs: Math.max(0, ...frameGaps.map(entry => entry.duration)),
+        maxLongTaskMs: Math.max(0, ...longTasks.map(entry => entry.duration)),
+        frameGaps: frameGaps.map(entry => ({ ...entry, at: entry.at - clickAt })),
+        longTasks: longTasks.map(entry => ({ ...entry, at: entry.at - clickAt })),
+        removedRichRows: probe.removedRichRows,
+      }
+    })
+    expect(completion.trustedKey).toBe(true)
+    expect(completion.trustedInput).toBe(true)
+    expect(completion.mountedTextRows).toBe(completion.expectedTextRows)
+    expect(completion.removedRichRows).toBe(0)
+    return { ...viewport, completion }
+  } finally {
+    try {
+      await switchDiagnosticDeadline(stopSwitchMountProbe(page), 'Switch probe cleanup')
+      await page.locator('[data-composer-input][contenteditable="true"]').last().fill('', { timeout: 5_000 })
+    } catch (error) {
+      await switchDiagnosticDeadline(page.close(), 'Switch page cleanup')
+      throw error
+    }
+  }
+}
+
+async function switchRowCounts(page: Page) {
+  return page.locator('[data-conversation-scroll]').evaluate((port, selector) => ({
+    mountedRows: port.querySelectorAll('[data-chat-flow-key]').length,
+    turnTails: port.querySelectorAll('[data-chat-flow-key^="9:turn-tail"]').length,
+    mountedRichRows: [...port.querySelectorAll(selector)].filter(row =>
+      /Check synthetic batch|Check \d+\.\d+\.\d+:|Checked synthetic batch|Finished perf-switch-/.test(row.textContent ?? ''),
+    ).length,
+  }), SWITCH_MESSAGE_ROWS)
+}
+
+async function switchToVisibleReply(page: Page, spec: SwitchFixture, typeDraft = false) {
+  const item = page.locator(`[role="treeitem"][data-row-key="session:${spec.id}"]`)
+  await item.evaluate((element, { turns, id }) => {
+    const clock = globalThis.performance
+    clock.clearMeasures('transcript-switch-visible')
+    const tailInViewport = (): boolean => {
+      const scroll = document.querySelector('[data-conversation-scroll]')
+      if (!scroll) return false
+      const port = scroll.getBoundingClientRect()
+      const top = Math.max(0, port.top)
+      let bottom = Math.min(innerHeight, port.bottom)
+      for (const composer of document.querySelectorAll('[data-composer-card]')) {
+        const rect = composer.getBoundingClientRect()
+        if (rect.width > 0 && rect.height > 0 && rect.right > port.left && rect.left < port.right
+          && rect.bottom > top && rect.top < bottom) bottom = Math.min(bottom, rect.top)
+      }
+      const visibleRowsFilled = (tail: Element): boolean => {
+        for (let sibling: Element | null = tail; sibling; sibling = sibling.previousElementSibling) {
+          const bounds = sibling.getBoundingClientRect()
+          if (bounds.height === 0) continue
+          if (bounds.bottom <= top) break
+          if (bounds.top >= bottom) continue
+          for (const placeholder of sibling.querySelectorAll('[data-chat-window-placeholder]')) {
+            const rect = placeholder.getBoundingClientRect()
+            if (rect.width > 0 && rect.height > 0 && rect.top < bottom && rect.bottom > top) return false
+          }
+        }
+        return true
+      }
+      const rows = scroll.querySelectorAll(`[data-chat-turn="${turns}"][data-chat-flow-kind="assistant-step"]`)
+      for (const row of rows) {
+        const walker = document.createTreeWalker(row, NodeFilter.SHOW_TEXT)
+        for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+          if (node.textContent !== `Finished ${id}.`) continue
+          const range = document.createRange()
+          range.selectNodeContents(node)
+          const rect = range.getBoundingClientRect()
+          const x = (rect.left + rect.right) / 2, y = (rect.top + rect.bottom) / 2
+          if (y > top && y < bottom && row.contains(document.elementFromPoint(x, y)) && visibleRowsFilled(row)) return true
+        }
+      }
+      return false
+    }
+    element.addEventListener('click', (event) => {
+      if (!event.isTrusted) return
+      const frame = (): void => {
+        if (tailInViewport()) requestAnimationFrame(() => {
+          if (!tailInViewport()) {
+            frame()
+            return
+          }
+          clock.measure('transcript-switch-visible', { start: event.timeStamp })
+          const probe = Reflect.get(globalThis, '__dshPerfSwitchMount') as SwitchMountProbe | undefined
+          probe?.markViewport()
+        })
+        else requestAnimationFrame(frame)
+      }
+      requestAnimationFrame(frame)
+    }, { capture: true, once: true })
+  }, spec)
+  await item.click()
+  const ready = await page.waitForFunction(() => globalThis.performance.getEntriesByName('transcript-switch-visible')[0]?.duration, undefined, { timeout: 30_000 }).catch(async (cause: unknown) => {
+    const last = await page.locator('[data-chat-flow-kind="assistant-step"]').last().allTextContents()
+    throw new Error(`Switch to ${spec.id} did not show its final reply; latest mounted Assistant: ${last.join('').slice(-200)}`, { cause })
+  })
+  if (typeDraft) await page.keyboard.press('x')
+  const clickToVisibleMs = await ready.jsonValue()
+  await ready.dispose()
+  if (clickToVisibleMs === undefined) throw new Error('Missing trusted switch timing')
+  const counts = await switchRowCounts(page)
+  expect(counts.mountedRichRows).toBeGreaterThan(0)
+  return { clickToVisibleMs, ...counts }
+}
+
+async function wheelToEarlierPage(page: Page): Promise<void> {
+  const host = page.locator('[data-conversation-scroll]')
+  const earlier = page.getByRole('button', { name: 'Load earlier', exact: true })
+  await earlier.waitFor({ state: 'attached', timeout: 30_000 })
+  const deadline = performance.now() + 30_000
+  for (let gesture = 0; gesture < 96 && performance.now() < deadline; gesture++) {
+    const state = await earlier.evaluate((button) => {
+      const port = button.closest('[data-conversation-scroll]')
+      if (!port) throw new Error('Load earlier is outside the conversation scrollport')
+      const viewport = port.getBoundingClientRect()
+      const rect = button.getBoundingClientRect()
+      const x = (rect.left + rect.right) / 2, y = (rect.top + rect.bottom) / 2
+      return {
+        ready: rect.width > 0 && rect.height > 0 && y > viewport.top && y < viewport.bottom
+          && button.contains(document.elementFromPoint(x, y)),
+        x: viewport.left + viewport.width / 2, y: viewport.top + viewport.height / 2,
+        height: port.clientHeight,
+      }
+    })
+    if (gesture > 0 && state.ready) {
+      await earlier.click({ timeout: 5_000 })
+      return
+    }
+    await page.mouse.move(state.x, state.y)
+    const latch = await host.evaluateHandle((port) => {
+      const state = { done: false, cancel: () => { port.removeEventListener('wheel', onWheel) } }
+      const onWheel = (): void => {
+        requestAnimationFrame(() => requestAnimationFrame(() => { state.done = true }))
+      }
+      port.addEventListener('wheel', onWheel, { once: true })
+      return state
+    })
+    try {
+      await page.mouse.wheel(0, -8 * state.height)
+      const ready = await page.waitForFunction(latch => latch.done, latch, { polling: 'raf', timeout: 5_000 })
+      await ready.dispose()
+    } finally {
+      await latch.evaluate((state) => { state.cancel() })
+      await latch.dispose()
+    }
+  }
+  throw new Error('Load earlier did not become hit-testable after bounded trusted wheel gestures')
+}
+
+async function scrollDenseReply(page: Page) {
+  const host = page.locator('[data-conversation-scroll]')
+  const before = await host.evaluate((element) => {
+    const rect = element.getBoundingClientRect()
+    return { top: element.scrollTop, height: element.clientHeight, x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }
+  })
+  await page.mouse.move(before.x, before.y)
+  await page.mouse.wheel(0, -3 * before.height)
+  const scrolled = await page.waitForFunction(({ before, selector }) => {
+    const port = document.querySelector('[data-conversation-scroll]')
+    if (!port || port.scrollTop >= before.top - before.height) return false
+    for (const offset of [-0.2, 0, 0.2]) {
+      const row = document.elementFromPoint(before.x, before.y + offset * before.height)?.closest(selector)
+      if (row && port.contains(row) && /Check(?:ed)? (?:synthetic batch|\d+\.)/.test(row.textContent ?? '')) {
+        return { scrollDistancePx: before.top - port.scrollTop, rowKind: row.getAttribute('data-chat-flow-kind') }
+      }
+    }
+    return false
+  }, { before, selector: SWITCH_MESSAGE_ROWS }, { polling: 'raf', timeout: 30_000 })
+  const result = await scrolled.jsonValue()
+  await scrolled.dispose()
+  if (!result) throw new Error('Missing scrolled transcript row')
+  return { ...result, ...await switchRowCounts(page) }
+}
+
 describe('manual web performance: complex workspace and history', () => {
   let browser: Browser
 
@@ -1204,6 +1660,200 @@ describe('manual web performance: complex workspace and history', () => {
 
   afterAll(async () => {
     await browser?.close()
+  })
+
+  it('excludes a mounted but offscreen reply from switch readiness', async () => {
+    const page = await browser.newPage()
+    try {
+      const { title, turns, id } = SHORT_SWITCH
+      await page.setContent(`<button role="treeitem" data-row-key="session:${id}"><span>${title}</span></button>
+        <div data-conversation-scroll style="height:80px;overflow:auto"><div data-chat-flow-key="older" data-chat-flow-kind="user"><div style="height:600px"></div></div>
+        <div data-chat-flow-key="reply" data-chat-turn="${turns}" data-chat-flow-kind="assistant-step">Finished ${id}.</div></div>`)
+      await page.locator('button').evaluate((button) => {
+        button.addEventListener('click', () => requestAnimationFrame(() => requestAnimationFrame(() => {
+          button.setAttribute('data-frames-after-click', '')
+        })), { once: true })
+      })
+      const timing = switchToVisibleReply(page, SHORT_SWITCH).then(
+        value => ({ value }), (error: unknown) => ({ error }),
+      )
+      await page.locator('[data-frames-after-click]').waitFor()
+      expect(await page.evaluate(() => globalThis.performance.getEntriesByName('transcript-switch-visible').length)).toBe(0)
+      await page.locator('[data-chat-flow-key="reply"]').scrollIntoViewIfNeeded()
+      const outcome = await timing
+      if ('error' in outcome) throw outcome.error
+      expect(outcome.value).toMatchObject({ mountedRows: 2, mountedRichRows: 1 })
+      expect(outcome.value.clickToVisibleMs).toBeGreaterThan(0)
+    } finally {
+      await page.close()
+    }
+  })
+
+  it('excludes visible neighboring placeholders from switch readiness', async () => {
+    const page = await browser.newPage()
+    try {
+      const { id, turns } = SHORT_SWITCH
+      await page.setContent(`<button role="treeitem" data-row-key="session:${id}">Switch</button>
+        <div data-conversation-scroll style="height:160px;overflow:auto">
+        <div data-chat-flow-key="older" data-chat-flow-kind="user" style="height:300px">
+          <div data-chat-window-placeholder style="height:300px"></div></div>
+        <div style="height:200px"></div>
+        <div data-chat-flow-key="pending" data-chat-flow-kind="user" style="height:60px">
+          <div data-chat-window-placeholder style="height:60px"></div></div>
+        <div data-chat-flow-key="reply" data-chat-turn="${turns}" data-chat-flow-kind="assistant-step"
+          style="height:20px">Finished ${id}.</div></div>`)
+      await page.locator('[data-conversation-scroll]').evaluate((port) => { port.scrollTop = port.scrollHeight })
+      await page.locator('button').evaluate((button) => {
+        button.addEventListener('click', () => requestAnimationFrame(() => requestAnimationFrame(() => {
+          button.setAttribute('data-frames-after-click', '')
+        })), { once: true })
+      })
+      const timing = switchToVisibleReply(page, SHORT_SWITCH).then(
+        value => ({ value }), (error: unknown) => ({ error }),
+      )
+      await page.locator('[data-frames-after-click]').waitFor()
+      expect(await page.evaluate(() => globalThis.performance.getEntriesByName('transcript-switch-visible').length)).toBe(0)
+      await page.locator('[data-chat-flow-key="pending"]').evaluate((row) => { row.textContent = 'Check synthetic batch 2.' })
+      const outcome = await timing
+      if ('error' in outcome) throw outcome.error
+      expect(outcome.value.mountedRichRows).toBe(2)
+      expect(await page.locator('[data-chat-window-placeholder]').count()).toBe(1)
+    } finally {
+      await page.close()
+    }
+  })
+
+  it.each([
+    { preMounted: false, controlled: false },
+    { preMounted: true, controlled: false },
+    { preMounted: false, controlled: true },
+  ])('switch completion probe observes trusted input: %j', async ({ preMounted, controlled }) => {
+    const page = await browser.newPage()
+    try {
+      const { id, turns } = SHORT_SWITCH
+      const earlier = '<div data-chat-flow-kind="user">Check synthetic batch 1.</div><div data-chat-flow-kind="assistant-step">Checked synthetic batch 1.1.</div>'
+      await page.setContent(`<button role="treeitem" data-row-key="session:${id}">Switch</button>
+        <div data-conversation-scroll style="height:200px;overflow:auto">
+        ${preMounted ? earlier : ''}<div data-chat-flow-kind="user">Check synthetic batch 2.</div>
+        <div data-chat-turn="${turns}" data-chat-flow-kind="assistant-step">Finished ${id}.</div></div>
+        <div data-composer-input contenteditable="true" style="min-height:30px"></div>`)
+      if (controlled) await page.locator('[data-composer-input]').evaluate((composer) => {
+        composer.addEventListener('beforeinput', (event) => {
+          event.preventDefault()
+          composer.textContent = 'x'
+        }, { once: true })
+      })
+      const timing = responsiveSwitch(page, SHORT_SWITCH).then(
+        value => ({ value }), (error: unknown) => ({ error }),
+      )
+      if (!preMounted) {
+        const input = await page.waitForFunction(() => {
+          const probe = Reflect.get(globalThis, '__dshPerfSwitchMount') as SwitchMountProbe | undefined
+          if (probe?.inputVisibleAt === undefined) return false
+          return { pending: probe.expectedRows - probe.richRows.size, fullPaintAt: probe.fullPaintAt ?? null }
+        }, undefined, { polling: 'raf' })
+        expect(await input.jsonValue()).toEqual({ pending: 2, fullPaintAt: null })
+        await input.dispose()
+        await page.locator('[data-conversation-scroll]').evaluate((port, html) => {
+          port.insertAdjacentHTML('afterbegin', html)
+        }, earlier)
+      }
+      const outcome = await timing
+      if ('error' in outcome) throw outcome.error
+      expect(outcome.value.completion).toMatchObject({
+        expectedTextRows: 4, mountedTextRows: 4, pendingAtInput: preMounted ? 0 : 2,
+        inputDuringMounting: !preMounted, trustedKey: true, trustedInput: true, removedRichRows: 0,
+        inputEventType: 'beforeinput', nativeInputObserved: !controlled,
+      })
+      expect(outcome.value.completion.frameGaps.length).toBeGreaterThan(0)
+    } finally {
+      await page.close()
+    }
+  })
+
+  it('switch warmup reaches Load earlier with trusted wheel input before clicking', async () => {
+    const page = await browser.newPage()
+    try {
+      await page.setContent('<div data-conversation-scroll style="height:200px;overflow:auto">'
+        + '<button>Load earlier</button><div style="height:2400px">Synthetic history</div></div>')
+      await page.locator('[data-conversation-scroll]').evaluate((port) => {
+        port.scrollTop = port.scrollHeight
+        port.addEventListener('wheel', (event) => {
+          if (event.isTrusted) port.setAttribute('data-trusted-wheel', '')
+        })
+        port.querySelector('button')?.addEventListener('click', (event) => {
+          if (event.isTrusted && port.hasAttribute('data-trusted-wheel')) port.setAttribute('data-trusted-page-click', '')
+        })
+      })
+      await wheelToEarlierPage(page)
+      expect(await page.locator('[data-trusted-page-click]').count()).toBe(1)
+    } finally {
+      await page.close()
+    }
+  })
+
+  it.each([28, 186])('reports warm transcript switches with %i steering-heavy turns', async (turns) => {
+    const denseSpec: SwitchFixture = { id: 'perf-switch-dense', title: 'Dense switch fixture', turns, steering: true }
+    const world = await launchPerformanceWorld({ browser })
+    try {
+      for (const spec of [SHORT_SWITCH, denseSpec]) await seedSession(world.scaffold, switchHistory(spec), spec.id)
+      const group = await openPerformancePage(world, 2)
+      if (await group.getAttribute('aria-expanded') === 'false') await group.click()
+      const page = world.page
+      for (const spec of [SHORT_SWITCH, denseSpec]) {
+        console.info(`WEB_PERF_PROGRESS ${JSON.stringify({ turns, phase: 'warmup', fixture: spec.id })}`)
+        await switchToVisibleReply(page, spec)
+        const tails = page.locator('[data-conversation-scroll] [data-chat-flow-key^="9:turn-tail"]')
+        for (let loaded = await tails.count(); loaded < spec.turns; loaded = await tails.count()) {
+          await wheelToEarlierPage(page)
+          await expect.poll(() => tails.count(), { timeout: 30_000 }).toBeGreaterThan(loaded)
+          console.info(`WEB_PERF_PROGRESS ${JSON.stringify({ turns, phase: 'warmup-page', fixture: spec.id, loaded: await tails.count() })}`)
+        }
+        expect(await tails.count()).toBe(spec.turns)
+        const bottom = page.getByRole('button', { name: 'Back to bottom', exact: true })
+        if (await bottom.count()) await bottom.click()
+      }
+      expect(switchExpectedTextRows(denseSpec)).toBe(turns === 28 ? 252 : 1_674)
+      const samples: Record<'short' | 'dense', Awaited<ReturnType<typeof responsiveSwitch>>>[] = []
+      for (let round = 0; round < 3; round++) {
+        console.info(`WEB_PERF_PROGRESS ${JSON.stringify({ turns, round, phase: 'short-start' })}`)
+        const short = await responsiveSwitch(page, SHORT_SWITCH)
+        console.info(`WEB_PERF_PROGRESS ${JSON.stringify({ turns, round, phase: 'dense-start' })}`)
+        const dense = await responsiveSwitch(page, denseSpec)
+        console.info(`WEB_PERF_PROGRESS ${JSON.stringify({ turns, round, phase: 'complete' })}`)
+        expect(short.turnTails).toBe(SHORT_SWITCH.turns)
+        expect(dense.turnTails).toBe(denseSpec.turns)
+        samples.push({ short, dense })
+      }
+      const scroll = await scrollDenseReply(page)
+      expect(scroll.mountedRichRows).toBe(switchExpectedTextRows(denseSpec))
+      const nativeFind = await page.evaluate(() => {
+        const find = Reflect.get(window, 'find') as (text: string, caseSensitive: boolean, backwards: boolean, wrap: boolean) => boolean
+        const found = find('Check synthetic batch 1.', false, false, true)
+        const selected = window.getSelection()?.toString()
+        window.getSelection()?.removeAllRanges()
+        return { found, selected }
+      })
+      expect(nativeFind).toEqual({ found: true, selected: 'Check synthetic batch 1.' })
+      console.info(`WEB_PERF_RESULT ${JSON.stringify({
+        scenario: 'warm-transcript-switch', chromium: browser.version(), viewport: page.viewportSize(),
+        shortTurns: SHORT_SWITCH.turns, denseTurns: denseSpec.turns, denseSteeringMessages: 3 * turns + Math.ceil(turns / 2),
+        samples, scroll, nativeFind,
+        medianClickToFullRenderMs: Object.fromEntries((['short', 'dense'] as const).map(kind => [
+          kind, samples.map(sample => sample[kind].completion.clickToFullRenderMs).sort((a, b) => a - b)[1],
+        ])),
+        medianKeyToVisibleEditMs: Object.fromEntries((['short', 'dense'] as const).map(kind => [
+          kind, samples.map(sample => sample[kind].completion.keyToVisibleEditMs).sort((a, b) => a - b)[1],
+        ])),
+        medianClickToVisibleMs: Object.fromEntries((['short', 'dense'] as const).map(kind => [
+          kind, samples.map(sample => sample[kind].clickToVisibleMs).sort((a, b) => a - b)[1],
+        ])),
+      })}`)
+      expect(world.tripwire.pageErrors).toEqual([])
+      expect(world.tripwire.warnings).toEqual([])
+    } finally {
+      await closePerformanceWorld(world)
+    }
   })
 
   it('reports workspace, history, and trajectory cardinality costs', async () => {

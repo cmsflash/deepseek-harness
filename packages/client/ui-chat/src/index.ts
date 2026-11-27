@@ -26,6 +26,8 @@ export interface Config {
   performanceUsage: Volatile<PerformanceUsageMode>
   /** Default destination for Chat HTTP(S) links. */
   linkOpening: Volatile<LinkOpening>
+  /** Quiet milliseconds after opening or foreground input before offscreen history mounts; zero disables the wait. */
+  historyRenderQuietMs: Volatile<number>
 }
 
 /** Live preferences projected to the browser. */
@@ -35,6 +37,7 @@ export const Config = z.object({
   foldedReplies: ChatSettingsFields.foldedReplies.volatile(),
   performanceUsage: ChatSettingsFields['performanceUsage'].volatile(),
   linkOpening: ChatSettingsFields.linkOpening.volatile(),
+  historyRenderQuietMs: ChatSettingsFields.historyRenderQuietMs.volatile(),
 })
 
 /** Host preferences are consumed through the configuration form projection.

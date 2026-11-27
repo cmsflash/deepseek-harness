@@ -48,6 +48,86 @@ function fixture() {
   return { column, viewport, group, row, prepend: (height: number) => { prependedHeight += height } }
 }
 
+it.each(['detach', 'remove-anchor'] as const)('does not write obsolete geometry when a history commit causes %s', (change) => {
+  const h = fixture()
+  const row = h.row(h.column, 'anchor', 200)
+  let top = 200
+  const write = vi.fn((value: number) => { top = value })
+  Object.defineProperty(h.column, 'scrollTop', { configurable: true, get: () => top, set: write })
+  const commit = vi.fn(() => {
+    if (change === 'detach') h.viewport.detach()
+    else row.remove()
+  })
+  h.viewport.commitHistory(commit)
+  expect(commit).toHaveBeenCalledOnce()
+  expect(write).not.toHaveBeenCalled()
+})
+
+it('keeps legacy history preservation attached through a compensated body commit', () => {
+  const h = fixture()
+  h.row(h.column, 'anchor', 200)
+  h.column.scrollTop = 200
+  h.viewport.beginPreserving()
+  h.viewport.commitHistory(() => { h.prepend(60) })
+  expect(h.column.scrollTop).toBe(260)
+  expect(h.viewport.preserving).toBe(true)
+  h.viewport.preserve()
+  expect(h.column.scrollTop).toBe(260)
+})
+
+it.each(['metrics', 'capture', 'collapse', 'reveal'] as const)('flushes committed slot state before synchronous %s geometry', async (operation) => {
+  const h = fixture()
+  const row = h.row(h.column, 'renderer', 0)
+  const slot = document.createElement('div')
+  slot.dataset.slot = 'conversation.chat.node'
+  row.replaceChildren(slot)
+  await Promise.resolve()
+  expect(row.hasAttribute('data-chat-row-empty')).toBe(true)
+  slot.append(document.createElement('p'))
+  expect(row.hasAttribute('data-chat-row-empty')).toBe(true)
+  const measured = vi.fn(() => {
+    expect(row.hasAttribute('data-chat-row-empty')).toBe(false)
+    return 60
+  })
+  if (operation === 'metrics') {
+    Object.defineProperty(h.column, 'scrollHeight', { configurable: true, get: measured })
+    h.viewport.readScroll()
+  } else if (operation === 'capture') {
+    vi.spyOn(row, 'getBoundingClientRect').mockImplementation(() => new DOMRect(0, 0, 500, measured()))
+    h.viewport.capturePosition()
+  } else {
+    Object.defineProperty(row, 'offsetHeight', { get: measured })
+    if (operation === 'collapse') h.viewport.motion.collapse(row, () => {})
+    else h.viewport.motion.reveal(row)
+  }
+  expect(measured).toHaveBeenCalled()
+})
+
+it.each([false, true])('releases only deferred preservation on independent scrolling after full mounting (deferred=%s)', (deferredOnly) => {
+  const h = fixture()
+  const row = h.row(h.column, 'anchor', 200)
+  const placeholder = document.createElement('div')
+  placeholder.dataset.chatWindowPlaceholder = ''
+  row.append(placeholder)
+  h.column.scrollTop = 200
+  h.viewport.beginPreserving(h.viewport.capturePosition(), deferredOnly)
+  placeholder.remove()
+  h.prepend(50)
+  h.viewport.preserve()
+  expect(h.column.scrollTop).toBe(250)
+  expect(h.viewport.preserving).toBe(true)
+  const scroll = vi.fn()
+  const resize = vi.fn(() => { h.viewport.preserve() })
+  const disconnect = h.viewport.connect({ scroll, resize, scrollEnd: vi.fn(), interact: vi.fn() })
+  onTestFinished(disconnect)
+  h.column.scrollTop = 400
+  h.column.dispatchEvent(new Event('scroll'))
+  expect(h.column.scrollTop).toBe(deferredOnly ? 400 : 250)
+  expect(h.viewport.preserving).toBe(!deferredOnly)
+  expect(scroll).toHaveBeenCalledTimes(deferredOnly ? 1 : 0)
+  expect(resize).toHaveBeenCalledTimes(deferredOnly ? 0 : 1)
+})
+
 it.each([
   { count: 64, slot: false }, { count: 4096, slot: false },
   { count: 64, slot: true }, { count: 4096, slot: true },

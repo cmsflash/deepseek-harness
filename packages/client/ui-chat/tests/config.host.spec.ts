@@ -15,11 +15,11 @@ describe('ui-chat Host settings', () => {
     const { fiber } = configuration
 
     expect(plainConfig(configuration.fiber.effectiveConfig)).toEqual({
-      performanceUsage: 'detailed', linkOpening: 'sidebar', collapseTiming: 'completion', foldedReplies: 'all',
+      performanceUsage: 'detailed', linkOpening: 'sidebar', collapseTiming: 'completion', foldedReplies: 'all', historyRenderQuietMs: 500,
     })
     await configuration.update({ transcriptView: 'normal' })
     expect(plainConfig(configuration.fiber.effectiveConfig)).toEqual({
-      transcriptView: 'normal', performanceUsage: 'detailed', linkOpening: 'sidebar', collapseTiming: 'completion', foldedReplies: 'all',
+      transcriptView: 'normal', performanceUsage: 'detailed', linkOpening: 'sidebar', collapseTiming: 'completion', foldedReplies: 'all', historyRenderQuietMs: 500,
     })
     for (const mode of ['expanded', 'compact', 'standard', 'detailed', 'verbose', 'collapsed']) {
       await configuration.update({ transcriptView: mode })
@@ -67,6 +67,23 @@ describe('ui-chat Host settings', () => {
     const restored = await liveConfig(ctx, { Config, apply }, saved)
     expect(plainConfig(restored.fiber.config)).toMatchObject({ foldedReplies: 'final' })
     await restored.fiber.dispose()
+  })
+
+  it('defaults the history quiet delay and accepts only nonnegative browser timer durations', async () => {
+    const ctx = new Context()
+    const configuration = await liveConfig(ctx, { Config, apply })
+    try {
+      expect(plainConfig(configuration.fiber.effectiveConfig)).toMatchObject({ historyRenderQuietMs: 500 })
+      for (const historyRenderQuietMs of [0, 250, 500, 2_147_483_647]) {
+        await configuration.update({ historyRenderQuietMs })
+        expect(plainConfig(configuration.fiber.effectiveConfig)).toMatchObject({ historyRenderQuietMs })
+      }
+      for (const historyRenderQuietMs of [-1, 0.5, NaN, Infinity, '500', 2_147_483_648]) {
+        await expect(configuration.update({ historyRenderQuietMs })).rejects.toThrow()
+      }
+    } finally {
+      await configuration.fiber.dispose()
+    }
   })
 
   it('loads without a settings provider', async () => {

@@ -392,6 +392,8 @@ export type ChatFlowDataInjected = Pick<ChatViewInjected, 'keyedHooks' | 'expand
     connectionState: ConnectionStateSource
     /** Whether the Session's `running` value states what the Host runs now; false while the Host is unreachable. */
     runningKnown: ObservableSnapshot<boolean>
+    /** Accepted quiet delay before background history rendering; zero skips the delay. */
+    historyRenderQuietMs: ObservableSnapshot<number>
   }
 }
 
@@ -402,6 +404,10 @@ export interface ChatFlowOwnerProps extends Pick<ChatNodeOwnerProps,
   readonly pendingInputs: readonly (PendingSubmission | InboxState['next-step'][number])[]
   readonly lastInputTurn: number | undefined
   readonly deferCollapse: boolean
+  /** Saved row kept eager for this mount; omission leaves earlier rich bodies eligible for deferred mounting. */
+  readonly restoreAnchorKey?: string | undefined
+  /** Run one synchronous history-body commit while the viewport preserves its visual anchor and fold geometry. */
+  readonly commitHistory: (commit: () => void) => void
 }
 
 /** Full props of the Chat-owned flow renderer. */

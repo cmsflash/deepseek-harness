@@ -72,7 +72,9 @@ export class ChatNavigation {
       const landing = this.viewport.scrollToTurn(item.turn)
       if (landing === null) return
       this.reading.acceptNavigation(landing)
-      if (this.input.loadingOlder) this.viewport.beginPreserving(landing.position)
+      if (this.input.loadingOlder || this.viewport.hasWindowedBodies) {
+        this.viewport.beginPreserving(landing.position, !this.input.loadingOlder)
+      }
       return
     }
     this.cancel()
@@ -120,10 +122,11 @@ export class ChatNavigation {
     return true
   }
 
-  /** Retarget a still-loading page only after inner or outer reader scrolling ends. */
+  /** Retain the settled reading position while older pages or deferred bodies can change its layout. */
   readerSettled(): void {
-    if (this.input.loadingOlder && this.jump === null && !this.viewport.preserving && !this.reading.followingTail) {
-      this.viewport.beginPreserving()
+    if ((this.input.loadingOlder || this.viewport.hasWindowedBodies)
+      && this.jump === null && !this.viewport.preserving && !this.reading.followingTail) {
+      this.viewport.beginPreserving(undefined, !this.input.loadingOlder)
     }
   }
 
@@ -159,8 +162,10 @@ export class ChatNavigation {
     const landing = this.viewport.scrollToTurn(jump.turn)
     if (landing === null) return false
     this.reading.acceptNavigation(landing)
-    if (settle) this.cancel()
-    else {
+    if (settle) {
+      this.cancel()
+      if (this.viewport.hasWindowedBodies) this.viewport.beginPreserving(landing.position, true)
+    } else {
       this.viewport.beginPreserving(landing.position)
       jump.landing = 'landed'
     }

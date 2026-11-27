@@ -291,13 +291,14 @@ const renderCommandSlot: React.ComponentProps<typeof CommandNodeView>['renderSlo
   (_key, _owner, opts) => opts?.fallback ?? null
 const renderTurnTailSlot: React.ComponentProps<typeof TurnTailNodeView>['renderSlot'] = () => null
 
-function HarnessChatFlow({ standard, owner, hookContext, renderSlot, useConnectionState, useRunningKnown }: {
+function HarnessChatFlow({ standard, owner, hookContext, renderSlot, useConnectionState, useRunningKnown, useHistoryRenderQuietMs }: {
   readonly standard: HarnessStandardProps
   readonly owner: ChatFlowOwnerProps
   readonly hookContext: ChatFlowHookContext
   readonly renderSlot: ChatFlowSlotProps['renderSlot']
   readonly useConnectionState: ChatFlowSlotProps['useConnectionState']
   readonly useRunningKnown: ChatFlowSlotProps['useRunningKnown']
+  readonly useHistoryRenderQuietMs: ChatFlowSlotProps['useHistoryRenderQuietMs']
 }) {
   const hooks = useMemo(() => ({
     useGroupAction: CHAT_FLOW_INJECT.hooks.groupAction(standard, hookContext),
@@ -305,7 +306,7 @@ function HarnessChatFlow({ standard, owner, hookContext, renderSlot, useConnecti
   }), [standard, hookContext])
   const { renderSlot: _rootRenderSlot, __renders: _rootRenders, ...shared } = standard
   return <ChatFlow {...shared} {...owner} {...hooks} renderSlot={renderSlot}
-    useConnectionState={useConnectionState} useRunningKnown={useRunningKnown} />
+    useConnectionState={useConnectionState} useRunningKnown={useRunningKnown} useHistoryRenderQuietMs={useHistoryRenderQuietMs} />
 }
 
 function HarnessUserOrigin({ useRenderer, owner, options }: {
@@ -493,7 +494,7 @@ function makeHarness(
       throw new Error('Flow owner data must not replace its rendering or store authority')
     }
     return <HarnessChatFlow standard={props} owner={owner} hookContext={opts.hookContext} renderSlot={renderFlowSlot}
-      useConnectionState={useConnectionState} useRunningKnown={useRunningKnown} />
+      useConnectionState={useConnectionState} useRunningKnown={useRunningKnown} useHistoryRenderQuietMs={useHistoryRenderQuietMs} />
   }
   // SessionProvider seat arrives with the session-scope child declaration;
   // ChatView never invokes it (pass-through stub).
@@ -501,6 +502,7 @@ function makeHarness(
   const useConnectionState = bindSnapshotSelector(connection)
   const runningKnown = createSnapshotStore(true)
   const useRunningKnown = bindSnapshotSelector(runningKnown)
+  const useHistoryRenderQuietMs = bindSnapshotSelector(createSnapshotStore(0))
   const SessionProviderStub: ChatViewSlotProps['SessionProvider'] = ({ children }) => <>{children}</>
   const props: HarnessStandardProps = {
     fileDrag,
@@ -4488,6 +4490,53 @@ describe('ChatView', () => {
       expect(view.getByLabelText('回到底部')).toBeTruthy()
     } finally {
       rect.mockRestore()
+      host.remove()
+    }
+  })
+
+  it('renders a saved deep intra-row anchor before restoring beyond its height estimate', () => {
+    class IntersectionObserverStub {
+      observe(): void {}
+      unobserve(): void {}
+      disconnect(): void {}
+    }
+    vi.stubGlobal('IntersectionObserver', IntersectionObserverStub)
+    const host = document.createElement('div')
+    host.dataset.conversationScroll = ''
+    document.body.append(host)
+    const anchorKey = 'fixture:assistant:1'
+    let scrollTop = 0
+    const writes: { top: number; bullets: number }[] = []
+    Object.defineProperties(host, {
+      clientHeight: { value: 500 },
+      scrollHeight: { value: 20_000 },
+      scrollTop: {
+        get: () => scrollTop,
+        set: (top: number) => {
+          scrollTop = top
+          writes.push({ top, bullets: host.querySelectorAll(`[data-chat-anchor-key="${anchorKey}"] li`).length })
+        },
+      },
+    })
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      if (this.dataset.chatAnchorKey === anchorKey) {
+        const height = this.querySelectorAll('li').length > 0 ? 12_000 : 504
+        return new DOMRect(0, -scrollTop, 500, height)
+      }
+      return new DOMRect(0, 0, 500, 500)
+    })
+    try {
+      const bullets = Array.from({ length: 500 }, () => '- x').join('\n')
+      const h = makeHarness({ nodes: [assistant(1, bullets), ...Array.from({ length: 12 }, (_, i) => user(i + 2, 'later'))] })
+      h.setTranscriptView('verbose')
+      h.chatScroll.save({ anchorKey, anchorTop: -4_000, scrollTop: 4_000 })
+      const view = render(<h.ChatView {...h.props} />, { container: host })
+      expect(writes[0]).toEqual({ top: 4_000, bullets: 500 })
+      expect(host.scrollTop).toBe(4_000)
+      expect(view.container.querySelector(`[data-chat-anchor-key="${anchorKey}"] [data-chat-window-placeholder]`)).toBeNull()
+      expect(view.container.querySelectorAll('[data-chat-window-placeholder]').length).toBeGreaterThan(0)
+      view.unmount()
+    } finally {
       host.remove()
     }
   })
