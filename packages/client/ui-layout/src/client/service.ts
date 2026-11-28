@@ -32,9 +32,13 @@ export interface ILayout {
    * Select a global central panel without changing the current Session, and
    * dismiss the phone-viewport sidebar drawer that would cover it.
    * @param panelId - registered main key, or null to show the Conversation.
+   * @param options - `phoneView: 'list'` ends on the phone layout's thread
+   *   list instead of the selected panel, for a selection that leaves nothing
+   *   to show there, such as after archiving the open thread; other layouts
+   *   ignore it.
    * @throws if the selected main key is not registered; preserves the current selection.
    */
-  selectPanel(panelId: MainPanelId | null): void
+  selectPanel(panelId: MainPanelId | null, options?: { readonly phoneView?: 'list' }): void
   /**
    * Start an asynchronous navigation, superseding any earlier pending navigation.
    * @returns a signal aborted by the next navigation or layout disposal; check it before committing UI state.
@@ -79,15 +83,16 @@ export class LayoutController implements ILayout {
   ) {}
 
   /** Select a global panel or return to the Conversation. */
-  selectPanel(panelId: MainPanelId | null): void {
+  selectPanel(panelId: MainPanelId | null, options?: { readonly phoneView?: 'list' }): void {
     if (panelId !== null && !this.hasMainPanel(panelId)) {
       throw new Error(`layout.selectPanel: main panel "${panelId}" is not registered`)
     }
     this.navigation.abort()
     this.panels.selectPanel(panelId)
-    // Every navigation ends here, and on a phone the sidebar drawer would
-    // otherwise stay open over the destination it just selected.
-    this.panels.collapseNarrowSidebar()
+    // Every navigation ends here, and on a phone the thread list would
+    // otherwise stay over the destination it just selected.
+    if (options?.phoneView === 'list') this.panels.showPhoneList()
+    else this.panels.collapseNarrowSidebar()
   }
 
   /** @returns the new pending navigation's cancellation signal. */

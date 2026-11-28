@@ -87,9 +87,9 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
     description: 'Panel navigation and geometry actions exposed through ctx.layout.',
     methods: [
       {
-        signature: 'selectPanel(panelId: MainPanelId | null): void',
+        signature: 'selectPanel(panelId: MainPanelId | null, options?: { readonly phoneView?: \'list\' }): void',
         description: 'Select a global central panel without changing the current Session, and dismiss the phone-viewport sidebar drawer that would cover it.',
-        parameters: [{ name: 'panelId', description: 'registered main key, or null to show the Conversation.' }],
+        parameters: [{ name: 'panelId', description: 'registered main key, or null to show the Conversation.' }, { name: 'options', description: '`phoneView: \'list\'` ends on the phone layout\'s thread list instead of the selected panel, for a selection that leaves nothing to show there, such as after archiving the open thread; other layouts ignore it.' }],
         throws: ['if the selected main key is not registered; preserves the current selection.'],
       },
       {

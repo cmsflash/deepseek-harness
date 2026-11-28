@@ -70,6 +70,7 @@ type LayoutActions = {
   toggleSidebar: (draft: LayoutState) => void
   showNarrowSidebar: (draft: LayoutState, shown: boolean) => void
   collapseNarrowSidebar: (draft: LayoutState) => void
+  showPhoneList: (draft: LayoutState) => void
   setViewportWidth: (draft: LayoutState, width: number) => void
   setRightbar: (draft: LayoutState, px: number) => void
   openRightbar: (draft: LayoutState, track: boolean, fullscreen: boolean) => void
@@ -130,6 +131,11 @@ export function createLayoutStore(): EngineStoreHandle<LayoutState, LayoutAction
       // navigation.
       collapseNarrowSidebar: (d) => {
         if (d.layoutInfo.viewportWidth <= MOBILE_MAX) d.layoutInfo.narrowExpanded = false
+      },
+      // The phone layout's counterpart for a navigation with no destination to
+      // show, such as archiving the open thread.
+      showPhoneList: (d) => {
+        if (d.layoutInfo.viewportWidth <= MOBILE_MAX) d.layoutInfo.narrowExpanded = true
       },
       // Crossing the breakpoint in either direction drops the override: the
       // narrow default is auto-collapsed, the wide state is the preference.

@@ -294,7 +294,8 @@ function bench(options: BenchOptions = {}) {
   if (options.conversation !== false) ctx.provide('conversation', { input: { requestDraftInitialization } })
   const layout = new LayoutController({
     selectPanel: vi.fn(), retainMainPanels: vi.fn(),
-    setSidebar: vi.fn(), toggleSidebar: vi.fn(), showNarrowSidebar: vi.fn(), collapseNarrowSidebar: vi.fn(), setViewportWidth: vi.fn(),
+    setSidebar: vi.fn(), toggleSidebar: vi.fn(), showNarrowSidebar: vi.fn(), collapseNarrowSidebar: vi.fn(),
+    showPhoneList: vi.fn(), setViewportWidth: vi.fn(),
     setRightbar: vi.fn(), openRightbar: vi.fn(), closeRightbar: vi.fn(),
   }, () => true, createSnapshotStore({ activePanelId: null }))
   const selectPanel = vi.spyOn(layout, 'selectPanel')
@@ -1505,6 +1506,8 @@ describe('UiWorkspaceService', () => {
 
     expect(b.sessions.retained[0]!.release).toHaveBeenCalledOnce()
     expect(b.selectPanel).toHaveBeenCalledTimes(2)
+    // A phone has nothing to show for the archived thread, so it ends on its thread list.
+    expect(b.selectPanel).toHaveBeenLastCalledWith(null, { phoneView: 'list' })
   })
 
   it('clears a selected Session after archiving it without an intervening snapshot', async () => {
@@ -1516,6 +1519,8 @@ describe('UiWorkspaceService', () => {
 
     expect(b.sessions.retained[0]!.release).toHaveBeenCalledOnce()
     expect(b.selectPanel).toHaveBeenCalledTimes(2)
+    // A phone has nothing to show for the archived thread, so it ends on its thread list.
+    expect(b.selectPanel).toHaveBeenLastCalledWith(null, { phoneView: 'list' })
   })
 
   it('forwards archive commands and preserves failures', async () => {

@@ -41,6 +41,16 @@ describe('createLayoutStore', () => {
     expect(createLayoutStore().create().store.getSnapshot().layoutInfo.narrowExpanded).toBe(false)
   })
 
+  it('shows the thread list on request only in the phone layout', () => {
+    const { store, actions } = createLayoutStore().create()
+    actions.setViewportWidth(800)
+    actions.showPhoneList()
+    expect(store.getSnapshot().layoutInfo.narrowExpanded).toBe(false)
+    actions.setViewportWidth(390)
+    actions.showPhoneList()
+    expect(store.getSnapshot().layoutInfo.narrowExpanded).toBe(true)
+  })
+
   it('creates independent instances without browser persistence', () => {
     const write = vi.spyOn(Storage.prototype, 'setItem')
     const a = createLayoutStore().create()

@@ -381,7 +381,7 @@ class UiWorkspaceService extends Service implements UiWorkspace {
 
   async archiveSession(sessionId: SessionId, options: { readonly stopActivity?: boolean } = {}): Promise<void> {
     await this.workspaces.archiveSession(sessionId, options)
-    if (this.mainReference?.sessionId === sessionId) this.clearMain()
+    if (this.mainReference?.sessionId === sessionId) this.clearMain('list')
   }
 
   async unarchiveSession(sessionId: SessionId): Promise<void> {
@@ -508,16 +508,18 @@ class UiWorkspaceService extends Service implements UiWorkspace {
     const current = this.mainReference?.sessionId
     if (current === undefined
       || !this.workspaces.list.getSnapshot().archivedSessionIds.includes(current)) return false
-    this.clearMain()
+    this.clearMain('list')
     return true
   }
 
-  private clearMain(): void {
+  /** @param phoneView - `'list'` when the cleared selection leaves a phone nothing to show but its thread list. */
+  private clearMain(phoneView?: 'list'): void {
     const previous = this.mainReference
     this.mainReference = undefined
     this.selection.set({})
     previous?.release()
-    this.ctx.layout.selectPanel(null)
+    if (phoneView === undefined) this.ctx.layout.selectPanel(null)
+    else this.ctx.layout.selectPanel(null, { phoneView })
   }
 
   private replaceMain(

@@ -11,6 +11,7 @@ function fakePanels(): PanelActions {
     toggleSidebar: vi.fn(),
     showNarrowSidebar: vi.fn(),
     collapseNarrowSidebar: vi.fn(),
+    showPhoneList: vi.fn(),
     setViewportWidth: vi.fn(),
     setRightbar: vi.fn(),
     openRightbar: vi.fn(),
@@ -83,6 +84,10 @@ describe('LayoutController', () => {
     service.selectPanel('panel-a' as MainPanelId)
     service.selectPanel(null)
     expect(panels.collapseNarrowSidebar).toHaveBeenCalledTimes(2)
+    // A selection with nothing to show ends on the phone's thread list instead.
+    service.selectPanel(null, { phoneView: 'list' })
+    expect(panels.collapseNarrowSidebar).toHaveBeenCalledTimes(2)
+    expect(panels.showPhoneList).toHaveBeenCalledOnce()
   })
 
   it('keeps separately constructed controllers bound to their own instances', () => {
